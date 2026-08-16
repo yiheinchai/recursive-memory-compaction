@@ -157,32 +157,42 @@
 <figure class="fig ladder">
   <div class="plate">
     <div class="rung">
-      <div class="rung-meta"><span class="lv">L0</span><span class="tok">260 tok</span></div>
+      <div class="rung-meta">
+        <span class="lv">L0 &middot; first written</span>
+        <span class="tok">260</span>
+        <span class="unit">tokens</span>
+      </div>
       <div>
         <div class="rung-bar"><i style="width:100%"></i></div>
-        <p>When a remote call fails with a 5xx or a timeout, retry it — but only if
-        the call is idempotent. S3 answers 200 with the error inside the body, so
-        parse the body rather than the status code. Budget 3 attempts, with backoff
-        at 100&thinsp;ms, 400&thinsp;ms and 1.6&thinsp;s.</p>
+        <p>When a remote call fails with a 5xx or a timeout, retry it — but only if the call is idempotent. S3 answers 200 with the error inside the body, so parse the body rather than the status code. Budget 3 attempts, with backoff at 100&thinsp;ms, 400&thinsp;ms and 1.6&thinsp;s.</p>
       </div>
     </div>
+    <div class="why"><span class="arrow">&darr;</span><span>Loaded, used &mdash; and the work succeeded</span></div>
     <div class="rung">
-      <div class="rung-meta"><span class="lv">L1</span><span class="tok">195 tok</span></div>
+      <div class="rung-meta">
+        <span class="lv">L1 &middot; after 2 uses</span>
+        <span class="tok">195</span>
+        <span class="unit">tokens</span>
+      </div>
       <div>
         <div class="rung-bar"><i style="width:75%"></i></div>
-        <p>Retry idempotent remote calls on 5xx and timeouts — 3 attempts, backoff
-        100&thinsp;/&thinsp;400&thinsp;/&thinsp;1600&thinsp;ms. S3 hides errors in a 200 body, so parse the body.</p>
+        <p>Retry idempotent remote calls on 5xx and timeouts — 3 attempts, backoff 100&thinsp;/&thinsp;400&thinsp;/&thinsp;1600&thinsp;ms. S3 hides errors in a 200 body, so parse the body.</p>
       </div>
     </div>
+    <div class="why"><span class="arrow">&darr;</span><span>Used again. Worked again</span></div>
     <div class="rung">
-      <div class="rung-meta"><span class="lv">L2</span><span class="tok">146 tok</span></div>
+      <div class="rung-meta">
+        <span class="lv">L2 &middot; after 6 uses</span>
+        <span class="tok">146</span>
+        <span class="unit">tokens</span>
+      </div>
       <div>
         <div class="rung-bar"><i style="width:56%"></i></div>
         <p>Retry idempotent calls; parse bodies, not status codes.</p>
       </div>
     </div>
   </div>
-  <figcaption>Same lesson, three times. <b>L0 is never deleted</b> — it sits underneath, and the manifest records that L2 dropped the backoff constants.</figcaption>
+  <figcaption>Nothing was deleted. <b>L0 is still there underneath</b>, and L2 records exactly which claims it dropped &mdash; so any of them can be pulled back.</figcaption>
 </figure>
 <h3>Which, across a whole store, pulls two numbers apart</h3>
 <p>

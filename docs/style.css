@@ -159,25 +159,45 @@ figure.fig { margin: 0 0 30px; }
 
 /* ------------------------------------------------- the compression ladder */
 
-.ladder .plate { padding: 6px 28px; }
-.rung {
+.fig-lead { padding: 6px 0 14px; }
+
+.ladder .plate { padding: 4px 28px 10px; }
+.rung, .why {
   display: grid;
-  grid-template-columns: 78px minmax(0, 1fr);
-  gap: 24px;
-  padding: 26px 0;
-  border-top: 1px solid var(--rule);
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 26px;
 }
-.rung:first-child { border-top: 0; }
+.rung { padding: 26px 0 28px; }
+/* The rule lives on the connector, so the causal step is what separates two
+   versions of the lesson — not an arbitrary divider. */
+.why {
+  align-items: center;
+  padding: 11px 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.why .arrow { text-align: right; font-size: 15px; color: var(--ink); }
 .rung-meta {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   font-family: var(--mono);
-  font-size: 11px;
-  padding-top: 1px;
+  padding-top: 2px;
 }
-.rung-meta .lv { letter-spacing: .12em; }
-.rung-meta .tok { color: var(--faint); }
+.rung-meta .lv {
+  font-size: 10.5px; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--faint); white-space: nowrap;
+}
+.rung-meta .tok {
+  font-size: 27px; line-height: 1; letter-spacing: -.03em;
+  font-variant-numeric: tabular-nums; margin-top: 3px;
+}
+.rung-meta .unit { font-size: 10.5px; letter-spacing: .13em; text-transform: uppercase; color: var(--faint); }
 .rung-bar { height: 7px; background: #ededed; }
 .rung-bar i { display: block; height: 100%; background: var(--ink); }
 .rung p {
@@ -189,8 +209,9 @@ figure.fig { margin: 0 0 30px; }
 }
 
 @media (max-width: 620px) {
-  .rung { grid-template-columns: 1fr; gap: 12px; }
-  .rung-meta { flex-direction: row; gap: 12px; }
+  .rung, .why { grid-template-columns: 1fr; gap: 10px; }
+  .rung-meta { flex-direction: row; align-items: baseline; gap: 10px; }
+  .why .arrow { text-align: left; }
 }
 
 /* ---------------------------------------------------------- memory tree */

@@ -28,7 +28,7 @@
       RMC
     </a>
     <div class="nav-links">
-      <a href="#idea">The idea</a>
+      <a href="#idea">How it works</a>
       <a href="#different">Why it's different</a>
       <a href="docs.html">Docs</a>
       <a class="btn" href="#install">Install</a>
@@ -45,11 +45,10 @@
 
 <!-- ------------------------------------------------------------- hero -->
 <div class="wrap hero-head">
-  <h1>Your agent remembers more<br><span class="accent">and pays less to remember it.</span></h1>
+  <h1>Agent memory that gets cheaper<br><span class="accent">the more you use it.</span></h1>
   <p class="lede">
-    Every memory system makes the same trade: keep everything and drown in
-    context, or summarise and quietly lose the detail that mattered. RMC refuses
-    the trade. Watch what happens as lessons get used.
+    For Claude Code and Codex. It learns a lesson once, then makes it shorter
+    every time the lesson proves useful.
   </p>
   <div class="hero-cta">
     <a class="btn" href="#install">Get started</a>
@@ -57,8 +56,74 @@
   </div>
 </div>
 
-<!-- ------------------------------------------------------ what a lesson is -->
+<!-- ------------------------------------------------------- the same lesson -->
 <div class="wrap" id="idea">
+  <div class="fig-lead">
+    <span class="kicker" style="margin:0">One lesson, three points in its life</span>
+  </div>
+  <figure class="fig ladder">
+    <div class="plate">
+      <div class="rung">
+        <div class="rung-meta">
+          <span class="lv">L0 &middot; first written</span>
+          <span class="tok">260</span>
+          <span class="unit">tokens</span>
+        </div>
+        <div>
+          <div class="rung-bar"><i style="width:100%"></i></div>
+          <p>When a remote call fails with a 5xx or a timeout, retry it — but only if the call is idempotent. S3 answers 200 with the error inside the body, so parse the body rather than the status code. Budget 3 attempts, with backoff at 100&thinsp;ms, 400&thinsp;ms and 1.6&thinsp;s.</p>
+        </div>
+      </div>
+      <div class="why"><span class="arrow">&darr;</span><span>Loaded, used &mdash; and the work succeeded</span></div>
+      <div class="rung">
+        <div class="rung-meta">
+          <span class="lv">L1 &middot; after 2 uses</span>
+          <span class="tok">195</span>
+          <span class="unit">tokens</span>
+        </div>
+        <div>
+          <div class="rung-bar"><i style="width:75%"></i></div>
+          <p>Retry idempotent remote calls on 5xx and timeouts — 3 attempts, backoff 100&thinsp;/&thinsp;400&thinsp;/&thinsp;1600&thinsp;ms. S3 hides errors in a 200 body, so parse the body.</p>
+        </div>
+      </div>
+      <div class="why"><span class="arrow">&darr;</span><span>Used again. Worked again</span></div>
+      <div class="rung">
+        <div class="rung-meta">
+          <span class="lv">L2 &middot; after 6 uses</span>
+          <span class="tok">146</span>
+          <span class="unit">tokens</span>
+        </div>
+        <div>
+          <div class="rung-bar"><i style="width:56%"></i></div>
+          <p>Retry idempotent calls; parse bodies, not status codes.</p>
+        </div>
+      </div>
+    </div>
+    <figcaption>Nothing was deleted. <b>L0 is still there underneath</b>, and L2 records exactly which claims it dropped &mdash; so any of them can be pulled back.</figcaption>
+  </figure>
+
+  <div class="two" style="padding:16px 0 clamp(30px,4vw,48px)">
+    <div><h3>That is the whole idea.</h3></div>
+    <div>
+      <p style="color:var(--muted);margin-top:6px">
+        A lesson only gets shorter after it has been loaded,
+        <i>actually used</i>, and the work succeeded — which is proof it
+        contained slack. The candidate has to reproduce real past work before it
+        is allowed to replace anything.
+      </p>
+      <p style="color:var(--muted)">
+        And nothing is thrown away. L0 stays underneath, and L2 records exactly
+        which claims it dropped, so any of them can be pulled back.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ------------------------------------------------------ what a lesson is -->
+<div class="wrap">
+  <div class="fig-lead">
+    <span class="kicker" style="margin:0">Where a lesson comes from</span>
+  </div>
   <figure class="fig">
     <div class="plate">
       <svg viewBox="0 0 960 330" fill="none" stroke="#1a1a1a" stroke-width="1.4"
@@ -124,66 +189,14 @@
   </figure>
 
   <div class="two" style="padding:16px 0 clamp(30px,4vw,48px)">
-    <div><h3>First: what a lesson is.</h3></div>
+    <div><h3>You never write one.</h3></div>
     <div>
       <p style="color:var(--muted);margin-top:6px">
         You spend a session getting something right — a wrong turn, a correction,
-        a fix. RMC watches that happen and writes down the <b style="color:var(--ink)">conclusion</b>,
-        not the transcript. Next time the same problem comes up, that conclusion
-        goes into context and the session does not.
-      </p>
-      <p style="color:var(--muted)">
-        That much is just note-taking. What follows is the part that is new.
-      </p>
-    </div>
-  </div>
-</div>
-
-<!-- ------------------------------------------------------- the same lesson -->
-<div class="wrap">
-  <figure class="fig ladder">
-    <div class="plate">
-      <div class="rung">
-        <div class="rung-meta"><span class="lv">L0</span><span class="tok">260 tok</span></div>
-        <div>
-          <div class="rung-bar"><i style="width:100%"></i></div>
-          <p>When a remote call fails with a 5xx or a timeout, retry it — but only if
-          the call is idempotent. S3 answers 200 with the error inside the body, so
-          parse the body rather than the status code. Budget 3 attempts, with backoff
-          at 100&thinsp;ms, 400&thinsp;ms and 1.6&thinsp;s.</p>
-        </div>
-      </div>
-      <div class="rung">
-        <div class="rung-meta"><span class="lv">L1</span><span class="tok">195 tok</span></div>
-        <div>
-          <div class="rung-bar"><i style="width:75%"></i></div>
-          <p>Retry idempotent remote calls on 5xx and timeouts — 3 attempts, backoff
-          100&thinsp;/&thinsp;400&thinsp;/&thinsp;1600&thinsp;ms. S3 hides errors in a 200 body, so parse the body.</p>
-        </div>
-      </div>
-      <div class="rung">
-        <div class="rung-meta"><span class="lv">L2</span><span class="tok">146 tok</span></div>
-        <div>
-          <div class="rung-bar"><i style="width:56%"></i></div>
-          <p>Retry idempotent calls; parse bodies, not status codes.</p>
-        </div>
-      </div>
-    </div>
-    <figcaption>Same lesson, three times. <b>L0 is never deleted</b> — it sits underneath, and the manifest records that L2 dropped the backoff constants.</figcaption>
-  </figure>
-
-  <div class="two" style="padding:16px 0 clamp(30px,4vw,48px)">
-    <div><h3>Then it earns its way shorter.</h3></div>
-    <div>
-      <p style="color:var(--muted);margin-top:6px">
-        Every time that lesson is loaded, <i>actually used</i>, and the work
-        succeeds, it has proved it contained slack — so it earns an attempt at a
-        shorter form. The shorter form has to reproduce real past work before it
-        is allowed to replace anything.
-      </p>
-      <p style="color:var(--muted)">
-        Nothing is thrown away. L0 stays underneath, and L2 records exactly which
-        claims it dropped, so any of them can be pulled back.
+        a fix. RMC watches that happen and writes down the
+        <b style="color:var(--ink)">conclusion</b>, not the transcript. Next time
+        the same problem comes up, the conclusion goes into context and the
+        session does not.
       </p>
     </div>
   </div>
@@ -191,6 +204,9 @@
 
 <!-- --------------------------------------------------------- the tree -->
 <div class="wrap">
+  <div class="fig-lead">
+    <span class="kicker" style="margin:0">The same thing, across a whole store</span>
+  </div>
   <figure class="fig tree" data-tree>
     <div class="plate" data-tree-canvas></div>
     <div class="tree-hud">
