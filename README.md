@@ -581,6 +581,7 @@ rmc trace --prompt "..."       # every stage, ending in the verbatim block
 rmc dream --list               # merge candidates from co-use
 rmc conflicts                  # unresolved contradictions
 rmc doctor                     # backends, store, hook wiring
+rmc report --about "..."       # a redacted defect report; sends nothing
 rmc events --kind inject       # raw telemetry
 ```
 

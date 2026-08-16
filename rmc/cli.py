@@ -919,6 +919,35 @@ def cmd_hook(args: argparse.Namespace) -> int:
     return dispatch(args.event)
 
 
+def cmd_report(args: argparse.Namespace) -> int:
+    """Write a defect report. Deliberately does not file it.
+
+    RMC makes no network calls and that is a promise on the docs page, so the
+    transport is the user's own `gh`, run by a human or by an agent that asked
+    first. The whole body is printed so the decision is made with the content
+    in view rather than on trust.
+    """
+    from . import report as rep
+
+    store = need_store(args)
+    if store is None:
+        return 1
+    path = rep.write(store, args.about or "", expected=args.expected or "", days=args.days)
+    title = (args.about or "RMC defect").strip().splitlines()[0][:70]
+
+    print(path.read_text(encoding="utf-8"))
+    print(dim("─" * 60))
+    print(f"written to {path}")
+    print()
+    print("RMC has not sent this anywhere. To file it yourself:")
+    print()
+    for line in rep.gh_command(path, title).splitlines():
+        print("    " + line)
+    print()
+    print(dim(f"or paste it at {rep.ISSUE_URL}"))
+    return 0
+
+
 def cmd_install(args: argparse.Namespace) -> int:
     from .install import install
 
@@ -1164,6 +1193,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("hook", help="hook entry point (called by the host agent)")
     p.add_argument("event")
     p.set_defaults(func=cmd_hook)
+
+    p = sub.add_parser(
+        "report", help="write a redacted defect report (does not send it)"
+    )
+    p.add_argument("--about", help="what went wrong, in your own words")
+    p.add_argument("--expected", help="what you expected instead")
+    p.add_argument("--days", type=int, default=7, help="how much activity to summarise")
+    p.set_defaults(func=cmd_report)
 
     p = sub.add_parser("install", help="wire RMC into claude / codex")
     p.add_argument("--target", action="append", choices=["claude", "codex"])

@@ -416,6 +416,14 @@ Record the blind spot as well as the correction. A lesson that states only the
 right answer lets the next agent arrive at the same wrong assumption and merely
 recognise the fix afterwards.
 
+**If what you found is a defect in RMC itself** — the reflector missing what it
+plainly should have caught, a stage that did not run, a command that reported
+success while doing nothing — then the lesson belongs upstream, not only in this
+store. Run `rmc report --about "..." --expected "..."`, which writes a redacted
+report to disk and sends nothing, then ask the user whether they want it filed
+as an issue. Ask; never file it yourself. Five hundred people hitting the same
+defect and each fixing it locally teaches the project nothing.
+
 **If the conversation shows the agent running `rmc add` itself, or the user
 asking why something was not learned, that is a capture you failed to make.**
 Not a lesson already handled — a miss. The evidence was in front of an earlier

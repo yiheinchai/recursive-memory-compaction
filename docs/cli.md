@@ -38,6 +38,21 @@ no use to someone who does not have it.
 ### `rmc uninstall`
 Remove only RMC-tagged hooks. Lessons are left in place.
 
+### `rmc report [--about "..."] [--expected "..."] [--days N]`
+
+Writes a redacted defect report to `.rmc/reports/` and prints it, along with
+the `gh issue create` command that would file it. **It sends nothing.** RMC
+makes no network calls and that is a guarantee, so the transport is your own
+`gh`, run deliberately.
+
+It contains counts, timings and non-default settings — the things that localise
+a defect to one stage — plus whatever you write in `--about`. It never contains
+lesson text, prompts, transcripts or paths from your machine, and everything
+passes through the redactor on the way out.
+
+Reflectors are told to run this when they find a defect in RMC itself, and then
+to *ask* whether you want it filed. They never file it themselves.
+
 ### `rmc doctor`
 Which backends are on PATH, whether a store exists, whether hooks are wired.
 Start here when RMC seems inert.

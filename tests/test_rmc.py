@@ -2053,3 +2053,52 @@ class TestCaptureAttribution(unittest.TestCase):
         with mock.patch.dict(os.environ, env, clear=True):
             self.assertEqual(
                 "reflector" if os.environ.get("RMC_CHILD") else "session", "session")
+
+
+class TestDefectReport(unittest.TestCase):
+    """A report is written, never sent. RMC's no-egress promise is on the docs
+    page, and it is worth more than the convenience of filing automatically."""
+
+    def setUp(self) -> None:
+        from rmc import report
+        from rmc.store import Store
+        self.report = report
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        Store.init(Path(self.tmp))
+        self.store = Store.discover(Path(self.tmp))
+
+    def test_report_module_makes_no_network_calls(self) -> None:
+        src = (Path(__file__).resolve().parents[1] / "rmc" / "report.py").read_text()
+        for banned in ("urllib", "requests", "http.client", "socket.", "urlopen"):
+            self.assertNotIn(banned, src, f"{banned} would break the no-egress promise")
+
+    def test_secrets_in_the_description_are_redacted(self) -> None:
+        body = self.report.build(self.store, "died with token=ghp_AAAABBBBCCCCDDDDEEEEFFFF1234")
+        self.assertNotIn("ghp_AAAABBBBCCCCDDDDEEEEFFFF1234", body)
+        self.assertIn("[REDACTED]", body)
+
+    def test_no_lesson_text_leaks_into_a_report(self) -> None:
+        """Node ids are opaque; lesson bodies are the user's own work and often
+        describe their codebase."""
+        from rmc.node import Node
+        secret = "the acme billing service lives behind an internal proxy"
+        self.store.save_node(Node(id="n_zzz", family="f", title="Internal", body=secret))
+        body = self.report.build(self.store, "capture is not firing")
+        self.assertNotIn(secret, body)
+        self.assertNotIn("Internal", body)
+
+    def test_it_writes_to_disk_and_hands_back_a_command(self) -> None:
+        path = self.report.write(self.store, "reflector captured nothing")
+        self.assertTrue(path.exists())
+        cmd = self.report.gh_command(path, 'a "quoted" title')
+        self.assertIn("gh issue create", cmd)
+        self.assertIn(str(path), cmd)
+        self.assertNotIn('"a "quoted" title"', cmd, "quotes must not break the command")
+
+    def test_the_reflector_is_told_to_ask_rather_than_file(self) -> None:
+        from rmc import hooks
+        flat = " ".join(hooks.FORK_PROMPT.split())
+        self.assertIn("rmc report", flat)
+        self.assertIn("ask the user whether they want it filed", flat)
+        self.assertIn("never file it yourself", flat)
