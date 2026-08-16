@@ -340,10 +340,9 @@ figure.fig { margin: 0 0 30px; }
 
 /* nodes below the apex are kept, but they are not what recall pays for */
 .lesson-card.stored {
-  font-size: 12px;
-  padding: 7px 12px;
-  opacity: .42;
-  transition: opacity .4s ease, background .4s ease;
+  padding: 9px 13px;
+  opacity: .38;
+  transition: opacity .55s ease;
 }
 .tier.apex .lesson-card.stored { opacity: 1; }
 .tier.landed .lesson-card { animation: land .9s ease 1; }
@@ -408,7 +407,9 @@ figure.fig { margin: 0 0 30px; }
   z-index: 60;
   margin: 0 !important;
   pointer-events: none;
-  transition: transform .75s cubic-bezier(.45,0,.2,1);
+  opacity: 1;
+  transition: transform .75s cubic-bezier(.45,0,.2,1),
+              width .75s cubic-bezier(.45,0,.2,1);
   box-shadow: 0 18px 36px rgba(0,0,0,.5);
 }
 
@@ -455,20 +456,24 @@ figure.fig { margin: 0 0 30px; }
 .merge-row > .lesson-card {
   flex: 1 1 0;
   min-width: 0;
-  transition: transform .58s cubic-bezier(.55,0,.25,1),
-              opacity .28s ease,
-              box-shadow .35s ease,
-              background .35s ease,
-              padding .35s ease,
-              flex-basis .5s cubic-bezier(.4,0,.2,1);
+  transition: transform .8s cubic-bezier(.32,0,.12,1),
+              opacity .5s ease,
+              box-shadow .4s ease,
+              background .4s ease,
+              padding .4s ease;
 }
+/* draw apart first — the anticipation is what makes the collision read */
 .merge-row.armed > .lesson-card {
   background: #24242b;
   padding: 10px 14px;
   box-shadow: 0 0 0 1px rgba(217,119,87,.85), 0 0 26px rgba(217,119,87,.26);
+  transition: transform .5s cubic-bezier(.3,0,.3,1),
+              box-shadow .4s ease, background .4s ease, padding .4s ease;
 }
+.merge-row.armed > .merge-a { transform: translateX(-12px); }
+.merge-row.armed > .merge-b { transform: translateX(12px); }
 .merge-row.clash > .merge-a { transform: translateX(calc(50% + 6px)); }
-.merge-row.clash > .merge-b { transform: translateX(calc(-50% - 6px)); opacity: .55; }
+.merge-row.clash > .merge-b { transform: translateX(calc(-50% - 6px)); opacity: .45; }
 
 /* the flash at the point of impact */
 .merge-row .burst {
@@ -528,6 +533,53 @@ figure.fig { margin: 0 0 30px; }
 }
 .cc-status b { color: var(--cc-accent); font-weight: 400; }
 .cc-status .right { color: #a9a9b3; text-align: right; white-space: nowrap; }
+
+/* Transport. Scrubbing is only honest if seeking lands instantly, so every
+   transition is suppressed while the timeline is being replayed to a point. */
+.term-transport {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 12px;
+}
+.term-transport .pp {
+  width: 34px; height: 34px;
+  flex: none;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+.term-transport .pp:hover { border-color: var(--faint); }
+.term-transport .clock {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .06em;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.scrub {
+  flex: 1;
+  -webkit-appearance: none; appearance: none;
+  height: 3px;
+  background: #e2e2e2;
+  cursor: pointer;
+}
+.scrub::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 13px; height: 13px;
+  background: var(--ink);
+  border: 0; border-radius: 50%;
+}
+.scrub::-moz-range-thumb {
+  width: 13px; height: 13px;
+  background: var(--ink);
+  border: 0; border-radius: 50%;
+}
+.seeking * { transition: none !important; animation: none !important; }
 
 .fig-controls {
   display: flex; align-items: baseline; justify-content: space-between;

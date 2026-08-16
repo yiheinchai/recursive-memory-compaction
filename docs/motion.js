@@ -174,14 +174,16 @@
       };
     }
 
-    var ctx   = makeCard();
-    var ctxB  = makeCard(SEGS_B, TOK_B);
-    var work  = makeCard();
-    var workB = makeCard(SEGS_B, TOK_B);
-    var cards = [ctx, ctxB, work, workB];
     var limbo = h("div", "limbo");
     stage.appendChild(limbo);
-    cards.forEach(function (c) { limbo.appendChild(c.el); });
+    var ctx, ctxB, work, workB;
+    function freshCards() {
+      while (limbo.firstChild) limbo.removeChild(limbo.firstChild);
+      ctx = makeCard(); ctxB = makeCard(SEGS_B, TOK_B);
+      work = makeCard(); workB = makeCard(SEGS_B, TOK_B);
+      [ctx, ctxB, work, workB].forEach(function (c) { limbo.appendChild(c.el); });
+    }
+    freshCards();
 
     var tiers = root.querySelectorAll("[data-store-slot]");   // [L2, L1, L0]
     function tierFor(level) { return tiers[2 - level]; }
@@ -190,7 +192,7 @@
        level is now the apex — the only row recall ever reads. */
     function fileAt(card, level) {
       travel(card, tierFor(level), "in-store stored");
-      later(20, function () { markApex(level); });
+      later(820, function () { markApex(level); });   // after it lands, so the fade shows
     }
     function markApex(level) {
       Array.prototype.forEach.call(root.querySelectorAll(".tier"), function (t) {
@@ -239,11 +241,19 @@
     var lines = [userA].concat(openA, grind, closeA, reflect, B.all, C.all);
 
     // ---- primitives ------------------------------------------------------
-    var timers = [];
-    function later(ms, fn) { timers.push(setTimeout(fn, ms)); }
+    /* The timeline is a plan of absolute-time steps rather than a pile of
+       timeouts, so it can be paused and scrubbed: seeking is just "reset, then
+       replay every step up to T with transitions switched off". */
+    var plan = [], timers = [], seeking = false;
+    function at(ms, fn) { plan.push({ at: ms, fn: fn }); }
+    function later(ms, fn) {              // nested, cosmetic, relative delays
+      if (seeking) { fn(); return; }
+      timers.push(setTimeout(fn, ms));
+    }
     function clearAll() { timers.forEach(clearTimeout); timers = []; }
 
     function roll(i, ms) {
+      if (seeking) ms = 0;
       var over = Math.max(0, ins[i].offsetHeight - (panes[i].clientHeight - 30));
       panY[i] = -over;
       ins[i].style.transition = ms ? "transform " + ms + "ms linear"
@@ -252,6 +262,7 @@
     }
     function show(n, i) { n.classList.add("on"); if (i != null) roll(i); }
     function typeInto(text, ms, done) {
+      if (seeking) { typed.textContent = ""; if (done) done(); return; }
       var i = 0;
       var step = function () {
         typed.textContent = text.slice(0, ++i);
@@ -282,17 +293,19 @@
 
       var last = el.getBoundingClientRect();
       var shiftY = paneIdx != null ? (panY[paneIdx] - prevY) : 0;
+      if (seeking) return;
       if (!wasVisible) { el.classList.add("pop"); return; }
 
       var sr = stage.getBoundingClientRect();
       var ghost = el.cloneNode(true);
-      ghost.className = el.className + " ghost";
+      ghost.className = "lesson-card ghost";       // one look for the whole flight
       ghost.style.left = (first.left - sr.left) + "px";
       ghost.style.top = (first.top - sr.top) + "px";
       ghost.style.width = first.width + "px";
       stage.appendChild(ghost);
       el.style.visibility = "hidden";
       void ghost.offsetWidth;
+      ghost.style.width = last.width + "px";
       ghost.style.transform = "translate(" + (last.left - first.left) + "px," +
                               (last.top + shiftY - first.top) + "px)";
       later(760, function () {
@@ -302,6 +315,7 @@
     }
 
     function countCard(card, from, to, ms) {
+      if (seeking) { card.tok.textContent = to; return; }
       var t0 = null;
       requestAnimationFrame(function tick(now) {
         if (t0 === null) t0 = now;
@@ -341,12 +355,7 @@
       panes[0].classList.remove("dim", "rushing");
       panes.forEach(function (p) { p.classList.remove("gone"); });
       rushTag.classList.remove("on");
-      cards.forEach(function (c) {
-        c.el.className = "lesson-card";
-        c.el.style.visibility = "";
-        limbo.appendChild(c.el);
-        c.level(0);
-      });
+      freshCards();
       Array.prototype.forEach.call(tiers, function (sl) {
         while (sl.firstChild) sl.removeChild(sl.firstChild);
       });
@@ -361,41 +370,41 @@
       tab(0);
     }
 
-    // ---- the run ---------------------------------------------------------
-    function run() {
-      reset();
-
-      typeInto(PROMPT_A, 38, function () {
-        typed.textContent = ""; show(userA, 0); foot.textContent = "1,180 tokens";
+    // ---- the plan --------------------------------------------------------
+    function build() {
+      at(0, function () {
+        typeInto(PROMPT_A, 38, function () {
+          typed.textContent = ""; show(userA, 0); foot.textContent = "1,180 tokens";
+        });
       });
       var t = PROMPT_A.length * 38 + 460;
 
-      later(t + 250, function () { show(openA[0], 0); });
-      later(t + 750, function () { show(openA[1], 0); });
-      later(t + 1300, function () {
+      at(t + 250, function () { show(openA[0], 0); });
+      at(t + 750, function () { show(openA[1], 0); });
+      at(t + 1300, function () {
         grind.forEach(function (n) { n.classList.add("on"); });
         panes[0].classList.add("rushing");
         rushTag.classList.add("on");
         requestAnimationFrame(function () { roll(0, 3200); });
       });
       [1700, 2200, 2700, 3200, 3700, 4200].forEach(function (d, i) {
-        later(t + d, function () {
+        at(t + d, function () {
           foot.textContent = [1600, 2200, 2700, 3300, 3800, 4200][i].toLocaleString() + " tokens";
         });
       });
-      later(t + 4600, function () {
+      at(t + 4600, function () {
         panes[0].classList.remove("rushing"); rushTag.classList.remove("on");
       });
-      later(t + 4900, function () { show(closeA[0], 0); });
-      later(t + 5500, function () { show(closeA[1], 0); });
-      later(t + 6000, function () { foot.textContent = "4,200 tokens to get here"; });
-      later(t + 6500, function () {
+      at(t + 4900, function () { show(closeA[0], 0); });
+      at(t + 5500, function () { show(closeA[1], 0); });
+      at(t + 6000, function () { foot.textContent = "4,200 tokens to get here"; });
+      at(t + 6500, function () {
         show(reflect[0], 0); title.textContent = "RMC · reflecting on session 14";
       });
-      later(t + 7300, function () { show(reflect[1], 0); });
-      later(t + 7900, function () { work.level(0); travel(work, mountA, "inline", 0); });
-      later(t + 8900, function () { work.el.classList.add("lift"); panes[0].classList.add("dim"); });
-      later(t + 9700, function () {
+      at(t + 7300, function () { show(reflect[1], 0); });
+      at(t + 7900, function () { work.level(0); travel(work, mountA, "inline", 0); });
+      at(t + 8900, function () { work.el.classList.add("lift"); panes[0].classList.add("dim"); });
+      at(t + 9700, function () {
         work.el.classList.remove("lift");
         fileAt(work, 0);
         storeNote.textContent = "1 lesson · apex L0 · 260 tok";
@@ -403,19 +412,19 @@
       });
 
       function act(S, idx, prompt, level, startAt, titleText, doneText, pair) {
-        later(startAt, function () {
+        at(startAt, function () {
           tab(idx);
           panes.forEach(function (p, i) { p.classList.toggle("gone", i !== idx); });
           title.textContent = titleText;
           foot.textContent = "";
         });
-        later(startAt + 450, function () {
+        at(startAt + 450, function () {
           typeInto(prompt, 38, function () { typed.textContent = ""; show(S.user, idx); });
         });
         var u = startAt + 450 + prompt.length * 38 + 760;
 
-        later(u + 150, function () { show(S.recall, idx); });
-        later(u + 750, function () {
+        at(u + 150, function () { show(S.recall, idx); });
+        at(u + 750, function () {
           var total = pair ? TOK[level] + TOK_B[0] : TOK[level];
           S.txt.textContent = pair
             ? "RMC · 2 lessons · " + total + " tok"
@@ -441,22 +450,22 @@
         });
 
         var k = u + 1700;
-        S.rows.forEach(function (r, i) { later(k + i * 600, function () { show(r, idx); }); });
+        S.rows.forEach(function (r, i) { at(k + i * 600, function () { show(r, idx); }); });
         k += S.rows.length * 600;
-        later(k + 250, function () {
+        at(k + 250, function () {
           foot.textContent = (level === 0 ? "340" : "290") + " tokens · first try";
         });
-        later(k + 800, function () { show(S.comp, idx); });
+        at(k + 800, function () { show(S.comp, idx); });
 
         if (!pair) {
-          later(k + 1300, function () { work.level(level); travel(work, S.end, "inline", idx); });
-          later(k + 2000, function () { compress(work, level, level + 1, idx); });
-          later(k + 4200, function () {
+          at(k + 1300, function () { work.level(level); travel(work, S.end, "inline", idx); });
+          at(k + 2000, function () { compress(work, level, level + 1, idx); });
+          at(k + 4200, function () {
             fileAt(work, level + 1);
             storeNote.textContent = "1 lesson · apex L" + (level + 1) + " · " + TOK[level + 1] + " tok";
             work = makeCard(); limbo.appendChild(work.el);
           });
-          later(k + 5400, function () { foot.textContent = doneText; });
+          at(k + 5400, function () { foot.textContent = doneText; });
           return k + 5400;
         }
 
@@ -465,16 +474,16 @@
            other, and what comes out is one new lesson. */
         var row2 = h("div", "merge-row");
         var burst = h("span", "burst");
-        later(k + 1300, function () {
+        at(k + 1300, function () {
           work.level(level); workB.level(0);
           row2.appendChild(burst);
           S.end.appendChild(row2);
           travel(work, row2, "inline merge-a", idx);
           travel(workB, row2, "inline merge-b", idx);
         });
-        later(k + 2400, function () { row2.classList.add("armed"); });
-        later(k + 2900, function () { row2.classList.add("clash"); });
-        later(k + 3450, function () {
+        at(k + 2200, function () { row2.classList.add("armed"); });
+        at(k + 3050, function () { row2.classList.add("clash"); });
+        at(k + 3850, function () {
           var was = TOK[level] + TOK_B[0];
           row2.classList.add("boom");
           workB.el.className = "lesson-card";
@@ -485,24 +494,24 @@
           countCard(work, was, TOK[3], 850);
           roll(idx);
         });
-        later(k + 4400, function () {
+        at(k + 4800, function () {
           row2.classList.remove("boom");
           work.el.classList.remove("born");
         });
-        later(k + 4900, function () {
+        at(k + 5300, function () {
           fileAt(work, 2);
           storeNote.textContent = "3 nodes · apex L2 · shared parent · " + TOK[3] + " tok";
           work = makeCard(); limbo.appendChild(work.el);
         });
-        later(k + 6100, function () { foot.textContent = doneText; });
-        return k + 6100;
+        at(k + 6500, function () { foot.textContent = doneText; });
+        return k + 6500;
       }
 
       var e1 = act(B, 1, PROMPT_B, 0, t + 12000, "Add retry to the payments client",
                    "260 → 146 tok · 44% cheaper to recall", false);
 
       // Something learned in a different repo lands in the same global store.
-      later(e1 + 700, function () {
+      at(e1 + 700, function () {
         var b = makeCard(SEGS_B, TOK_B);
         limbo.appendChild(b.el);
         b.level(0);
@@ -513,42 +522,87 @@
       });
       var e2 = act(C, 2, PROMPT_C, 1, e1 + 2400, "Same for the webhook sender",
                    "2 lessons · 238 tok  →  one shared parent · 118 tok", true);
-      later(e2 + 4200, run);
+      return e2 + 4000;
     }
 
-    if (REDUCED) {
+    // ---- transport: play, pause, scrub -----------------------------------
+    var DUR = 0, pos = 0, playing = false, fired = 0, wall = 0, raf = null;
+    var pp = q("[data-playpause]"), scrub = q("[data-scrub]"), clock = q("[data-clock]");
+
+    function fmt(ms) {
+      var sec = Math.max(0, Math.round(ms / 1000));
+      return Math.floor(sec / 60) + ":" + ("0" + (sec % 60)).slice(-2);
+    }
+    function paintBar() {
+      if (scrub && document.activeElement !== scrub) {
+        scrub.value = String(Math.round((pos / DUR) * 1000));
+      }
+      if (clock) clock.textContent = fmt(pos) + " / " + fmt(DUR);
+    }
+    /* Seeking is a replay, not a rewind: reset, then run every step up to T
+       with transitions suppressed so the frame lands instantly. */
+    function seek(ms) {
+      seeking = true;
+      root.classList.add("seeking");
       reset();
-      tab(2);
-      panes.forEach(function (p, i) { p.classList.toggle("gone", i !== 2); });
-      ctx.level(1); ctxB.level(0);
-      C.txt.textContent = "RMC · 2 lessons · 238 tok";
-      C.all.forEach(function (n) { n.classList.add("on"); });
-      C.top.appendChild(ctx.el); ctx.el.className = "lesson-card inline";
-      C.top.appendChild(ctxB.el); ctxB.el.className = "lesson-card inline";
-      var m = makeCard(); m.level(3);
-      tierFor(2).appendChild(m.el); m.el.className = "lesson-card in-store stored";
-      var a1 = makeCard(); a1.level(1);
-      tierFor(1).appendChild(a1.el); a1.el.className = "lesson-card in-store stored";
-      var b1 = makeCard(SEGS_B, TOK_B); b1.level(0);
-      tierFor(1).appendChild(b1.el); b1.el.className = "lesson-card in-store stored";
-      var a0 = makeCard(); a0.level(0);
-      tierFor(0).appendChild(a0.el); a0.el.className = "lesson-card in-store stored";
-      markApex(2);
-      storeNote.textContent = "3 nodes · apex L2 · shared parent · " + TOK[3] + " tok";
-      title.textContent = "Same for the webhook sender";
-      foot.textContent = "2 lessons · 238 tok  →  one shared parent · 118 tok";
+      fired = 0;
+      while (fired < plan.length && plan[fired].at <= ms) { plan[fired].fn(); fired++; }
+      pos = ms;
+      wall = performance.now() - ms;
+      void root.offsetWidth;
+      seeking = false;
+      root.classList.remove("seeking");
+      paintBar();
+    }
+    function tick(now) {
+      if (!playing) return;
+      pos = now - wall;
+      while (fired < plan.length && plan[fired].at <= pos) { plan[fired].fn(); fired++; }
+      if (pos >= DUR) { seek(0); wall = performance.now(); }
+      paintBar();
+      raf = requestAnimationFrame(tick);
+    }
+    function play() {
+      if (playing) return;
+      playing = true;
+      wall = performance.now() - pos;
+      if (pp) { pp.textContent = "❚❚"; pp.setAttribute("aria-label", "Pause"); }
+      raf = requestAnimationFrame(tick);
+    }
+    function pause() {
+      if (!playing) return;
+      playing = false;
+      cancelAnimationFrame(raf);
+      clearAll();
+      if (pp) { pp.textContent = "▶"; pp.setAttribute("aria-label", "Play"); }
+    }
+
+    plan = [];
+    DUR = build();
+    seek(0);
+
+    if (REDUCED) {
+      seek(DUR - 500);
+      if (pp) pp.parentNode.removeChild(pp);
       return;
     }
 
     var frame = 0;
     setInterval(function () { spin.textContent = SPIN[frame++ % SPIN.length]; }, 260);
-    var replay = q("[data-replay]");
-    if (replay) replay.addEventListener("click", run);
 
-    var live = false;
+    if (pp) pp.addEventListener("click", function () { playing ? pause() : play(); });
+    if (scrub) {
+      scrub.addEventListener("input", function () {
+        pause();
+        seek((Number(scrub.value) / 1000) * DUR);
+      });
+    }
+    var replay = q("[data-replay]");
+    if (replay) replay.addEventListener("click", function () { seek(0); play(); });
+
+    // Only run while it is on screen; remember where the viewer left it.
     new IntersectionObserver(function (e) {
-      if (e[0].isIntersecting && !live) { live = true; run(); }
-      else if (!e[0].isIntersecting && live) { live = false; clearAll(); }
+      e[0].isIntersecting ? play() : pause();
     }, { threshold: 0.2 }).observe(root);
   }
 
