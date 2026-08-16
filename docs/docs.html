@@ -43,13 +43,15 @@
 
   <!-- ------------------------------------------------------------ toc -->
   <aside class="toc">
-    <div class="grp">Start</div>
-    <a href="#thesis">The thesis</a>
-    <a href="#install">Install</a>
+    <div class="grp">Understanding it</div>
+    <a href="#idea">The idea, in one picture</a>
+    <a href="#different">Why this is different</a>
+    <a href="#ideas">The three ideas</a>
+    <a href="#using">Living with it</a>
+
+    <div class="grp">Technical detail</div>
     <a href="#loop">The loop</a>
     <a href="#rule">The governing rule</a>
-
-    <div class="grp">The seven stages</div>
     <a href="#recall">01 &nbsp;Recall</a>
     <a href="#reflect">02 &nbsp;Reflection</a>
     <a href="#attribute">03 &nbsp;Attribution</a>
@@ -70,38 +72,171 @@
   <!-- ----------------------------------------------------------- body -->
   <main class="prose">
 
-    <h2 id="thesis">The thesis</h2>
-    <p>
-      The standard learning cycle produces one artifact and stops:
-    </p>
-<pre>task + steering  →  correct output  →  reflection  →  lesson</pre>
-    <p>
-      RMC keeps going. Every time a lesson is <i>used</i> and the work succeeds,
-      that is evidence the lesson contained slack — so it earns an attempt at a
-      shorter form:
-    </p>
-<pre>task + lesson(L0)  → used, worked → reflect → lesson(L1)   <span class="c">~75% tokens</span>
-task + lesson(L1)  → used, worked → reflect → lesson(L2)   <span class="c">~55%</span>
-task + lesson(L2)  → used, worked → reflect → lesson(L3)   <span class="c">~40%</span></pre>
-    <p>
-      And lessons that are repeatedly useful <i>together</i> earn a shared
-      parent, which is a different kind of abstraction: generalisation across
-      lessons rather than compression within one.
-    </p>
-    <div class="note">
-      <b>The more a memory is used, the cheaper and more general it becomes.</b>
-      That is the whole idea. Usage drives abstraction — not a schedule, not a
-      size cap, not a similarity score.
+<h2 id="idea">The idea, in one picture</h2>
+<p>
+  RMC is memory for a coding agent that <b>gets cheaper the more you use
+  it</b>. A lesson is written down once, in full. Every time it turns out to be
+  useful, it earns a shorter form — and the shorter form is what gets loaded
+  next time. Nothing is ever thrown away; the long version just sinks another
+  level down.
+</p>
+<figure class="fig tree" data-tree>
+  <div class="plate" data-tree-canvas></div>
+  <div class="tree-hud">
+    <div class="stat"><span class="k">Lessons kept</span><span class="v" data-tree-kept>0</span></div>
+    <div class="stat"><span class="k">Tokens loaded / prompt</span><span class="v" data-tree-tok>0</span></div>
+    <div class="tree-steps" role="tablist" aria-label="Steps">
+      <button role="tab" data-tree-step aria-selected="true">1</button>
+      <button role="tab" data-tree-step aria-selected="false">2</button>
+      <button role="tab" data-tree-step aria-selected="false">3</button>
+      <button role="tab" data-tree-step aria-selected="false">4</button>
+      <button role="tab" data-tree-step aria-selected="false">5</button>
+      <button role="tab" data-tree-step aria-selected="false">6</button>
+      <button role="tab" data-tree-step aria-selected="false">7</button>
     </div>
-    <p>
-      At retrieval you load the most compressed node that still works, and only
-      pay for detail when the abstraction fails. Nothing is ever deleted: a
-      compression adds a level <i>above</i>, and the verbose original stays
-      reachable underneath it forever.
-    </p>
+  </div>
+  <p class="tree-cap" data-tree-cap></p>
+</figure>
+<p>
+  Two things happen in that picture, and they are the whole system. The store
+  <b>grows</b> — more lessons, more levels, more detail retained. The band at the
+  top, which is what actually enters your context on every prompt,
+  <b>shrinks</b>. Knowledge up, cost down, at the same time.
+</p>
+<div class="note">
+  Most memory systems tie those two together: more remembered means more loaded.
+  RMC's one structural bet is that they can be pulled apart, because
+  <b>knowing a thing and paying to carry it are different problems</b>.
+</div>
 
-    <h2 id="install">Install</h2>
-    <p>
+<h2 id="different">Why this is different</h2>
+<p>
+  Agent memory has had two shapes, and both of them decay — just in opposite
+  directions.
+</p>
+
+<figure class="fig">
+  <div class="plate">
+    <svg viewBox="0 0 900 300" fill="none" stroke="#1a1a1a" stroke-width="1.5"
+         role="img" aria-label="Three approaches: append grows without bound, summarise stays cheap but loses detail, RMC stays cheap and keeps detail">
+      <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#1a1a1a" stroke="none">
+        <text x="0" y="16" font-size="12" letter-spacing="1.3">APPEND EVERYTHING</text>
+        <text x="310" y="16" font-size="12" letter-spacing="1.3">SUMMARISE EVERYTHING</text>
+        <text x="620" y="16" font-size="12" letter-spacing="1.3">RMC</text>
+      </g>
+      <g>
+        <path d="M0 200h270" opacity=".35"/><path d="M0 200V40" opacity=".35"/>
+        <path d="M0 196 L54 178 L108 148 L162 104 L216 66 L262 34" stroke-width="2.6"/>
+        <g fill="#1a1a1a" stroke="none">
+          <circle cx="16" cy="220" r="4"/><circle cx="40" cy="220" r="4"/><circle cx="64" cy="220" r="4"/>
+          <circle cx="88" cy="220" r="4"/><circle cx="112" cy="220" r="4"/><circle cx="136" cy="220" r="4"/>
+          <circle cx="160" cy="220" r="4"/><circle cx="184" cy="220" r="4"/>
+        </g>
+        <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#1a1a1a" stroke="none">
+          <text x="0" y="252" font-size="12" opacity=".55">detail kept: all of it</text>
+          <text x="0" y="278" font-size="13.5">Unaffordable by session 40.</text>
+        </g>
+      </g>
+      <g transform="translate(310,0)">
+        <path d="M0 200h270" opacity=".35"/><path d="M0 200V40" opacity=".35"/>
+        <path d="M0 196 L54 150 L108 142 L162 146 L216 141 L262 144" stroke-width="2.6"/>
+        <g fill="#1a1a1a" stroke="none">
+          <circle cx="16" cy="220" r="4"/><circle cx="40" cy="220" r="4"/><circle cx="64" cy="220" r="4"/>
+        </g>
+        <g stroke="#1a1a1a" opacity=".3">
+          <path d="M84 216l8 8M92 216l-8 8"/><path d="M108 216l8 8M116 216l-8 8"/>
+          <path d="M132 216l8 8M140 216l-8 8"/><path d="M156 216l8 8M164 216l-8 8"/>
+          <path d="M180 216l8 8M188 216l-8 8"/>
+        </g>
+        <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#1a1a1a" stroke="none">
+          <text x="0" y="252" font-size="12" opacity=".55">detail kept: whatever survived</text>
+          <text x="0" y="278" font-size="13.5">You find out when it breaks.</text>
+        </g>
+      </g>
+      <g transform="translate(620,0)">
+        <path d="M0 200h270" opacity=".35"/><path d="M0 200V40" opacity=".35"/>
+        <path d="M0 196 L48 158 L96 120 L144 138 L192 158 L262 172" stroke-width="2.6"/>
+        <g fill="#1a1a1a" stroke="none">
+          <circle cx="16" cy="220" r="4"/><circle cx="40" cy="220" r="4"/><circle cx="64" cy="220" r="4"/>
+          <circle cx="88" cy="220" r="4"/><circle cx="112" cy="220" r="4"/><circle cx="136" cy="220" r="4"/>
+          <circle cx="160" cy="220" r="4"/><circle cx="184" cy="220" r="4"/>
+        </g>
+        <path d="M6 232h188" stroke-dasharray="3 3" opacity=".45"/>
+        <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#1a1a1a" stroke="none">
+          <text x="0" y="252" font-size="12" opacity=".55">detail kept: all of it, one level down</text>
+          <text x="0" y="278" font-size="13.5">Cheap and complete.</text>
+        </g>
+      </g>
+    </svg>
+  </div>
+  <figcaption>Vertical axis: <b>tokens loaded per prompt.</b> Dots below the axis: individual specifics — a port, a flag, a constant — still recoverable.</figcaption>
+</figure>
+
+<h3>Append-only memory dies of weight</h3>
+<p>
+  Keep every note and the store grows without bound. Retrieval becomes guesswork
+  because there is too much to choose between, and the context bill eventually
+  dwarfs the task the memory was supposed to help with. It is correct and
+  unusable.
+</p>
+
+<h3>Summarising memory dies of forgetting</h3>
+<p>
+  Compress on a schedule or a size cap and you stay cheap, but a summariser
+  drops exact values first — the port, the constant, the one flag. You do not
+  find out at the moment of loss; you find out weeks later when something
+  breaks, and by then the original is gone.
+</p>
+
+<h3>RMC's move: compress on evidence, and keep the original</h3>
+<p>
+  A lesson is only shortened after it has demonstrably worked, and the shorter
+  form has to prove itself against real past work before it replaces anything.
+  The long form is not overwritten — it moves one level down and stays
+  reachable. So the cost falls like a summariser while the completeness holds
+  like an append-only store.
+</p>
+
+<h2 id="ideas">The three ideas</h2>
+<p>Everything else in this document is machinery around these.</p>
+
+<h3>1. Use is the compression signal</h3>
+<p>
+  Not age, not size, not a cron schedule. A lesson earns a compression attempt
+  only when it was loaded into context, <i>actually used</i>, and the work
+  succeeded. That is the one signal that means something: if the agent got the
+  job done with this lesson in hand, the lesson contained slack, and slack is
+  exactly what compression removes.
+</p>
+<p>
+  This is why <a href="#attribute">attribution</a> matters so much. Being served
+  is a retrieval decision; being used is an outcome. Conflating them lets an
+  irrelevant lesson accrue a record of usefulness it never earned.
+</p>
+
+<h3>2. Compression adds a level, it never deletes one</h3>
+<p>
+  A compressed lesson becomes the new <i>parent</i>. Its verbose source stays
+  exactly where it was, one level down, permanently. That makes "load the short
+  version first" a free bet: the worst outcome is that you walk back down and
+  pay what you would have paid anyway.
+</p>
+
+<h3>3. Every loss is recorded, as claims</h3>
+<p>
+  A shorter lesson must declare what it removed — as discrete claims, each
+  naming the node that still holds it. Without that, walking back down is a
+  blind search over a tree; with it, it is a short ranked list. This is what
+  makes the whole scheme safe rather than merely cheap, and it is described in
+  full under <a href="#descend">descent</a>.
+</p>
+
+<h2 id="using">Living with it</h2>
+<p>
+  You do not drive RMC. You install it once and then work normally — it lives in
+  hooks, and every expensive step runs detached so nothing blocks your turn.
+</p>
+<p>
       Python 3.10+ and at least one of <code>claude</code> or <code>codex</code>.
       No third-party Python dependencies — <code>./bin/rmc</code> needs no
       virtualenv because the package is stdlib-only.
@@ -127,8 +262,24 @@ task + lesson(L2)  → used, worked → reflect → lesson(L3)   <span class="c"
       Codex also works as an execution backend for any RMC install
       (<code>rmc config agent codex</code>).
     </p>
+<h3>What you actually see</h3>
+<pre>⋯ Recalling lessons…              <span class="c">(while the hook runs)</span>
+⋯ RMC · 3 lessons · 961 tok       <span class="c">(after injection)</span></pre>
+<p>
+  An injection is never silent. A memory system that edits your prompts without
+  saying so is one you cannot notice going wrong. When you want the full picture
+  of what it did to a prompt, <code>rmc trace</code> shows every stage.
+</p>
 
-    <h2 id="loop">The loop</h2>
+<h2 id="detail" class="part">Technical detail</h2>
+<p style="color:var(--muted)">
+  Everything below is the mechanism. You do not need any of it to use RMC, and
+  it is written for the reader who wants to know exactly what runs and why each
+  choice was made rather than its alternative.
+</p>
+
+
+<h2 id="loop">The loop</h2>
     <p>You do not drive RMC. You work normally, and it runs in hooks.</p>
     <div class="scroll">
     <table>
@@ -148,7 +299,7 @@ task + lesson(L2)  → used, worked → reflect → lesson(L3)   <span class="c"
       reflectors forever.
     </p>
 
-    <h2 id="rule">The governing rule</h2>
+<h2 id="rule">The governing rule</h2>
     <div class="note"><b>The harness owns structure. The model owns meaning.</b></div>
     <p>
       The harness owns the graph, the traversal, budgets, caches, the schemas
@@ -188,7 +339,8 @@ task + lesson(L2)  → used, worked → reflect → lesson(L3)   <span class="c"
     </p>
 
     <!-- ================================================== 01 recall -->
-    <h2 id="recall">01 &nbsp;Recall</h2>
+
+<h2 id="recall">01 &nbsp;Recall</h2>
     <p>
       Runs on <code>UserPromptSubmit</code>. Produces the block injected above
       your prompt.
@@ -256,16 +408,10 @@ task + lesson(L2)  → used, worked → reflect → lesson(L3)   <span class="c"
         thinking about the topic.</li>
     </ul>
 
-    <h3>What you see</h3>
-<pre>⋯ Recalling lessons…              <span class="c">(while the hook runs)</span>
-⋯ RMC · 3 lessons · 961 tok       <span class="c">(after injection)</span></pre>
-    <p>
-      An injection is never silent. A memory system that edits your prompts
-      without saying so is one you cannot notice going wrong.
-    </p>
 
     <!-- ================================================= 02 reflect -->
-    <h2 id="reflect">02 &nbsp;Reflection</h2>
+
+<h2 id="reflect">02 &nbsp;Reflection</h2>
     <p>
       Runs on <code>Stop</code>, per turn. Its job is to <b>schedule
       attention</b>, not to judge.
@@ -309,7 +455,8 @@ task + lesson(L2)  → used, worked → reflect → lesson(L3)   <span class="c"
     </p>
 
     <!-- =============================================== 03 attribute -->
-    <h2 id="attribute">03 &nbsp;Attribution</h2>
+
+<h2 id="attribute">03 &nbsp;Attribution</h2>
     <p>
       The question that drives everything downstream: <b>which served lessons
       actually bore on the work?</b>
@@ -354,7 +501,8 @@ task + lesson(L2)  → used, worked → reflect → lesson(L3)   <span class="c"
     <p><code>rmc status</code> reports <code>precision</code> (used ÷ served).</p>
 
     <!-- ============================================= 04 consolidate -->
-    <h2 id="consolidate">04 &nbsp;Consolidation</h2>
+
+<h2 id="consolidate">04 &nbsp;Consolidation</h2>
     <p>New knowledge is reconciled with old before it is stored, never appended blindly.</p>
 
     <h3>Scope, decided first</h3>
@@ -407,7 +555,8 @@ task + lesson(L2)  → used, worked → reflect → lesson(L3)   <span class="c"
     </p>
 
     <!-- ================================================ 05 compress -->
-    <h2 id="compress">05 &nbsp;Compression</h2>
+
+<h2 id="compress">05 &nbsp;Compression</h2>
     <p>
       A node becomes eligible when it is an active apex, below
       <code>max_level</code> (6), has at least <code>min_successes</code> (2)
@@ -467,7 +616,8 @@ accept iff pass_rate &gt;= 1.0  and  tokens &lt;= 0.75 × original</pre>
     </p>
 
     <!-- ================================================== 06 descend -->
-    <h2 id="descend">06 &nbsp;Descent</h2>
+
+<h2 id="descend">06 &nbsp;Descent</h2>
     <p><i>When the compressed lesson fails, which child do you go to?</i></p>
     <p>
       Compression normally destroys the information you would need to invert it,
@@ -505,7 +655,8 @@ accept iff pass_rate &gt;= 1.0  and  tokens &lt;= 0.75 × original</pre>
     </p>
 
     <!-- ==================================================== 07 dream -->
-    <h2 id="dream">07 &nbsp;Dreaming</h2>
+
+<h2 id="dream">07 &nbsp;Dreaming</h2>
     <p>
       <code>rmc dream</code> — whole-store consolidation, independent of any
       session. Every other path reacts to the session in front of it; this one
@@ -574,7 +725,8 @@ rmc dream --log all    <span class="c"># every dream on record</span>
 rmc dream --dry-run    <span class="c"># generate and validate, write nothing</span></pre>
 
     <!-- ================================================= data model -->
-    <h2 id="model">Data model</h2>
+
+<h2 id="model">Data model</h2>
 
     <h3>Node — one lesson at one level of abstraction</h3>
 <pre>id: n_7f2a91
@@ -628,7 +780,8 @@ accepted_summary: <span class="g">"..."</span>    <span class="c"># what the age
     </p>
 
     <!-- ======================================================== cli -->
-    <h2 id="cli">CLI</h2>
+
+<h2 id="cli">CLI</h2>
 
     <h3>Inspecting it</h3>
 <pre>rmc status                     <span class="c"># families, levels, precision, capture stats</span>
@@ -656,7 +809,8 @@ rmc resolve &lt;node-id&gt; [--drop]         <span class="c"># settle a contradi
     <p>Full reference: <a href="https://github.com/yiheinchai/rmc/blob/main/docs/cli.md">docs/cli.md</a>.</p>
 
     <!-- ===================================================== config -->
-    <h2 id="config">Configuration</h2>
+
+<h2 id="config">Configuration</h2>
     <p>
       <code>rmc config</code> with no arguments dumps everything; one argument
       reads a dotted key; two set it. Any key can be overridden per-run by an
@@ -711,7 +865,8 @@ rmc config recall.strategy delta-jump    <span class="c"># replace apex with the
 rmc config recall.strategy delta-patch   <span class="c"># default: apex + matched claims only</span></pre>
 
     <!-- ======================================================= eval -->
-    <h2 id="eval">Evaluation</h2>
+
+<h2 id="eval">Evaluation</h2>
     <p>
       RMC's claim is falsifiable, so <code>rmc eval</code> tries to falsify it:
       replay held-out episodes against every level of a lesson and see whether
@@ -746,7 +901,8 @@ rmc config recall.strategy delta-patch   <span class="c"># default: apex + match
     </p>
 
     <!-- ==================================================== privacy -->
-    <h2 id="privacy">Privacy</h2>
+
+<h2 id="privacy">Privacy</h2>
     <p>
       Everything passes through <code>redact.py</code> before touching disk — API
       keys, tokens, private keys, card numbers, <code>secret=…</code>
@@ -760,7 +916,8 @@ rmc config recall.strategy delta-patch   <span class="c"># default: apex + match
     </p>
 
     <!-- ======================================================= gaps -->
-    <h2 id="gaps">Not built yet</h2>
+
+<h2 id="gaps">Not built yet</h2>
     <ul>
       <li><b>Progressive disclosure.</b> Recall is one pass; there is no second
         retrieval mid-turn when the agent discovers it needs more.</li>
@@ -785,6 +942,7 @@ rmc config recall.strategy delta-patch   <span class="c"># default: apex + match
   </div>
 </footer>
 
+<script src="tree.js"></script>
 <script>
 // Highlight whichever section is currently in view. Headings are tracked in
 // document order so the topmost visible one wins as you scroll back up.

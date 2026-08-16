@@ -115,13 +115,12 @@ a:hover { text-decoration: underline; }
 
 /* --------------------------------------------------------------- hero */
 
-.hero {
-  display: grid;
-  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
-  gap: clamp(28px, 5vw, 72px);
-  padding: clamp(40px, 6vw, 76px) 0 clamp(32px, 5vw, 60px);
-  align-items: start;
+.hero-head {
+  padding-top: clamp(40px, 6vw, 74px);
+  padding-bottom: clamp(24px, 3vw, 36px);
 }
+.hero-head h1 { max-width: 26ch; }
+.hero-head .lede { max-width: 62ch; }
 h1 {
   font-size: clamp(38px, 5.6vw, 68px);
   line-height: 1.03;
@@ -137,91 +136,6 @@ h1 .accent { color: #a3a3a3; }
   margin: 0 0 34px;
 }
 .hero-cta { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
-
-/* ------------------------------------------------------------ catalog */
-
-.catalog { border-top: 1px solid var(--rule); margin-top: 34px; }
-.item {
-  display: grid;
-  grid-template-columns: 44px 1fr 12px;
-  align-items: center;
-  gap: 14px;
-  width: 100%;
-  padding: 17px 2px;
-  border: 0;
-  border-bottom: 1px solid var(--rule);
-  background: none;
-  font: inherit;
-  color: var(--muted);
-  text-align: left;
-  cursor: pointer;
-  transition: color .12s;
-}
-.item:hover { color: var(--ink); }
-.item .n {
-  font-family: var(--mono);
-  font-size: 12.5px;
-  color: var(--faint);
-  letter-spacing: .06em;
-}
-.item .t { font-size: 16.5px; }
-.item .dot { width: 8px; height: 8px; background: var(--accent); opacity: 0; }
-.item[aria-selected="true"] { color: var(--ink); }
-.item[aria-selected="true"] .t { font-weight: 600; }
-.item[aria-selected="true"] .n { color: var(--accent); }
-.item[aria-selected="true"] .dot { opacity: 1; }
-.item[aria-selected="true"] { box-shadow: inset 0 -2px 0 var(--accent); }
-
-/* --------------------------------------------------------------- plate */
-
-.stage { position: relative; }
-.panel {
-  position: relative;
-  background: var(--plate);
-  aspect-ratio: 4 / 3;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-}
-.panel svg { width: 78%; height: auto; display: block; }
-.panel svg[hidden] { display: none; }
-/* drafting crosshairs, as on technical drawings */
-.panel { border: 1px solid var(--rule); }
-.panel::before {
-  content: "";
-  position: absolute;
-  inset: 26px;
-  border: 1px solid rgba(0, 0, 0, .13);
-  pointer-events: none;
-}
-.tick {
-  position: absolute;
-  width: 9px;
-  height: 9px;
-  background: var(--ink);
-  z-index: 2;
-}
-.tick.tl { top: 21px; left: 21px; }
-.tick.tr { top: 21px; right: 21px; }
-.tick.bl { bottom: 21px; left: 21px; }
-.tick.br { bottom: 21px; right: 21px; }
-
-.caption { padding: 26px 0 0; }
-.caption .eyebrow {
-  font-family: var(--mono);
-  font-size: 11.5px;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  color: var(--accent);
-  margin-bottom: 12px;
-}
-.caption h2 {
-  font-size: clamp(26px, 3vw, 36px);
-  letter-spacing: -0.03em;
-  margin: 0 0 12px;
-  font-weight: 700;
-}
-.caption p { color: var(--muted); margin: 0; max-width: 62ch; }
 
 /* -------------------------------------------------------------- blocks */
 
@@ -342,6 +256,17 @@ footer a { color: var(--muted); }
 }
 .prose h2:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
 .prose h3 { font-size: 19px; margin: 30px 0 10px; letter-spacing: -.01em; }
+/* The divider between the intuitive half and the mechanism. */
+.prose h2.part {
+  font-size: 13px;
+  font-family: var(--mono);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--faint);
+  border-top: 2px solid var(--ink);
+  margin-top: 72px;
+  padding-top: 16px;
+}
 .prose p, .prose li { color: #2a2a2a; }
 .prose ul { padding-left: 20px; }
 .prose li { margin-bottom: 7px; }
@@ -355,8 +280,6 @@ footer a { color: var(--muted); }
 .note b { color: var(--ink); }
 
 @media (max-width: 900px) {
-  .hero { grid-template-columns: 1fr; }
-  .stage { order: -1; }
   .docs { grid-template-columns: 1fr; }
   .toc { position: static; border-bottom: 1px solid var(--rule); padding-bottom: 16px; }
   .nav-links a:not(.btn) { display: none; }
