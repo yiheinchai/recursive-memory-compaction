@@ -666,6 +666,31 @@ def cmd_dream(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_eval(args: argparse.Namespace) -> int:
+    """Score every level of every lesson against held-out episodes."""
+    from .evaluate import evaluate
+
+    store = need_store(args)
+    if store is None:
+        return 1
+    report = evaluate(
+        store,
+        make_adapter(store, args),
+        holdout=args.holdout,
+        samples=args.samples,
+        limit=args.limit,
+    )
+    print(report.render())
+    if args.verbose:
+        for case in report.cases:
+            print(f"\n{bold(case.episode_id)}  {dim(case.task[:80])}")
+            for level, arm in case.arms.items():
+                mark = green("pass") if arm.rate >= 0.5 else red("fail")
+                print(f"  {level:<5} {arm.tokens:>5}tok  {mark} {arm.rate:.0%}  "
+                      f"{dim((arm.reasons[0] if arm.reasons else '')[:80])}")
+    return 0
+
+
 def cmd_tree(args: argparse.Namespace) -> int:
     store = need_store(args)
     if store is None:
@@ -1086,6 +1111,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true")
     add_agent_flags(p)
     p.set_defaults(func=cmd_dream)
+
+    p = sub.add_parser("eval", help="does compression preserve transfer? measure it")
+    p.add_argument("--holdout", type=float, default=0.3, help="fraction of episodes to test on")
+    p.add_argument("--samples", type=int, default=1, help="repeats per arm; 1 is a coin toss")
+    p.add_argument("--limit", type=int, default=20)
+    p.add_argument("--verbose", "-v", action="store_true")
+    add_agent_flags(p)
+    p.set_defaults(func=cmd_eval)
 
     p = sub.add_parser("tree", help="visualise the lesson tree")
     p.add_argument("--family")

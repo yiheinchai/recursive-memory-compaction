@@ -1780,6 +1780,115 @@ class TestRoutingCost(StoreCase):
         self.assertLess(len(node.summary()), 300)
 
 
+class TestEval(StoreCase):
+    """The eval has to be able to deliver bad news, or it is a demo."""
+
+    def build_chain(self):
+        base = self.add_node(id="n_l0", family="f", level=0, body="Full lesson. @fact @detail")
+        top = self.add_node(id="n_l1", family="f", level=1, body="Short. @fact", derived_from=["n_l0"])
+        base.parents = [top.id]
+        self.store.save_node(base)
+        self.store.invalidate()
+        for i in range(4):
+            self.add_episode(f"e{i}", "f", f"task {i}", served=["n_l0"], used=["n_l0"],
+                             summary="did it with the fact")
+        return base, top
+
+    def grader(self, world):
+        """Answers the probe from the lesson, then grades blind."""
+        def route(prompt, schema):
+            if "RMC:judge" in prompt:
+                import re
+                m = re.search(r"<<<CANDIDATE\n(.*?)\nCANDIDATE>>>", prompt, re.DOTALL)
+                return {"pass": "@fact" in (m.group(1) if m else ""), "reason": "checked"}
+            m = __import__("re").search(r"<<<LESSON\n(.*?)\nLESSON>>>", prompt, __import__("re").DOTALL)
+            return m.group(1) if m else ""
+        return MockAdapter(router=route)
+
+    def test_it_measures_a_control_arm(self) -> None:
+        """Without one you measure the model's prior, not the lesson."""
+        from rmc.evaluate import CONTROL, evaluate
+
+        self.build_chain()
+        report = evaluate(self.store, self.grader(None), holdout=1.0, samples=1)
+        self.assertTrue(report.cases)
+        self.assertIn(CONTROL, report.cases[0].arms)
+        self.assertEqual(report.aggregate(CONTROL).rate, 0.0, "no lesson, no fact, no pass")
+        self.assertEqual(report.aggregate("L0").rate, 1.0)
+
+    def test_it_reports_lift_and_flags_a_useless_lesson(self) -> None:
+        """If the lesson does not beat the control, retention is meaningless."""
+        from rmc.evaluate import evaluate
+
+        self.build_chain()
+        always = MockAdapter(router=lambda p, s: (
+            {"pass": True, "reason": "ok"} if "RMC:judge" in p else "an answer"
+        ))
+        report = evaluate(self.store, always, holdout=1.0, samples=1)
+        self.assertAlmostEqual(report.lift, 0.0)
+        self.assertIn("barely beats no lesson", report.render())
+
+    def test_a_lossy_compression_shows_up_as_lost_transfer(self) -> None:
+        """The falsifiable claim: if L1 drops what mattered, the eval says so."""
+        from rmc.evaluate import evaluate
+
+        base, top = self.build_chain()
+        top.body = "Short, and missing the point."  # no @fact
+        self.store.save_node(top)
+        self.store.invalidate()
+
+        report = evaluate(self.store, self.grader(None), holdout=1.0, samples=1)
+        self.assertEqual(report.aggregate("L0").rate, 1.0)
+        self.assertEqual(report.aggregate("L1").rate, 0.0, "the eval must catch this")
+
+    def test_the_grader_never_sees_the_lesson(self) -> None:
+        """The ordinary replay judge takes the lesson as context, which would
+        identify the control arm by its absence."""
+        from rmc.evaluate import evaluate
+
+        seen: list = []
+
+        def route(prompt, schema):
+            if "RMC:judge" in prompt:
+                seen.append(prompt)
+                return {"pass": True, "reason": "ok"}
+            return "answer"
+
+        self.build_chain()
+        evaluate(self.store, MockAdapter(router=route), holdout=1.0, samples=1)
+        self.assertTrue(seen)
+        for prompt in seen:
+            self.assertNotIn("Full lesson", prompt)
+            self.assertNotIn("LESSON>>>", prompt)
+
+    def test_holdout_is_deterministic(self) -> None:
+        from rmc.evaluate import holdout_split
+
+        self.build_chain()
+        eps = self.store.episodes()
+        first = [e.id for e in holdout_split(eps, 0.5)]
+        second = [e.id for e in holdout_split(eps, 0.5)]
+        self.assertEqual(first, second, "an episode drifting between runs leaks")
+
+    def test_it_writes_nothing_to_the_store(self) -> None:
+        """An eval that mutates what it measures is measuring itself."""
+        from rmc.evaluate import evaluate
+
+        base, _ = self.build_chain()
+        before = base.stats.to_dict()
+        evaluate(self.store, self.grader(None), holdout=1.0, samples=1)
+        self.store.invalidate()
+        self.assertEqual(self.store.get("n_l0").stats.to_dict(), before)
+        self.assertEqual(len(self.store.episodes()), 4)
+
+    def test_small_samples_are_labelled_as_not_a_result(self) -> None:
+        from rmc.evaluate import evaluate
+
+        self.build_chain()
+        report = evaluate(self.store, self.grader(None), holdout=1.0, samples=1)
+        self.assertIn("NOT A RESULT", report.render())
+
+
 class TestHooks(StoreCase):
     def test_recursion_guard(self) -> None:
         import os

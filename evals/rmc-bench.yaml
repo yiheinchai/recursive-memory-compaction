@@ -1,0 +1,323 @@
+# RMC-Bench — procedural memory under compression.
+#
+# Every case names the `trap`: the specific wrong thing a competent model does
+# without the lesson. A case whose control arm passes is measuring the model's
+# prior, not the memory, and should be deleted rather than kept.
+#
+# See README.md for the four axes and what each `kind` is for.
+
+version: 1
+
+cases:
+
+  # ----------------------------------------------------------------- trap
+  # A strong, wrong default that the lesson overrides.
+
+  - id: delete-is-soft
+    kind: trap
+    family: internal-api
+    lesson: |
+      DELETE on the internal records API soft-deletes: it sets `deleted_at` and
+      the row stays queryable through the admin views. To actually remove data —
+      for a GDPR erasure or to free a unique constraint — you must pass
+      `?purge=true`, which is synchronous and irreversible.
+
+      A soft delete does NOT release unique indexes. Re-creating a record with
+      the same email after a plain DELETE fails with a constraint violation, and
+      the error names the index rather than the deleted row, so it reads as a
+      bug in the create path.
+    task: |
+      A user has asked us to erase their account under GDPR. Write the steps to
+      remove their record from the records API, and say how you would verify the
+      erasure worked.
+    expected: |
+      Uses `DELETE ...?purge=true`, noting that a plain DELETE only soft-deletes
+      and would not satisfy an erasure request. Verification checks the row is
+      gone rather than merely having `deleted_at` set.
+    trap: |
+      Calls plain DELETE and treats a 200 as erasure — leaving the data present
+      and the compliance obligation unmet.
+
+  - id: migrations-forward-only
+    kind: trap
+    family: migrations
+    lesson: |
+      Migrations in this repository are forward-only. Do not write a `down`
+      method; the runner never calls it and a populated `down` gives a false
+      impression that a rollback is available. Reversing a bad migration means
+      writing a new forward migration that undoes it.
+
+      Deploys are not gated on migrations completing, so every migration must be
+      safe to run while the previous version of the code is still serving. Adding
+      a NOT NULL column without a default breaks the running deployment.
+    task: |
+      Add a `verified_at` timestamp column to the `accounts` table. Write the
+      migration and note anything the reviewer should check.
+    expected: |
+      Writes only a forward migration, no `down`. Column is nullable (or has a
+      default) so the currently deployed code keeps serving during rollout.
+      Reversal is described as a new forward migration.
+    trap: |
+      Writes an up/down pair, and often a NOT NULL column, either of which
+      breaks a deploy that is not gated on migrations.
+
+  - id: charges-not-idempotent
+    kind: trap
+    family: payments
+    lesson: |
+      `POST /charges` is not idempotent unless you supply an `Idempotency-Key`
+      header. Retrying a charge that timed out without one double-charges the
+      customer; the first request usually did succeed, and the timeout was the
+      response being lost, not the charge failing.
+
+      Generate the key before the first attempt and reuse it for every retry of
+      that logical charge. A key generated per-attempt is the same as no key.
+    task: |
+      Our checkout occasionally sees timeouts calling the payments service.
+      Add retry handling so transient failures do not fail the purchase.
+    expected: |
+      Generates an Idempotency-Key before the first attempt and reuses it across
+      retries, explicitly because a timed-out charge may already have succeeded.
+    trap: |
+      Adds a retry loop with backoff and no idempotency key — the textbook
+      answer, and it double-charges customers.
+
+  # --------------------------------------------------------------- detail
+  # An unguessable specific. The most compression-hostile kind: summarisers
+  # drop exact values first, and the loss is invisible until it breaks.
+
+  - id: integration-pg-port
+    kind: detail
+    family: integration-tests
+    lesson: |
+      The payments integration suite reads `PAYMENTS_PG_PORT` and defaults to
+      5432, which is permanently held by the `legacy-pg` container. Run it as
+      `PAYMENTS_PG_PORT=5433 pytest tests/integration`.
+
+      Do not try to free 5432 with `docker compose up -d postgres` — it fails
+      with "port already allocated". There is no `--pg-port` CLI flag; passing
+      one errors with "fixture 'pg_port' not found". The environment variable is
+      the only supported override.
+    task: |
+      The payments integration tests fail on a fresh checkout with
+      "could not connect to postgres at localhost:5432: Connection refused".
+      Get them running.
+    expected: |
+      Runs with `PAYMENTS_PG_PORT=5433`. Does not attempt to start postgres on
+      5432 or pass a CLI port flag, and ideally says why both fail.
+    trap: |
+      Tries to start a postgres on 5432, or invents a `--pg-port` flag. Both
+      fail, and the exact override name and value cannot be guessed.
+
+  - id: retry-backoff-constants
+    kind: detail
+    family: retry
+    lesson: |
+      Retries against the ledger service use 100ms, 400ms, 1.6s with ±25%
+      jitter. The schedule is capped by the caller's deadline, not by an attempt
+      count — a request with 300ms left should make one attempt, not three.
+
+      The service rate-limits on concurrent retries across clients, so
+      unjittered backoff from many callers produces a synchronised burst that
+      trips the limiter and turns a transient blip into an outage.
+    task: |
+      Write the retry policy for our ledger client. State the timings.
+    expected: |
+      100ms / 400ms / 1.6s with ±25% jitter, bounded by the caller's remaining
+      deadline rather than a fixed attempt count.
+    trap: |
+      Produces plausible but wrong constants — 1s/2s/4s doubling, five attempts,
+      no jitter — and caps by attempt count, which is the common default.
+
+  - id: s3-two-hundred-error
+    kind: detail
+    family: storage
+    lesson: |
+      S3 can return HTTP 200 with an error document in the body, for multipart
+      completion and for copy operations. Checking the status code alone reports
+      success for a failed upload.
+
+      Parse the response body and treat a parsed error exactly as a 5xx for retry
+      purposes. This is why our uploader has a `_check_body` call that looks
+      redundant next to the status check — do not remove it.
+    task: |
+      Review this upload helper and say whether the error handling is correct:
+      it calls `complete_multipart_upload`, checks `if resp.status == 200`, and
+      returns success.
+    expected: |
+      Identifies that a 200 can carry an error document for multipart completion,
+      so the body must be parsed, and a parsed error retried like a 5xx.
+    trap: |
+      Approves the status check, possibly suggesting cosmetic improvements. The
+      behaviour is genuinely surprising and not inferable from the snippet.
+
+  # ------------------------------------------------------------ principle
+  # Dispositional: changes how a problem is approached. Tests whether an
+  # abstraction survives being abstracted further.
+
+  - id: meaning-is-not-overlap
+    kind: principle
+    family: agent-harness-design
+    lesson: |
+      In an agent harness, never use statistical or lexical measures — cosine or
+      Jaccard similarity, keyword overlap, regex phrase banks, tuned weights — to
+      decide anything about meaning. Those cannot reach the dimensions text
+      actually varies in, and a heuristic silently caps the system at what a bag
+      of words can express while looking like a judgement.
+
+      The harness owns structure: traversal, budgets, caches, schemas, and
+      whether to ask at all. The model owns every question about meaning. The
+      test is what question a number answers, not where the number came from —
+      counting an observed outcome is evidence and belongs in code; computing how
+      alike two texts are is a proxy for a judgement and must be a model call.
+    task: |
+      Design the retrieval step for a memory system that stores lessons and loads
+      the relevant ones into an agent's context. Under 120 words.
+    expected: |
+      Relevance is decided by a model call against a schema, not by a similarity
+      score. Efficiency comes from structure — a tree or index walked
+      abstract-to-concrete, budgets, caching — rather than from cheap scoring.
+    trap: |
+      Reaches for embeddings and hybrid semantic + keyword search with reranking.
+      This is the standard answer and a strong default.
+
+  - id: teardown-cancels-hooks
+    kind: principle
+    family: claude-code-hooks
+    lesson: |
+      Never run long work synchronously inside a Claude Code SessionEnd hook.
+      Teardown does not wait: the harness kills the hook and the user sees
+      "SessionEnd hook failed: Hook cancelled". Work that is slow there does not
+      happen late, it does not happen at all.
+
+      The hook must detach the real work — spawn it fully detached, redirect its
+      stdio, return immediately — and do only what fits in its window inline.
+    task: |
+      We want to summarise each coding session with an LLM call and save the
+      summary. Wire it into a SessionEnd hook and outline the implementation.
+    expected: |
+      The hook does not make the model call inline. It spawns a detached process
+      and returns immediately, because teardown cancels a hook that blocks.
+    trap: |
+      Calls the model inside the hook and raises the timeout, which fails on
+      every real session because the host is exiting.
+
+  # ------------------------------------------------------------------ multi
+  # Two lessons are required and either alone is insufficient. Tests retrieval
+  # breadth, and whether co-use is being observed.
+
+  - id: retry-a-charge-properly
+    kind: multi
+    family: payments
+    requires: [charges-not-idempotent, retry-backoff-constants]
+    task: |
+      Implement retry handling for our checkout's call to the payments service.
+      Include the retry schedule and anything else needed for correctness.
+    expected: |
+      Both: an Idempotency-Key generated once and reused across attempts, AND
+      the 100ms/400ms/1.6s ±25% jitter schedule bounded by the caller's deadline.
+    trap: |
+      Supplies one and not the other. A system that serves only the single
+      best-matching lesson scores well on every other case and fails here.
+
+  - id: ship-a-schema-change
+    kind: multi
+    family: migrations
+    requires: [migrations-forward-only, delete-is-soft]
+    task: |
+      We are dropping the `legacy_email` column and need to purge the rows that
+      were soft-deleted more than 30 days ago. Plan the change.
+    expected: |
+      Forward-only migration, safe against the currently deployed code, AND uses
+      `?purge=true` for the actual removal because soft-deleted rows persist.
+    trap: |
+      Handles the migration convention and treats the old DELETEs as having
+      already removed the data, or vice versa.
+
+  # ------------------------------------------------------------- distractor
+  # Shares vocabulary with a lesson that does not apply. Correct behaviour is
+  # to ignore it. Catches the over-serving that a transfer-only eval rewards.
+
+  - id: retry-a-ci-job
+    kind: distractor
+    family: ci
+    distractor_for: [retry-backoff-constants, charges-not-idempotent]
+    task: |
+      Our CI pipeline's flaky end-to-end job fails about one run in five. What
+      should we do about retrying it?
+    expected: |
+      Talks about CI-level retry: re-running the failed job, quarantining or
+      fixing the flaky test, retry limits in the pipeline config. Does not apply
+      HTTP backoff constants or idempotency keys, which concern a different
+      system entirely.
+    trap: |
+      Applies the ledger backoff schedule or idempotency-key advice because the
+      word "retry" matched. Superficial overlap is the failure being tested.
+
+  - id: cache-the-rendered-page
+    kind: distractor
+    family: web
+    distractor_for: [prompt-cache-pricing]
+    task: |
+      The marketing site's landing page is slow. We want to cache the rendered
+      HTML at the edge. What should the invalidation strategy be?
+    expected: |
+      Discusses edge/CDN caching: TTLs, purge on deploy, cache keys, stale-while-
+      revalidate. Does not bring in LLM prompt-cache pricing or prefix caching,
+      which are unrelated despite sharing the word "cache".
+    trap: |
+      Surfaces the prompt-caching lesson (0.1x read pricing, prefix keying)
+      because "cache" matched.
+
+  # --------------------------------------------------------------- conflict
+  # Two stored lessons contradict. Correct behaviour is to surface it, not to
+  # silently pick a side. Catches last-write-wins rot.
+
+  - id: which-pg-port
+    kind: conflict
+    family: integration-tests
+    conflicting: [integration-pg-port, integration-pg-port-moved]
+    extra_lesson: |
+      id: integration-pg-port-moved
+      The payments postgres now listens on 5434, not 5433. `legacy-pg` still
+      holds 5432, and the payments container was remapped during the November
+      infrastructure move. Run integration tests with `PAYMENTS_PG_PORT=5434`.
+    task: |
+      Run the payments integration suite. Which port should PAYMENTS_PG_PORT be
+      set to?
+    expected: |
+      Notices that memory holds two incompatible values (5433 and 5434), says so,
+      and either asks which is current or verifies against the running containers
+      before proceeding. Does not silently assert one.
+    trap: |
+      Picks whichever lesson was served first or last and states it with
+      confidence, hiding the contradiction from the user.
+
+  # ------------------------------------------------------------------- null
+  # Nothing applies. The only case that punishes eagerness.
+
+  - id: name-the-feature-flag
+    kind: 'null'
+    family: none
+    task: |
+      We are adding a toggle for the new onboarding flow. Suggest a name for the
+      feature flag and say where it should live.
+    expected: |
+      A sensible naming answer. No stored lesson bears on this, so none should be
+      applied and none should be cited.
+    trap: |
+      Reaches for an unrelated stored lesson and bends the answer around it.
+      Scored on retrieval, not on the answer: serving anything here is a miss.
+
+  - id: explain-a-regex
+    kind: 'null'
+    family: none
+    task: |
+      What does this regex match, and is there a simpler way to write it?
+      `^(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+)@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$`
+    expected: |
+      Explains it as an email-shaped pattern and discusses simplification. No
+      stored lesson applies.
+    trap: |
+      Surfaces the "never use regex to classify intent" lesson, which is about
+      harness design and has nothing to say about reading a regex.

@@ -334,3 +334,30 @@ Describe the approach you would take in at most 150 words. State the decisions
 that matter: constraints you would respect, traps you would avoid, and any
 specific values or commands you would use. Do not write the implementation.
 """
+
+
+BLIND_JUDGE = """RMC:judge
+
+Decide whether a candidate answer achieves what a known-good answer achieved for
+the same task.
+
+Judge substance, not presentation: different wording, ordering or length is
+fine. Pass it if it would lead to the same decisions and the same actions. Fail
+it if it omits something the known-good answer treats as essential, contradicts
+it, or is so vague that a reader could not act on it.
+
+You are not told how this candidate was produced, and there is nothing to infer
+from that. Judge only what is in front of you.
+
+<<<TASK
+{task}
+TASK>>>
+
+<<<KNOWN-GOOD OUTCOME
+{expected}
+KNOWN-GOOD OUTCOME>>>
+
+<<<CANDIDATE
+{candidate}
+CANDIDATE>>>
+"""
