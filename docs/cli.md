@@ -162,9 +162,12 @@ Any key can be overridden per-run by an environment variable:
 | `compaction.regression_k` | `5` | episodes replayed per validation |
 | `compaction.max_level` | `6` | deepest compression level |
 | `learning.min_tool_calls` | `8` | below this a session is ignored |
-| `learning.nudge_on_surprise` | `true` | after a turn where tool calls failed, ask the agent whether it learned anything |
-| `learning.min_surprises` | `2` | failed tool calls needed before asking |
+| `learning.nudge_enabled` | `true` | after a substantial turn, ask the agent whether it was wrong about anything |
+| `learning.nudge_after_tool_calls` | `12` | activity that makes a turn worth a thought |
+| `learning.nudge_after_turns` | `3` | human turns that do the same |
+| `learning.min_surprises` | `2` | failed tool calls that also do |
 | `learning.nudge_cooldown_s` | `900` | minimum gap between asks |
+| `learning.nudge_backoff_after` | `3` | consecutive fruitless nudges before backing off |
 | `placement.consult` | `true` | ask a model how new knowledge relates to old |
 | `placement.judge_calls` | `2` | model calls the relatedness walk may spend |
 | `placement.max_depth` | `2` | how far down the walk may look |

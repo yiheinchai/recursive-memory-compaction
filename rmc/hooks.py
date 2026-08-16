@@ -153,58 +153,81 @@ def recall_notice(pack) -> str:
 NUDGE = """Automated learning check from the RMC harness — the user did not ask for
 this and it is NOT a request to capture anything.
 
-Since the last check, {count} tool call{plural} failed:
+Look back over what you just did and ask: **were you wrong about anything?**
 
+Weight the kinds of wrongness by how much they cost:
+
+1. **Wrong about how something works.** You assumed this project, tool or
+   system behaved one way and it does not. The user corrected your
+   understanding, or reality did. These are the expensive ones — they are
+   invisible while you hold them, they make every downstream decision wrong,
+   and they usually leave no error message at all.
+2. **Wrong about what mattered.** You solved the stated problem and missed the
+   real one, or built something the user then reframed.
+3. **Wrong mechanically.** A command failed, a flag was wrong, a path did not
+   exist. These are loud and usually cheap, and most of them are not lessons.
+
+Do not let (3) crowd out (1) just because it is the kind that announces itself.
+A turn in which nothing failed can still contain the most important thing you
+learned all day.
 {evidence}
-
-Ask yourself one question: did anything there change how you would act next
-time, in a way that is written down nowhere?
-
-**"No" is the expected answer and needs no justification.** A command that
-failed for an obvious reason, a typo you fixed, an error you already understood
-— none of that is a lesson. Say "nothing to capture" and finish. Concluding no
-is this check working, not a failure to look hard enough.
+**"Nothing to capture" is the expected answer and needs no justification.** Most
+turns teach nothing. Say it in one line and finish — concluding no is this check
+working, not a failure to look hard enough.
 
 Capture only if all of these hold:
-  (a) it is a reusable fact about this codebase, tool or environment;
-  (b) an agent who did not know it would repeat the same detour;
-  (c) it is not already obvious from the repo's own code or docs;
+  (a) it is a reusable fact or model of how something works;
+  (b) an agent holding your old belief would take a wrong action;
+  (c) it is not already in the repo's code, docs, or a lesson you were served;
   (d) it stays true after this task ends.
 
 If it clears the bar:
 
-    rmc add --family <slug> "<what to do, AND the trap that made the detour \
-necessary>"
+    rmc add --family <slug> "<the corrected understanding, AND the wrong belief \
+it replaces>"
 
-Record the trap as well as the fix, or the next agent walks into it and only
-then recognises the way out. Capturing is pre-authorised — do not ask
-permission, and keep it to one line in your reply.
+Record the misconception as well as the correction. A lesson that states only
+the right answer lets the next agent arrive at the same wrong assumption and
+merely recognise the fix afterwards.
 
 Never invent a lesson to satisfy this check. Every low-value one permanently
 taxes retrieval, because it competes for attention on every future prompt."""
 
+FAILURE_EVIDENCE = """
+For reference, {count} tool call{plural} failed since the last check — though
+these are category (3), and are the least likely thing here to be worth keeping:
+
+{lines}
+"""
+
 
 def on_turn_end(payload: dict[str, Any]) -> int:
-    """Nudge the agent to reflect when something actually went wrong.
+    """Give the agent an occasion to reflect. It decides whether there is a lesson.
 
-    This is the "make a mental note" moment, and its shape follows the same rule
-    as everything else here: **the harness notices the occasion, the model
-    decides whether there is a lesson.**
+    The occasion is deliberately **not** "something failed". An earlier version
+    triggered on failed tool calls, which sounds structural and is in fact a
+    mechanical proxy for a semantic question — and it biases hard toward the
+    cheapest kind of mistake. The expensive errors are conceptual: believing a
+    system works one way when it does not. Those produce no error message, no
+    non-zero exit, nothing to grep for. During RMC's own development the single
+    worst mistake, building retrieval on lexical similarity, ran green the whole
+    way; a failure-triggered check would have sat silent through it.
 
-    Noticing is free and structural — a tool call the host reported as failed is
-    a fact, not an interpretation. Whether that failure taught anything is a
-    judgement, and it is left to the agent, which has the context to answer it
-    and is explicitly told that "no" is the usual answer.
+    So the occasion is simply "this turn did enough to be worth a thought",
+    which is a question about size, and every question about *worth* is handed
+    to the agent — which has the whole conversation in context and is the only
+    thing here that can tell a conceptual correction from a typo.
 
-    Firing only on surprise is the point. A turn where everything worked has
-    nothing to learn from, exactly as a lesson you already knew leaves no trace.
+    The nudge costs no extra model call: blocking continues the agent's own turn
+    with the reason as input. The cost is one turn per cooldown window, so the
+    cooldown is what keeps it from nagging.
     """
     # Never loop on our own continuation.
     if payload.get("stop_hook_active"):
         return 0
 
     store = _store_for(payload)
-    if store is None or not store.config.get("learning.nudge_on_surprise", True):
+    if store is None or not store.config.get("learning.nudge_enabled", True):
         return 0
 
     transcript = payload.get("transcript_path") or payload.get("transcriptPath") or ""
@@ -213,30 +236,43 @@ def on_turn_end(payload: dict[str, Any]) -> int:
     session_id = str(payload.get("session_id") or payload.get("sessionId") or "")
 
     facts = parse_transcript(Path(transcript))
-    failures = [e for e in facts.tool_events if e.ok is False]
-
     state = store.read_session(session_id)
-    already = int(state.get("nudged_failures") or 0)
-    fresh = failures[already:]
-    threshold = int(store.config.get("learning.min_surprises", 2))
 
-    if len(fresh) < threshold:
-        return 0
-    if _too_soon(store, state):
+    failures = [e for e in facts.tool_events if e.ok is False]
+    fresh_failures = failures[int(state.get("nudged_failures") or 0) :]
+    new_tools = facts.tool_calls - int(state.get("nudged_tools") or 0)
+    new_turns = len(facts.user_messages) - int(state.get("nudged_turns") or 0)
+
+    # Any of these means the turn had substance. None of them claims to know
+    # whether it *taught* anything — that is the agent's call, below.
+    substantial = (
+        new_tools >= int(store.config.get("learning.nudge_after_tool_calls", 12))
+        or len(fresh_failures) >= int(store.config.get("learning.min_surprises", 2))
+        or new_turns >= int(store.config.get("learning.nudge_after_turns", 3))
+    )
+    if not substantial or _too_soon(store, state):
         return 0
 
     state["nudged_failures"] = len(failures)
+    state["nudged_tools"] = facts.tool_calls
+    state["nudged_turns"] = len(facts.user_messages)
     state["nudged_at"] = _now()
     store.write_session(session_id, state)
-    store.log("nudge", session=session_id, surprises=len(fresh))
+    store.log(
+        "nudge", session=session_id, tools=new_tools, turns=new_turns, failures=len(fresh_failures)
+    )
 
-    evidence = "\n".join(
-        f"  · `{e.detail[:120]}` → {' '.join((e.output or '').split())[:140]}" for e in fresh[-4:]
-    )
-    reason = NUDGE.format(
-        count=len(fresh), plural="" if len(fresh) == 1 else "s", evidence=evidence
-    )
-    print(json.dumps({"decision": "block", "reason": reason}))
+    evidence = ""
+    if fresh_failures:
+        evidence = FAILURE_EVIDENCE.format(
+            count=len(fresh_failures),
+            plural="" if len(fresh_failures) == 1 else "s",
+            lines="\n".join(
+                f"  · `{e.detail[:110]}` → {' '.join((e.output or '').split())[:120]}"
+                for e in fresh_failures[-3:]
+            ),
+        )
+    print(json.dumps({"decision": "block", "reason": NUDGE.format(evidence=evidence)}))
     return 0
 
 
@@ -247,9 +283,34 @@ def _now() -> float:
 
 
 def _too_soon(store: Store, state: dict[str, Any]) -> bool:
+    """Cooldown, lengthened when the agent is evidently not needing the prompt.
+
+    If the last several nudges each produced nothing, that is evidence the agent
+    is already capturing what matters on its own — or that this kind of work
+    simply has little to teach. Either way, keep interrupting it and the nudge
+    becomes noise the agent learns to dismiss. Backing off is measured from
+    outcomes, not guessed.
+    """
     cooldown = int(store.config.get("learning.nudge_cooldown_s", 900))
+    barren = _barren_streak(store)
+    threshold = int(store.config.get("learning.nudge_backoff_after", 3))
+    if barren >= threshold:
+        cooldown *= 2 ** min(4, 1 + barren - threshold)
     last = state.get("nudged_at")
     return isinstance(last, (int, float)) and (_now() - last) < cooldown
+
+
+def _barren_streak(store: Store) -> int:
+    """How many recent nudges in a row were followed by no capture."""
+    timeline = [
+        e for e in store.read_events(limit=400) if e.get("kind") in ("nudge", "capture")
+    ]
+    streak = 0
+    for event in reversed(timeline):
+        if event.get("kind") == "capture":
+            break
+        streak += 1
+    return streak
 
 
 # --------------------------------------------------------------------------- #

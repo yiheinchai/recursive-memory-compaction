@@ -359,6 +359,28 @@ class Store:
         with (self.root / "events.jsonl").open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
 
+    def recent_nudge(self, window_s: int = 1800) -> dict[str, Any] | None:
+        """The most recent reflection nudge, if one fired inside the window.
+
+        Used to attribute a capture: one that follows a nudge was *prompted*,
+        one that does not was *spontaneous*. That distinction is the only way to
+        answer whether the nudge is load-bearing scaffolding or a crutch the
+        agent has outgrown — so it is recorded rather than assumed.
+        """
+        import time
+        from datetime import datetime, timezone
+
+        for event in reversed(self.read_events("nudge", limit=50)):
+            try:
+                when = datetime.strptime(event["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                    tzinfo=timezone.utc
+                )
+            except Exception:
+                continue
+            if time.time() - when.timestamp() <= window_s:
+                return event
+        return None
+
     def read_events(self, kind: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
         path = self.root / "events.jsonl"
         inherited = self.parent.read_events(kind, limit) if self.parent else []

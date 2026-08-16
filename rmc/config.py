@@ -59,13 +59,19 @@ DEFAULTS: dict[str, Any] = {
         "enabled": True,
         "min_tool_calls": 8,  # ignore trivial sessions
         "capture_failures": True,
-        # Surprise is the trigger for reflection, as it is for a person: a turn
-        # where everything worked has nothing to teach. A failed tool call is a
-        # fact the host reports, so noticing costs nothing; deciding whether it
-        # taught anything is left to the agent.
-        "nudge_on_surprise": True,
-        "min_surprises": 2,  # failed tool calls before the agent is asked to reflect
+        # Reflection needs an *occasion*, not a verdict. The agent has the
+        # judgement to tell a conceptual mistake from a typo, but in flight its
+        # attention is on the task — so the harness schedules the look and the
+        # agent decides what it sees. These thresholds only ask "did this turn
+        # have enough substance to be worth a thought".
+        "nudge_enabled": True,
+        "nudge_after_tool_calls": 12,
+        "nudge_after_turns": 3,
+        "min_surprises": 2,  # failed tool calls also make a turn substantial
         "nudge_cooldown_s": 900,
+        # If the agent captures on its own, stop interrupting it. Backs the
+        # cooldown off after this many nudges in a row that yielded nothing.
+        "nudge_backoff_after": 3,
     },
     "placement": {
         "consult": True,  # ask a model how new knowledge relates to old

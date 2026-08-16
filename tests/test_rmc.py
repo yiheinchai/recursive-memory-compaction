@@ -963,11 +963,13 @@ class TestLayering(unittest.TestCase):
         self.assertEqual(self.project.get("n_same").body, "local version")
 
 
-class TestSurpriseTrigger(StoreCase):
-    """Reflection fires on surprise, the way a person makes a mental note.
+class TestReflectionTrigger(StoreCase):
+    """The harness schedules the *look*; the agent decides what it sees.
 
-    The harness only notices the *occasion* — a tool call the host reported as
-    failed is a fact. Whether it taught anything is left to the agent.
+    The occasion must not be "something failed". Conceptual mistakes — believing
+    a system works one way when it does not — produce no error message at all,
+    and they are the expensive ones. A failure-gated trigger would sit silent
+    through exactly the lessons worth having.
     """
 
     def transcript(self, results: list[bool]) -> Path:
@@ -1014,31 +1016,50 @@ class TestSurpriseTrigger(StoreCase):
         out = buf.getvalue().strip()
         return json.loads(out) if out else None
 
-    def test_silent_when_nothing_went_wrong(self) -> None:
-        self.assertIsNone(self.fire(self.transcript([True, True, True, True])))
+    def test_fires_on_substantial_work_even_when_nothing_failed(self) -> None:
+        """The case a failure-gated trigger misses, and the reason it was wrong."""
+        result = self.fire(self.transcript([True] * 14))
+        self.assertIsNotNone(result, "a long clean turn can still contain a conceptual error")
+        self.assertEqual(result["decision"], "block")
 
-    def test_fires_once_enough_has_failed(self) -> None:
+    def test_asks_about_conceptual_error_first(self) -> None:
+        reason = self.fire(self.transcript([True] * 14))["reason"]
+        conceptual = reason.index("Wrong about how something works")
+        mechanical = reason.index("Wrong mechanically")
+        self.assertLess(conceptual, mechanical, "the expensive kind must lead")
+        self.assertIn("nothing to capture", reason.lower())
+
+    def test_silent_on_a_trivial_turn(self) -> None:
+        self.assertIsNone(self.fire(self.transcript([True, True])))
+
+    def test_failures_still_count_as_substance(self) -> None:
         result = self.fire(self.transcript([True, False, False]))
         self.assertIsNotNone(result)
-        self.assertEqual(result["decision"], "block")
         self.assertIn("cmd1", result["reason"])
-        self.assertIn("nothing to capture", result["reason"].lower())
+        self.assertIn("least likely thing here to be worth keeping", result["reason"])
 
-    def test_a_single_failure_is_below_the_bar(self) -> None:
-        self.assertIsNone(self.fire(self.transcript([True, False, True])))
-
-    def test_does_not_re_fire_for_failures_already_raised(self) -> None:
+    def test_does_not_re_fire_for_work_already_raised(self) -> None:
         path = self.transcript([False, False])
         self.assertIsNotNone(self.fire(path))
-        self.assertIsNone(self.fire(path), "the same surprises must not nag twice")
+        self.assertIsNone(self.fire(path), "the same turn must not nag twice")
 
     def test_never_loops_on_its_own_continuation(self) -> None:
         self.assertIsNone(
             self.fire(self.transcript([False, False]), stop_hook_active=True)
         )
 
+    def test_backs_off_when_nudges_keep_yielding_nothing(self) -> None:
+        """If the agent captures on its own, stop interrupting it."""
+        from rmc.hooks import _barren_streak
+
+        for _ in range(4):
+            self.store.log("nudge", session="s")
+        self.assertGreaterEqual(_barren_streak(self.store), 4)
+        self.store.log("capture", node="n_x", prompted=True)
+        self.assertEqual(_barren_streak(self.store), 0, "a capture resets the streak")
+
     def test_can_be_switched_off(self) -> None:
-        self.store.config.set("learning.nudge_on_surprise", False)
+        self.store.config.set("learning.nudge_enabled", False)
         self.store.config.save(self.store.root / "config.yaml")
         self.assertIsNone(self.fire(self.transcript([False, False])))
 

@@ -152,7 +152,7 @@ and the loop closes in the background:
 | you submit a prompt | the model is asked which remembered lessons bear on it, walking the tree from the most abstract nodes down | 1 call, cached by prompt |
 | the session ends | the model reads the session and judges how it went, whether you had to steer, and what was worked out by trial | 1 call, detached |
 | a correction happened | the correction *is* the diagnosis; the model picks which dropped detail it was about, and that claim is re-attached next time | 1 call |
-| a turn ends after something failed | the agent is asked whether the failure taught it anything, with the failed commands quoted back | no model call |
+| a substantial turn ends | the agent is given an occasion to ask whether it was *wrong* about anything, and decides for itself | no model call |
 | you teach it something | `rmc add` records it immediately, reconciled, available to your next prompt | 1–2 calls |
 | something reusable happened | a reflection call mints a level-0 lesson from the transcript | 1 call, detached |
 | the new lesson touches known ground | it is reconciled with what is already there — folded in, set alongside, or flagged as a contradiction | 1 call, cached |
@@ -164,29 +164,53 @@ which makes RMC's own hooks no-op — otherwise compression would recursively
 trigger compression.
 
 
-### Surprise is the trigger
+### Scheduling attention, not making the judgement
 
-Reflection is not on a timer and not on every turn. It fires when something
-*went wrong* — the same way you make a mental note when a lesson surprises you
-and none at all when it merely confirms what you knew.
+An agent mid-task is in task-completion mode. It has the judgement to tell a
+conceptual mistake from a typo, but in flight its attention is on the goal — so
+it rarely stops to ask what it just learned. That is the gap the reflection
+nudge fills, and the distinction matters: it schedules the *look*, it does not
+supply the *verdict*.
 
-The split follows the rule above. Noticing the occasion is free and structural:
-a tool call the host reported as failed is a fact, not an interpretation. Whether
-that failure taught anything is a judgement, so the agent is asked — and told
-plainly that "no" is the expected answer:
+An earlier version triggered on failed tool calls. That sounds structural — an
+exit code is a fact — but it is a mechanical proxy for a semantic question, and
+it biases hard toward the cheapest class of mistake. The expensive errors are
+conceptual: believing a system works one way when it does not. Those emit no
+error, exit zero, and leave nothing to grep for. During RMC's own development
+the worst mistake — building retrieval on lexical similarity — ran green the
+whole way. A failure-gated check would have sat silent through it.
+
+So the occasion is only "did this turn have enough substance to be worth a
+thought", and the nudge asks the agent what it actually cares about:
 
 ```
-Since the last check, 3 tool calls failed:
-  · `pytest tests/integration` → could not connect to postgres at localhost:5432
-  · `docker compose up -d postgres` → port 5432 already allocated by 'legacy-pg'
-  · `pytest tests/integration --pg-port 5433` → fixture 'pg_port' not found
+Look back over what you just did and ask: were you wrong about anything?
 
-Did anything there change how you would act next time, in a way that is
-written down nowhere?
+1. Wrong about how something works — invisible while you hold it, makes every
+   downstream decision wrong, and usually leaves no error message at all.
+2. Wrong about what mattered — you solved the stated problem, not the real one.
+3. Wrong mechanically — a command failed. Loud, cheap, rarely a lesson.
+
+Do not let (3) crowd out (1) just because it is the kind that announces itself.
 ```
 
-A turn where everything worked is silent. So is a turn whose failures were
-already raised.
+"Nothing to capture" is the expected answer, and if several nudges in a row
+produce nothing the cooldown backs off automatically.
+
+### Is the nudge necessary? RMC measures it
+
+Whether an agent needs prompting to reflect, or would notice on its own, is an
+open question — so `rmc status` reports the number that answers it:
+
+```
+captures   14  (9 unprompted, 5 after a nudge)
+nudges     11  (6 produced nothing)
+unprompted 64%  — the agent is capturing on its own
+```
+
+If the unprompted share climbs toward 100%, the nudge is scaffolding you can
+take down. If it stays near zero, it is doing the work. Better to find out than
+to have an opinion.
 
 ### Learning happens live, and does not need you
 

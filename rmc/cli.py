@@ -108,6 +108,8 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"  tokens     {total} stored, {apex_tokens} served at apex")
         deepest = max(n.level for n in nodes)
         print(f"  max level  {deepest}")
+    _print_reflection_stats(store)
+
     if not families:
         print(dim("\n  no lessons yet — they appear as you work."))
         return 0
@@ -124,6 +126,37 @@ def cmd_status(args: argparse.Namespace) -> int:
             f"  {node.stats.attempts:>4d}  {rate:>4s}"
         )
     return 0
+
+
+def _print_reflection_stats(store: Store) -> None:
+    """Is the reflection nudge load-bearing, or has the agent outgrown it?
+
+    That is an open question and worth measuring rather than arguing about. The
+    number that answers it is how many lessons the agent captured *without*
+    being prompted. If that climbs toward all of them, the nudge is scaffolding
+    you can take down; if it stays near zero, the nudge is doing the work.
+    """
+    captures = store.read_events("capture", limit=2000)
+    nudges = store.read_events("nudge", limit=2000)
+    if not captures and not nudges:
+        return
+
+    prompted = sum(1 for c in captures if c.get("prompted"))
+    spontaneous = len(captures) - prompted
+    share = (spontaneous / len(captures)) if captures else 0.0
+
+    print()
+    print(f"  captures   {len(captures)}  " + dim(f"({spontaneous} unprompted, {prompted} after a nudge)"))
+    print(f"  nudges     {len(nudges)}  " + dim(f"({len(nudges) - prompted} produced nothing)"))
+    if captures:
+        verdict = (
+            "the agent is capturing on its own"
+            if share >= 0.6
+            else "the nudge is doing the work"
+            if share <= 0.25
+            else "mixed"
+        )
+        print(f"  unprompted {share:.0%}  " + dim(f"— {verdict}"))
 
 
 def cmd_recall(args: argparse.Namespace) -> int:
@@ -243,6 +276,19 @@ def cmd_add(args: argparse.Namespace) -> int:
         "duplicate": "already known",
         "conflict": "CONFLICTS with what is remembered",
     }.get(decision.action, decision.action)
+
+    # Attribute the capture. Whether the agent reaches for this on its own or
+    # only after being prompted is the one measurement that answers whether the
+    # reflection nudge is load-bearing scaffolding or a crutch — so record it
+    # instead of forming an opinion about it.
+    nudge = store.recent_nudge()
+    store.log(
+        "capture",
+        node=result.node.id if result.node else None,
+        family=decision.family,
+        action=decision.action,
+        prompted=bool(nudge),
+    )
 
     colour = red if decision.action == "conflict" else green
     print(f"{colour(verb)}  {dim(decision.rationale[:110])}")
