@@ -91,24 +91,48 @@ about detail several levels below it without holding the text.
 Recall produces a **context pack**: the text that gets prepended to the task.
 
 ```
-pack = apex.body
-       [+ matched delta claims]      # only after a failure, see §4.3
-       [+ expanded node bodies]      # only after delta patching fails
+pack = selected node bodies
+       [+ claims that previously rescued them]
+       [+ any unresolved conflict, as a question]
 ```
 
-Default budget knobs (`.rmc/config.yaml`):
+### 3.1 Choosing what to serve
+
+Which lessons bear on a prompt is a judgement about meaning, so the model makes
+it (`judge.relevance`). The harness supplies the search shape:
+
+1. Start from the **apexes** — the most compressed node of each family. Because
+   they are compressed, the entire top level of the store fits in one question.
+2. Ask once: for each, is it `relevant`, `maybe`, or `unrelated` — and if
+   `maybe`, is the summary too abstract to decide from?
+3. Descend only into the lines flagged `descend`. A line judged `unrelated` is
+   never opened, so an irrelevant branch costs nothing beyond its one line in
+   the first question.
+4. Stop at `recall.max_depth`, or when `recall.judge_calls` is spent. Anything
+   still unresolved when the budget runs out is served rather than dropped.
+
+Cost therefore tracks the **depth** of the tree and the number of plausible
+lines, not the number of lessons stored. Verdicts are cached by prompt, so
+re-asking the same thing is free.
+
+The structural gate: an empty store asks nothing at all.
+
+### 3.2 Budgets
 
 ```yaml
 recall:
   max_pack_tokens: 1200
-  max_expansions: 3          # how many descents before giving up
+  max_families: 3            # lessons served per prompt
+  judge_calls: 2             # model calls the relevance walk may spend
+  max_depth: 2               # how far down the walk may look
+  max_expansions: 3          # descents during a failure, see §4
   strategy: delta-patch      # delta-patch | delta-jump | stepwise
 ```
 
-- `delta-patch` — apex + matched claims. Cheapest; default.
-- `delta-jump` — replace apex with the descendant holding the matched claim.
-- `stepwise` — walk `derived_from` one level at a time, ignoring deltas. Baseline
-  for ablation.
+- `delta-patch` — apex + the matched claims. Cheapest; default.
+- `delta-jump` — replace the apex with the descendant holding the matched claim.
+- `stepwise` — walk `derived_from` one level at a time, ignoring the manifest.
+  Baseline for ablation.
 
 ---
 
@@ -143,29 +167,33 @@ key that makes matching tractable without embeddings.
 ### 4.3 Score the candidates
 
 Candidates are the delta entries on the failed node (for `delta-patch` /
-`delta-jump`) or the nodes in `derived_from` (for `stepwise`). Each candidate `c`
-is scored against diagnosis `D` and task `T`:
+`delta-jump`) or the nodes in `derived_from` (for `stepwise`).
 
 ```
-score(c) = w_d · delta_match(c, D)
-         + w_t · task_affinity(c, T)
-         + w_p · prior(c)
-         - w_c · cost(c)
+score(c) = w_j · model_usefulness(c, D) + w_p · prior(c) − w_c · cost(c)
 ```
 
-| Term | Definition | Default weight |
+| Term | Definition | Default |
 |---|---|---|
-| `delta_match` | `0.5·[kind(c) == D.category] + 0.5·lexical_overlap(claim(c), D.missing)`. Optionally replaced by a judge call when `selection.judge: true`. | 0.45 |
-| `task_affinity` | Jaccard similarity between `T`'s tag/keyword signature and the union of signatures of `c.covers_tasks`. | 0.25 |
-| `prior` | Beta posterior mean `(successes + 1) / (attempts + 2)` — Laplace-smoothed so unused children are neither favoured nor buried. | 0.20 |
-| `cost` | `tokens(c) / max_pack_tokens`, clipped to `[0,1]`. | 0.10 |
+| `model_usefulness` | One structured call ranks every candidate 0–1: *how likely is it that this detail being absent caused this failure*. | 0.60 |
+| `prior` | Laplace-smoothed rate at which this node has actually rescued failures: `(successes + 1) / (attempts + 2)`. | 0.28 |
+| `cost` | `tokens(c) / max_pack_tokens`, clipped to `[0,1]`. | 0.12 |
 
-Ties break toward lower `tokens`, then toward lower `level` (more specific).
+The first term is a judgement and belongs to the model. An earlier version
+scored it as `[kind == category] + lexical_overlap(claim, missing)`, which gets
+the common case backwards: "parse the body, not the status code" is the fix for
+"treated HTTP 200 as success" and shares none of its words.
 
-The `prior` term makes descent a **contextual bandit over the tree**: children
-that repeatedly rescue failures rise, and children that never help sink, without
-any hand-tuning. `selection.explore: ucb` swaps the posterior mean for a UCB1
-bonus when you want the tree to keep probing rarely-used branches.
+The other two stay in code because they are not proxies for meaning. `prior` is
+an *observed outcome* — evidence — and it makes descent a contextual bandit over
+the tree: branches that repeatedly rescue failures rise, branches that never
+help sink, with no tuning. `cost` is a measurement. Ties break toward cheaper,
+then toward more specific.
+
+With no judge available the first term is simply **absent**, and ranking falls
+back to "try what has worked before, cheapest first". That degrades honestly
+rather than substituting a metric that would look like judgement without being
+one.
 
 ### 4.4 Budget and escalation
 
@@ -278,24 +306,25 @@ an infrastructure blip silently promotes a bad compression.
 
 ### 6.1 Deciding the outcome
 
-`signals.py` reads the transcript and combines, strongest first:
+`signals.py` parses the transcript into facts and nothing more: who said what,
+which tool ran with which input, what came back, and what the host itself marked
+as a refusal or a meta turn. Tool calls are paired to their results by id, and a
+call's success is recorded **only** from what the host reported — an `is_error`
+flag or an exit code. When the host says nothing it stays unknown rather than
+being guessed from the output text.
 
-| Signal | Reads as | Weight |
-|---|---|---|
-| the user corrected the agent | failure | −0.65 |
-| the user approved ("perfect", "that works") | success | +0.60 |
-| tests passing *last* in the session | success | +0.35 |
-| tests failing *last* | failure | −0.30 |
-| a tool call was denied | failure | −0.35 |
-| real work, no correction | success | +0.25 |
+`judge.assess` then reads that digest and returns the outcome, whether the human
+had to steer, and what was worked out by trial.
 
-Pass/fail ordering matters rather than presence: red-then-green is the normal
-shape of successful work, not a failure.
+This used to be a scoring function over regex phrase banks: `-0.65` for a
+"correction" pattern, `+0.6` for an "approval" one. It cannot work. Whether
+"actually, let's use the other one" is a correction or a change of mind is a
+reading of intent, and a pattern list only matches the surface forms someone
+thought of in advance — while looking, in the code, like a decision.
 
-Host metadata beats text matching wherever it exists — Claude Code marks
-harness-injected turns `isMeta`, tool results `toolUseResult`, and refusals
-`toolDenialKind`. Without that, a slash-command payload gets scored as the user
-approving the work. (It did, during development.)
+One structural gate remains, and it is not a judgement: `worth_assessing` skips
+sessions with almost no activity and no human follow-up, because there is
+nothing there to learn regardless of what they say.
 
 ### 6.2 Two different questions
 
@@ -396,24 +425,28 @@ student raises a confusion during the relevant lesson rather than at random.
 ### 7.3 Keeping reconciliation cheap
 
 Reconciliation runs on every new lesson, so its cost has to stay flat as the
-tree grows:
+tree grows. It does, through structure rather than shortcuts:
 
-- **A free lexical shortlist first.** A lesson with no close neighbour is filed
-  as a new leaf with no model call at all — the common case early on.
-- **One call for all candidates, not one per candidate.** Cost is constant in
-  tree size, and coverage *improves*: a contradiction with the second-best match
-  is no longer invisible.
-- **A free value-mismatch pre-filter.** Identifiers that both texts assign
-  differently (`PAYMENTS_PG_PORT=5433` vs `=5434`) are found by regex. This
-  catches contradictions between lessons that share almost no vocabulary —
-  exactly what a similarity floor misses — and the hint is passed to the
-  reconciler so it knows where to look.
+- **A tree walk, not a scan.** Apexes are the most compressed nodes in the
+  store, so the whole top level fits in one question. A line is opened only when
+  the model says the summary was too abstract to judge from, and a line judged
+  clearly unrelated is never walked at all. Cost tracks depth.
+- **One reconciliation call for every candidate the walk surfaced.** Constant in
+  tree size, and a contradiction with the second-best match stays visible.
 - **Cached verdicts.** Re-running learning never re-pays for a pair already
   judged.
+- **No call at all when there is nothing to reconcile with.** An empty or
+  unrelated region of the tree costs nothing.
 
-The honest limit: reconciliation only compares against **apex** nodes, so a
-contradiction with detail that exists only deep in a subtree will be missed
-until that detail is surfaced by descent.
+An earlier version added a regex pre-filter that flagged `KEY=value` mismatches
+to force a check the similarity floor would otherwise skip. It was removed along
+with the floor: the walk asks the model directly whether two lessons concern the
+same thing in the world, which catches the same contradictions without a pattern
+list deciding what counts as one.
+
+The honest limit: reconciliation compares against **apex** nodes, so a
+contradiction with detail that exists only deep in a subtree is missed until
+descent surfaces it.
 
 ## 8. Backends
 
@@ -470,6 +503,12 @@ Stated plainly, since a research harness that hides its weaknesses is useless:
   level-3 on unseen tasks — only on the regression set it was validated against.
   Held-out evaluation is the honest measurement and is not yet implemented, so
   current accept/reject numbers should be read as in-sample.
-- **Lexical family matching will miss paraphrases.** Retrieval is a bag-of-words
-  Jaccard by design, because it runs on every prompt and must not cost a model
-  call. A prompt that shares no vocabulary with a lesson will not find it.
+- **Recall costs a model call per prompt.** Relevance is a judgement, so it is
+  paid for on the hot path, cached by prompt. That is a real latency and cost
+  trade against the alternative of injecting the wrong lesson, which is worse
+  than injecting none. `recall.enabled: false` opts out.
+- **Judgement quality now bounds everything.** Replacing heuristics with a model
+  moves the ceiling up but also moves the failure mode: a model that
+  misjudges relevance is harder to debug than a scoring function you can read.
+  This is mitigated by every judgement being cached and logged with its stated
+  reason (`rmc recall` prints them), not by pretending it cannot happen.

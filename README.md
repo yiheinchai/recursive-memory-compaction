@@ -73,10 +73,12 @@ dropped:
     holder: n_c41b
 ```
 
-Descent then stops being a search problem and becomes a **retrieval problem over
-deltas, keyed by the failure diagnosis**. When a node fails we ask the verifier
-and a diagnosing agent for a structured account of *how* it failed, and match
-that against the manifest. Three consequences fall out:
+Descent then stops being a search problem and becomes a **ranking problem over
+deltas**. When a node fails, the verifier and a diagnosing agent produce a
+structured account of *how* it failed, and the model — not a similarity metric —
+decides which dropped claim explains it. That distinction matters: "parse the
+body, not the status code" is the fix for "treated HTTP 200 as success" while
+sharing almost no vocabulary with it. Three consequences fall out:
 
 1. **Delta jumping.** Deltas are attributed transitively, so you can jump
    straight to the descendant holding the needed detail instead of walking the
@@ -110,6 +112,36 @@ is implemented, and hardened against overfitting:
 
 ---
 
+## The harness structures; the model judges
+
+A memory system is full of questions like *is this relevant*, *does this
+contradict that*, *did this go well*. It is tempting to answer them with
+similarity scores and phrase lists, and RMC did at first. That is a mistake:
+meaning does not live in token overlap, and a heuristic silently caps the system
+at what a bag of words can express while looking like a judgement.
+
+So the split is strict.
+
+**The harness owns structure** — the tree, the traversal loop, the budgets, the
+caches, the schemas answers must fit, and the decision of *whether to ask at
+all* (an empty store, an exhausted budget, and a two-tool-call session need no
+judgement).
+
+**The model owns meaning** — every question above, each behind a JSON schema,
+cached so nothing is judged twice.
+
+Efficiency comes from structure rather than from cheap approximations. Because
+apexes are the most compressed nodes in the store, the entire top level of the
+tree fits in one question; a line is only opened when the model says the summary
+was too abstract to decide from. Cost tracks the *depth* of the tree, not its
+size — and a branch judged clearly irrelevant is never walked at all.
+
+The two terms still computed in code are evidence, not proxies for judgement:
+how often a node has actually rescued a failure before, and how many tokens it
+costs.
+
+---
+
 ## It runs by itself
 
 You do not drive RMC. You use Claude Code or Codex normally on your own repos,
@@ -117,10 +149,11 @@ and the loop closes in the background:
 
 | When | What happens | Cost |
 |---|---|---|
-| you submit a prompt | matching apex lessons are injected as context | no model call — pure lexical match |
-| the session ends | the outcome is read from what happened next: your corrections, and the environment's (failed commands, test results) | no model call |
-| a correction happened | the correction *is* the diagnosis; it is matched against the delta manifest and the claim is re-attached next time | no model call |
-| something reusable happened | one reflection call mints a level-0 lesson | 1 call, detached |
+| you submit a prompt | the model is asked which remembered lessons bear on it, walking the tree from the most abstract nodes down | 1 call, cached by prompt |
+| the session ends | the model reads the session and judges how it went, whether you had to steer, and what was worked out by trial | 1 call, detached |
+| a correction happened | the correction *is* the diagnosis; the model picks which dropped detail it was about, and that claim is re-attached next time | 1 call |
+| you teach it something | `rmc add` records it immediately, reconciled, available to your next prompt | 1–2 calls |
+| something reusable happened | a reflection call mints a level-0 lesson from the transcript | 1 call, detached |
 | the new lesson touches known ground | it is reconciled with what is already there — folded in, set alongside, or flagged as a contradiction | 1 call, cached |
 | a lesson has succeeded twice | a compression is attempted and replay-tested | detached, rejects freely |
 
@@ -130,12 +163,22 @@ which makes RMC's own hooks no-op — otherwise compression would recursively
 trigger compression.
 
 
-### Learning does not need you
+### Learning happens live, and does not need you
 
-Human corrections are the *rarer* source of lessons. Most of the time the
-environment does the teaching: a command fails, a different one works, a test
-rejects an approach. RMC pairs each tool call with its result, so it can recover
-what was learned by trial —
+Teach it something mid-conversation and it lands immediately:
+
+```bash
+rmc add --family deploys "Use `kubectl argo rollouts promote`; plain apply fails, the CRD is not registered"
+```
+
+That is reconciled against what is already known and available to your very next
+prompt. The bundled skill tells the agent to do this the moment you explain
+something, so you rarely type it yourself.
+
+Human corrections are the *rarer* source of lessons, though. Most of the time
+the environment does the teaching: a command fails, a different one works, a
+test rejects an approach. RMC pairs each tool call with its result, so a
+session-end sweep can recover what was learned by trial —
 
 ```
 [Bash] tried `pytest tests/integration` -> failed: could not connect to postgres at :5432
@@ -218,10 +261,11 @@ components so you can see *why* each candidate was chosen.
 python3 -m unittest discover -s tests
 ```
 
-29 tests, no dependencies. They run against a simulated knowledge world where a
-task is solved iff the required facts are present in the lesson text, so the
-compress → fail → descend → rescue cycle is genuinely executed rather than
-mocked at the seams.
+55 tests, no dependencies. Two kinds: structural tests stub the judgements and
+assert what the harness does with an answer, and control-flow tests run against
+a simulated knowledge world where a task is solved iff the required facts are
+present in the lesson text — so compress → fail → descend → rescue genuinely
+executes rather than being mocked at the seams.
 
 ## Documentation
 

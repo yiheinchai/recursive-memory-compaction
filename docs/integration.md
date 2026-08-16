@@ -33,8 +33,8 @@ tagged entries — hooks you configured yourself are left alone.
 
 | Event | Command | Purpose | Budget |
 |---|---|---|---|
-| `UserPromptSubmit` | `rmc hook user-prompt-submit` | inject matching apex lessons | 10s, no model call |
-| `SessionEnd` | `rmc hook session-end` | score the session, queue learning | 15s, no model call inline |
+| `UserPromptSubmit` | `rmc hook user-prompt-submit` | ask which remembered lessons bear on this prompt, and inject them | 10s, 1 model call, cached per prompt |
+| `SessionEnd` | `rmc hook session-end` | judge how the session went, then detach learning | 15s, 1 model call |
 
 `UserPromptSubmit` returns:
 
@@ -45,6 +45,11 @@ tagged entries — hooks you configured yourself are left alone.
 
 Injected text is explicitly framed as prior knowledge rather than user
 instruction, so a stale lesson cannot impersonate a request.
+
+Recall costs a model call on the hot path. That is deliberate — injecting the
+wrong lesson is worse than injecting none, and only a reader can tell the
+difference — but it is a real latency cost, so it is cached by prompt and can be
+switched off with `rmc config recall.enabled false`.
 
 ### Failure behaviour
 
@@ -88,8 +93,25 @@ rmc compact --due --agent codex
   episodes/          the replay corpus. Worth committing.
   sessions/          per-session scratch. Machine-local.
   events.jsonl       telemetry. Machine-local.
+  judge-cache.json   cached judgements. Machine-local.
   background.log     output from detached learning runs.
 ```
+
+### Two scopes
+
+If `~/.rmc` exists it is layered underneath the project store. Lessons from both
+are recalled; new ones are written to the project. This is how a cross-project
+principle ("prefer the model's judgement over a similarity score") and a
+repo-specific fact ("this suite needs `PAYMENTS_PG_PORT`") each live at the right
+scope instead of one being in the wrong place.
+
+```bash
+rmc init ~                      # create the global store
+RMC_HOME=~/.rmc rmc add "..."   # teach it something that follows you everywhere
+```
+
+Editing a global lesson from inside a repo writes back to the global store
+rather than forking a local copy that then drifts.
 
 `.rmc/.gitignore` excludes `sessions/` and `events.jsonl` by default, so
 committing `.rmc/` shares the lessons and their regression corpus with your team

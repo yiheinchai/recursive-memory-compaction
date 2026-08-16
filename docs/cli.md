@@ -1,8 +1,13 @@
 # CLI reference
 
 All commands accept `--agent {claude,codex,mock}` and `--model` where they spawn
-an agent. The store is found by walking up from the working directory to the
-nearest `.rmc/`, then falling back to `~/.rmc`; `RMC_HOME` overrides both.
+an agent. The store is found by walking up from the working directory to the nearest
+`.rmc/`. If `~/.rmc` also exists it is layered underneath as a **global** store:
+lessons from both are recalled, and new lessons are written to the project one.
+Editing a global lesson writes back to it rather than forking a local copy.
+`RMC_HOME` overrides the lookup entirely — use it to target the global store
+directly, e.g. `RMC_HOME=~/.rmc rmc add ...` for something that should follow
+you across every repo.
 
 ---
 
@@ -42,8 +47,9 @@ what a compression dropped and which node still holds it. `-v` includes the
 first lines of each lesson body.
 
 ### `rmc recall --prompt "..." [--json]`
-Exactly what would be injected for that prompt, with the family match scores.
-The tool for answering "why did it think that?".
+Exactly what would be injected for that prompt, and the model's stated reason for
+each. The tool for answering "why did it think that?" — the answer is a sentence,
+not a score.
 
 Reads stdin if `--prompt` is omitted.
 
@@ -65,10 +71,23 @@ Raw telemetry as JSONL. Useful kinds: `inject`, `observe`, `rescue`, `mint`,
 
 ## The loop
 
+### `rmc add [body] [--family F] [--title T] [--tags a,b]`
+Teach RMC something **now**, without waiting for the session to end. Reads stdin
+if no body is given. The lesson is reconciled against what is already known
+before being stored, so it may be folded into an existing lesson, set alongside
+one, or reported as a contradiction with the question that would settle it.
+
+This is the live path. The transcript sweep at session end is a safety net for
+what nobody noticed in the moment; this is for the moment itself, and the lesson
+is available to the very next prompt in the same conversation.
+
+`--no-reconcile` stores it without the consistency check.
+
 ### `rmc observe --transcript PATH [--served ids] [--session id]`
-Score a finished session and fold the result into the tree: update node stats,
-file the episode, and match any correction against delta manifests. No model
-call. Normally invoked by the `SessionEnd` hook.
+Judge a finished session and fold the result into the tree: update node stats,
+file the episode, and work out which dropped detail any correction was about.
+Costs one judgement, skipped entirely for sessions too small to teach anything.
+Normally invoked by the `SessionEnd` hook.
 
 ### `rmc learn --transcript PATH [--session id]`
 Ask a model whether the session contained a reusable lesson, and mint a level-0
@@ -114,22 +133,22 @@ Any key can be overridden per-run by an environment variable:
 | `recall.strategy` | `delta-patch` | `delta-patch`, `delta-jump`, or `stepwise` |
 | `recall.max_pack_tokens` | `1200` | ceiling on injected context |
 | `recall.max_families` | `3` | lesson families served per prompt |
-| `recall.min_match` | `0.12` | similarity a family must clear to be served |
+| `recall.judge_calls` | `2` | model calls the relevance walk may spend |
+| `recall.max_depth` | `2` | how far down the tree the walk may look |
 | `recall.max_expansions` | `3` | descents before escalating to L0 |
-| `selection.w_delta` | `0.45` | weight on manifest match |
-| `selection.w_affinity` | `0.25` | weight on task similarity |
-| `selection.w_prior` | `0.20` | weight on the smoothed success rate |
-| `selection.w_cost` | `0.10` | penalty on token cost |
+| `selection.w_judge` | `0.60` | weight on the model's usefulness ranking |
+| `selection.w_prior` | `0.28` | weight on the observed rescue rate |
+| `selection.w_cost` | `0.12` | penalty on token cost |
 | `selection.explore` | `posterior` | `ucb` to keep probing rare branches |
 | `compaction.min_successes` | `2` | successful recalls before compressing |
-| `compaction.max_ratio` | `0.6` | candidate must be ≤60% of the original |
+| `compaction.max_ratio` | `0.75` | candidate must be ≤75% of the original |
 | `compaction.threshold` | `1.0` | required replay pass-rate |
 | `compaction.regression_k` | `5` | episodes replayed per validation |
 | `compaction.max_level` | `6` | deepest compression level |
 | `learning.min_tool_calls` | `8` | below this a session is ignored |
-| `placement.min_similarity` | `0.15` | below this a new lesson is a new leaf, with no model call |
 | `placement.consult` | `true` | ask a model how new knowledge relates to old |
-| `placement.candidates` | `3` | existing lessons compared in **one** reconciliation call |
+| `placement.judge_calls` | `2` | model calls the relatedness walk may spend |
+| `placement.max_depth` | `2` | how far down the walk may look |
 | `placement.surface_conflicts` | `true` | raise unresolved contradictions during recall |
 | `signals.min_confidence` | `0.5` | floor for acting on an outcome |
 | `privacy.redact` | `true` | scrub secrets before writing |
