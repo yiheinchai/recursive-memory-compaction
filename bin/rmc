@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Zero-install entry point. RMC is stdlib-only, so this works straight from a
+# clone — no venv, no pip, nothing to break when the system Python is
+# externally managed. `pip install -e .` also works and provides the same CLI.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PY="${RMC_PYTHON:-python3}"
+exec env PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" "$PY" -m rmc "$@"
