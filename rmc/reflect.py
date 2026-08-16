@@ -111,6 +111,7 @@ def observe(
     facts: SessionFacts,
     *,
     adapter: Adapter | None = None,
+    attributed: dict[str, bool] | None = None,
     session_id: str = "",
     served: list[str] | None = None,
     family_hint: str = "",
@@ -160,6 +161,12 @@ def observe(
     # out to be irrelevant did not succeed and did not fail — it was *noise*, and
     # recording it as a success inflates its record and eventually earns it a
     # compression it never deserved.
+    # An in-session reflector saw the real context and can tell a principle
+    # being applied from a command being run; a digest cannot. Prefer its
+    # verdict when there is one.
+    if attributed:
+        outcome.used = {k: "reported in-session" for k, v in attributed.items() if v}
+        outcome.attributed = True
     used_nodes = (
         [n for n in nodes if n.id in outcome.used] if outcome.attributed else nodes
     )

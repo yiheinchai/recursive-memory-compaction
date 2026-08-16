@@ -390,10 +390,12 @@ def _absorb(store, adapter, facts, served, args) -> int:
     from .compact import run_due
     from .reflect import mint, observe
 
+    state = store.read_session(args.session or "")
     result = observe(
         store,
         facts,
         adapter=adapter,
+        attributed=dict(state.get("attributed") or {}),
         session_id=args.session or "",
         served=served,
         family_hint=args.family or "",
@@ -413,6 +415,36 @@ def _absorb(store, adapter, facts, served, args) -> int:
         for res in run_due(store, adapter, limit=1):
             state = "accepted" if res.accepted else "rejected"
             print(f"compact: {state} {res.node_id} — {res.reason[:120]}")
+    return 0
+
+
+def cmd_used(args: argparse.Namespace) -> int:
+    """Record which recalled lessons actually bore on the work.
+
+    Called by the in-session reflector, which is the best-placed judge there is:
+    it holds the real context rather than a digest, so it can see a principle
+    being applied and not merely a command being run. The verdict is parked on
+    the session and preferred over the digest-based one when the episode is
+    finally written.
+    """
+    store = need_store(args)
+    if store is None:
+        return 1
+    if not args.session:
+        return die("--session is required")
+
+    state = store.read_session(args.session)
+    verdicts = dict(state.get("attributed") or {})
+    for ident in [i for i in (args.used or "").split(",") if i.strip()]:
+        verdicts[ident.strip()] = True
+    for ident in [i for i in (args.unused or "").split(",") if i.strip()]:
+        verdicts[ident.strip()] = False
+    state["attributed"] = verdicts
+    store.write_session(args.session, state)
+    store.log("attributed", session=args.session, verdicts=verdicts, source="in-session")
+
+    hits = [k for k, v in verdicts.items() if v]
+    print(f"recorded: {len(hits)} used, {len(verdicts) - len(hits)} not used")
     return 0
 
 
@@ -869,6 +901,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--family")
     add_agent_flags(p)
     p.set_defaults(func=cmd_absorb)
+
+    p = sub.add_parser("used", help="record which recalled lessons bore on the work")
+    p.add_argument("--session", required=True)
+    p.add_argument("--used", help="comma-separated node ids that changed what was done")
+    p.add_argument("--unused", help="comma-separated node ids that did not")
+    p.set_defaults(func=cmd_used)
 
     p = sub.add_parser("observe", help="judge a transcript and update stats")
     p.add_argument("--transcript", required=True)

@@ -905,6 +905,42 @@ class TestObserve(StoreCase):
         self.assertEqual(node.stats.failures, 0)
         self.assertEqual(node.stats.attempts, 0)
 
+    def test_an_in_session_verdict_beats_the_digest_verdict(self) -> None:
+        """The reflector with real context outranks the one reading a digest.
+
+        Influence on *reasoning* is invisible in a digest of commands, so a
+        digest-based judge under-credits principles. When something that held
+        the actual conversation has already answered, use its answer.
+        """
+        a = self.add_node(id="n_a", family="f", body="principle")
+        b = self.add_node(id="n_b", family="f", body="other")
+        # The digest-based judge says only n_b helped...
+        adapter = self.verdict(
+            lessons_used=[{"id": "n_a", "used": False}, {"id": "n_b", "used": True}]
+        )
+        # ...but the in-session reflector saw n_a shape the approach.
+        result = observe(
+            self.store,
+            self.facts(),
+            adapter=adapter,
+            attributed={"n_a": True, "n_b": False},
+            served=[a.id, b.id],
+        )
+        self.assertEqual(self.store.get("n_a").stats.successes, 1)
+        self.assertEqual(self.store.get("n_b").stats.attempts, 0)
+        self.assertEqual(result.episode.used, ["n_a"])
+
+    def test_the_fork_is_asked_to_attribute_what_it_was_served(self) -> None:
+        from rmc.hooks import ATTRIBUTION, FORK_PROMPT
+
+        prompt = FORK_PROMPT.format(
+            attribution=ATTRIBUTION.format(session="s1", served="  [n_x] Retry — retry idempotently")
+        )
+        self.assertIn("rmc used --session s1", prompt)
+        self.assertIn("n_x", prompt)
+        # The prompt is hard-wrapped, so compare on collapsed whitespace.
+        self.assertIn("Being on-topic is not being used", " ".join(prompt.split()))
+
     def test_low_confidence_and_no_correction_changes_nothing(self) -> None:
         node = self.add_node(id="n_o3", family="f", body="x", level=0)
         adapter = self.verdict(outcome="unknown", confidence=0.1)

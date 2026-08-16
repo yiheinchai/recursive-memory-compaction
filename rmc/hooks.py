@@ -314,7 +314,9 @@ def on_turn_end(payload: dict[str, Any]) -> int:
         # more than a transcript digest, and the digest has proven able to spot
         # conceptual corrections. Choose fork when fidelity matters more than
         # tokens.
-        if _spawn_fork(store, session_id, state.get("cwd") or os.getcwd()):
+        if _spawn_fork(
+            store, session_id, state.get("cwd") or os.getcwd(), served=state.get("served") or []
+        ):
             store.log("nudge", session=session_id, mode="fork", tools=new_tools)
             return 0
         # Fall through to background rather than silently skipping reflection.
@@ -375,30 +377,64 @@ you wrong about anything?
 
 If something clears all of: reusable, would make an ignorant agent act wrongly,
 not already in the repo's docs or a lesson you were served, and still true
-tomorrow — then run exactly one command:
+tomorrow — then run:
 
     rmc add --family <slug> "<the corrected understanding, AND the wrong belief \
 it replaces>"
 
-Otherwise reply with the single line: nothing to capture.
+Otherwise say: nothing to capture.
+
+{attribution}Reply with one line when you are done. Nothing else.
 
 Most sessions teach nothing, and saying so is this working correctly. Never
 invent a lesson: every low-value one permanently taxes future retrieval."""
 
 
-def _spawn_fork(store: Store, session_id: str, cwd: str) -> bool:
+ATTRIBUTION = """Second, these lessons were recalled into this session before the work
+started:
+
+{served}
+
+Say which of them actually bore on what happened — a lesson counts only if the
+work would plausibly have gone differently without it. Being on-topic is not
+being used; being read and found irrelevant is not being used. Be strict, and
+note that having been *served* a lesson and then done the opposite means it was
+not used.
+
+You are better placed to answer this than anything else in the system: you hold
+the actual context, so you can see a principle being applied and not merely a
+command being run. Record it with:
+
+    rmc used --session {session} --used <ids> --unused <ids>
+
+"""
+
+
+def _spawn_fork(store: Store, session_id: str, cwd: str, served: list[str] | None = None) -> bool:
     """Fork the live session for reflection. True if the fork was launched."""
     from .adapters._proc import child_env, which
 
     if not session_id or which("claude") is None:
         return False
+
+    # Attribution belongs here rather than in the digest pass: the fork has the
+    # real conversation, and influence on reasoning is invisible in a digest.
+    nodes = [n for n in (store.get(i) for i in (served or [])) if n is not None]
+    attribution = (
+        ATTRIBUTION.format(
+            session=session_id,
+            served="\n".join(f"  [{n.id}] {n.title or n.family} — {n.summary()}" for n in nodes),
+        )
+        if nodes
+        else ""
+    )
     argv = [
         "claude",
         "--resume",
         session_id,
         "--fork-session",  # new session id, so the live one is never touched
         "-p",
-        FORK_PROMPT,
+        FORK_PROMPT.format(attribution=attribution),
         "--no-session-persistence",
         "--permission-mode",
         "acceptEdits",
