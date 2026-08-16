@@ -293,6 +293,17 @@ def digest(facts: SessionFacts, *, limit: int = 11000) -> str:
     for msg in facts.follow_ups[:8]:
         parts.append(f"[the human then said]\n{msg[:800]}")
 
+    # The agent's own reasoning, not just what it ran. Attribution asks whether
+    # a lesson bore on the work, and for a lesson that shapes *how you think* —
+    # a principle, a constraint, a way of deciding — the only trace is here. A
+    # digest of commands and outcomes shows a lesson that named a flag and is
+    # blind to one that changed an approach, which credits the cheap kind of
+    # knowledge and silently starves the expensive kind.
+    for msg in facts.assistant_messages[1:-1][:6]:
+        text = " ".join(msg.split())
+        if len(text) > 80:  # skip one-line acknowledgements
+            parts.append(f"[the agent reasoned]\n{text[:700]}")
+
     if facts.denied:
         parts.append("[the human refused or interrupted a tool call]")
 
