@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.DS_Store
+
+# RMC runtime store (nodes are data, not source). Keep examples/ committed.
+.rmc/
+!examples/**/.rmc/
+sandbox/
+*.log
