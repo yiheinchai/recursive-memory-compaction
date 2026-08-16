@@ -485,7 +485,11 @@ def co_use_groups(store: Store, *, min_shared: int = 2) -> list[tuple[list[Node]
     for episode in store.episodes():
         if episode.outcome != "success":
             continue
-        served = {n for n in episode.served if store.get(n) is not None}
+        # What was *used*, not what was shown. Serving ten lessons and counting
+        # all forty-five resulting pairs would manufacture associations out of a
+        # retrieval decision; only lessons that actually bore on the work are
+        # evidence that they belong under one abstraction.
+        served = {n for n in (episode.used or []) if store.get(n) is not None}
         if len(served) < 2:
             continue
         # The whole set counts only when it is more than a pair — for two

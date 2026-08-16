@@ -43,6 +43,12 @@ class Outcome:
     evidence: list[str] = field(default_factory=list)
     discoveries: list[dict[str, Any]] = field(default_factory=list)
     summary: str = ""
+    used: dict[str, str] = field(default_factory=dict)  # node id -> how it helped
+    # Whether the attribution question was answered at all. An empty `used` is a
+    # verdict ("none of them helped"); a missing one is not. Conflating them
+    # means falling back to crediting everything, which is the bug attribution
+    # exists to fix.
+    attributed: bool = False
 
     @classmethod
     def from_verdict(cls, raw: dict[str, Any] | None) -> "Outcome":
@@ -63,6 +69,12 @@ class Outcome:
             evidence=[str(e) for e in evidence][:6],
             discoveries=[d for d in (raw.get("discoveries") or []) if isinstance(d, dict)],
             summary=str(raw.get("summary") or ""),
+            used={
+                str(u["id"]): str(u.get("how") or "")
+                for u in (raw.get("lessons_used") or [])
+                if isinstance(u, dict) and u.get("id") and u.get("used")
+            },
+            attributed=isinstance(raw.get("lessons_used"), list),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -115,7 +127,7 @@ def observe(
     if adapter is None:
         return ObserveResult(outcome=Outcome(), skipped="no backend available to judge with")
 
-    verdict = Judge(store, adapter).assess(digest(facts))
+    verdict = Judge(store, adapter).assess(digest(facts), served=nodes)
     if verdict is None:
         store.log("observe", session=session_id, outcome="unknown", reason="judge unavailable")
         return ObserveResult(outcome=Outcome(), skipped="judge unavailable")
@@ -144,7 +156,16 @@ def observe(
         )
         return result
 
-    for node in nodes:
+    # Credit only what was actually used. A lesson that was injected and turned
+    # out to be irrelevant did not succeed and did not fail — it was *noise*, and
+    # recording it as a success inflates its record and eventually earns it a
+    # compression it never deserved.
+    used_nodes = (
+        [n for n in nodes if n.id in outcome.used] if outcome.attributed else nodes
+    )
+    unused = [n for n in nodes if n not in used_nodes]
+
+    for node in used_nodes:
         node.stats.attempts += 1
         if outcome.corrected or outcome.label == "failure":
             node.stats.failures += 1
@@ -154,6 +175,11 @@ def observe(
         store.save_node(node)
         result.updated.append(node.id)
 
+    if unused:
+        # Not a mark against the lesson — a mark against retrieval, which served
+        # something the work never needed.
+        store.log("unused", session=session_id, nodes=[n.id for n in unused])
+
     family = family_hint or (nodes[0].family if nodes else "")
     episode = Episode(
         id=new_id("e"),
@@ -162,6 +188,7 @@ def observe(
         outcome=outcome.label,
         confidence=outcome.confidence,
         served=served,
+        used=[n.id for n in used_nodes],
         accepted_summary=(outcome.summary or summarise_work(facts))
         if outcome.label == "success"
         else "",

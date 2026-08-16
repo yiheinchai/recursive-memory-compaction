@@ -63,7 +63,9 @@ class StoreCase(unittest.TestCase):
         self.store.invalidate()
         return self.store.get(node.id)
 
-    def add_episode(self, ident, family, prompt, *, outcome="success", served=(), summary="done") -> Episode:
+    def add_episode(
+        self, ident, family, prompt, *, outcome="success", served=(), used=None, summary="done"
+    ) -> Episode:
         ep = Episode(
             id=ident,
             family=family,
@@ -71,6 +73,7 @@ class StoreCase(unittest.TestCase):
             outcome=outcome,
             confidence=0.9,
             served=list(served),
+            used=list(served if used is None else used),
             accepted_summary=summary,
         )
         self.store.save_episode(ep)
@@ -769,6 +772,36 @@ class TestObserve(StoreCase):
         self.assertEqual(reloaded.stats.successes, 0)
         self.assertEqual(result.episode.outcome, "success")
 
+    def test_only_lessons_that_were_used_get_credit(self) -> None:
+        """An irrelevant lesson that happened to be injected must not accrue a
+        record of usefulness — it would eventually earn a compression it never
+        deserved."""
+        helpful = self.add_node(id="n_used", family="f", body="the one that mattered")
+        noise = self.add_node(id="n_noise", family="f", body="shown, irrelevant")
+        adapter = self.verdict(
+            lessons_used=[
+                {"id": "n_used", "used": True, "how": "named the constraint"},
+                {"id": "n_noise", "used": False},
+            ]
+        )
+        result = observe(
+            self.store, self.facts(), adapter=adapter, served=[helpful.id, noise.id]
+        )
+        self.assertEqual(self.store.get("n_used").stats.successes, 1)
+        self.assertEqual(self.store.get("n_noise").stats.attempts, 0)
+        self.assertEqual(result.episode.used, ["n_used"])
+
+    def test_an_unused_lesson_is_not_scored_as_a_failure_either(self) -> None:
+        """It was not wrong, it was irrelevant. That is a retrieval miss."""
+        noise = self.add_node(id="n_n2", family="f", body="irrelevant")
+        adapter = self.verdict(
+            corrected=True, lessons_used=[{"id": "n_n2", "used": False}]
+        )
+        observe(self.store, self.facts(), adapter=adapter, served=[noise.id])
+        node = self.store.get("n_n2")
+        self.assertEqual(node.stats.failures, 0)
+        self.assertEqual(node.stats.attempts, 0)
+
     def test_low_confidence_and_no_correction_changes_nothing(self) -> None:
         node = self.add_node(id="n_o3", family="f", body="x", level=0)
         adapter = self.verdict(outcome="unknown", confidence=0.1)
@@ -1238,8 +1271,11 @@ class TestCoUse(StoreCase):
         for ident, family in (("n_a", "deploy"), ("n_b", "deploy"), ("n_c", "caching")):
             self.add_node(id=ident, family=family, body=f"lesson {ident}")
 
-    def co_used(self, ident, served, outcome="success") -> None:
-        self.add_episode(ident, "x", "did some work", outcome=outcome, served=served)
+    def co_used(self, ident, used, outcome="success", served=None) -> None:
+        self.add_episode(
+            ident, "x", "did some work", outcome=outcome,
+            served=served if served is not None else used, used=used,
+        )
 
     def test_one_co_occurrence_is_not_evidence(self) -> None:
         from rmc.compact import co_use_groups
@@ -1265,6 +1301,24 @@ class TestCoUse(StoreCase):
         groups = co_use_groups(self.store)
         families = {n.family for n in groups[0][0]}
         self.assertEqual(families, {"deploy", "caching"})
+
+    def test_lessons_shown_but_not_used_are_not_co_used(self) -> None:
+        """The distinction that matters: serving is a retrieval decision, using
+        is an outcome. Counting everything shown manufactures associations —
+        serve ten lessons and you invent forty-five pairs."""
+        from rmc.compact import co_use_groups
+
+        self.co_used("e1", used=["n_a"], served=["n_a", "n_b", "n_c"])
+        self.co_used("e2", used=["n_a"], served=["n_a", "n_b", "n_c"])
+        self.assertEqual(co_use_groups(self.store), [], "only one lesson actually bore on the work")
+
+    def test_the_used_subset_is_what_forms_the_abstraction(self) -> None:
+        from rmc.compact import co_use_groups
+
+        self.co_used("e1", used=["n_a", "n_c"], served=["n_a", "n_b", "n_c"])
+        self.co_used("e2", used=["n_a", "n_c"], served=["n_a", "n_b", "n_c"])
+        groups = co_use_groups(self.store)
+        self.assertEqual({n.id for n in groups[0][0]}, {"n_a", "n_c"})
 
     def test_failed_sessions_are_not_evidence_of_belonging(self) -> None:
         from rmc.compact import co_use_groups

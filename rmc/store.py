@@ -55,6 +55,10 @@ class Episode:
     outcome: str = "unknown"  # success | failure | unknown
     confidence: float = 0.0
     served: list[str] = None  # node ids injected into that session
+    # The subset that actually bore on the work, judged in reflection. Serving a
+    # lesson is a retrieval decision; *using* one is an outcome, and only the
+    # outcome should earn credit or drive abstraction.
+    used: list[str] = None
     accepted_summary: str = ""  # what the agent ended up doing, once accepted
     check: dict[str, Any] = None  # optional mechanical oracle harvested from session
     created: str = ""
@@ -63,6 +67,7 @@ class Episode:
 
     def __post_init__(self) -> None:
         self.served = self.served or []
+        self.used = self.used or []
         self.check = self.check or {}
         self.created = self.created or utcnow()
 
@@ -74,6 +79,7 @@ class Episode:
             "outcome": self.outcome,
             "confidence": self.confidence,
             "served": self.served,
+            "used": self.used,
             "accepted_summary": self.accepted_summary,
             "check": self.check,
             "created": self.created,
@@ -90,6 +96,7 @@ class Episode:
             outcome=raw.get("outcome") or "unknown",
             confidence=float(raw.get("confidence") or 0.0),
             served=list(raw.get("served") or []),
+            used=list(raw.get("used") or []),
             accepted_summary=raw.get("accepted_summary") or "",
             check=dict(raw.get("check") or {}),
             created=raw.get("created") or utcnow(),

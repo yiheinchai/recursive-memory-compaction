@@ -301,7 +301,7 @@ class Judge:
         )
 
     # ------------------------------------------------------------- sessions
-    def assess(self, digest: str) -> dict[str, Any] | None:
+    def assess(self, digest: str, served: list[Node] | None = None) -> dict[str, Any] | None:
         """How did this session go, and what was learned from it?
 
         Replaces what used to be regex phrase banks with hand-tuned weights.
@@ -311,10 +311,14 @@ class Judge:
         """
         if not digest.strip():
             return None
+        rendered = (
+            "\n".join(f"[{n.id}] {n.title or n.family} — {n.summary()}" for n in (served or []))
+            or "(no lessons were recalled for this session)"
+        )
         return self.ask(
-            ASSESS.format(digest=truncate(digest, 12000)),
+            ASSESS.format(digest=truncate(digest, 12000), served=rendered),
             ASSESS_SCHEMA,
-            cache_key=self.key("assess", digest.strip()),
+            cache_key=self.key("assess", digest.strip(), *(n.id for n in (served or []))),
         )
 
     def related(self, new_lesson: str, candidates: list[Node]) -> list[Pick]:
@@ -463,6 +467,22 @@ ASSESS_SCHEMA = {
             "type": "string",
             "description": "What was actually done, if the outcome was success. One or two sentences.",
         },
+        "lessons_used": {
+            "type": "array",
+            "description": "Which of the recalled lessons actually bore on the work.",
+            "items": {
+                "type": "object",
+                "required": ["id", "used"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "used": {
+                        "type": "boolean",
+                        "description": "True only if this lesson changed what was done.",
+                    },
+                    "how": {"type": "string", "description": "What it changed, if used."},
+                },
+            },
+        },
     },
 }
 
@@ -488,9 +508,28 @@ approach; an API that behaved unexpectedly. For each, record what failed and
 because they let the next agent skip the detour entirely. An identical command
 retried until it succeeded is flakiness, not a discovery.
 
+`lessons_used` — the lessons below were injected into this session before the
+work started. For each, say whether it actually *bore on* what happened.
+
+Be strict, and default to `false`. A lesson counts as used only if the work
+would plausibly have gone differently without it: it supplied a fact that was
+acted on, ruled out an approach, or named a constraint that was respected.
+Being on-topic is not being used. Being read and found irrelevant is not being
+used. If the same result would have followed without it, it was not used.
+
+This matters more than it looks. These verdicts decide which lessons get credit
+for the outcome, and which get abstracted together into a shared parent. Marking
+everything used means an irrelevant lesson accrues a record of usefulness it did
+not earn, and unrelated lessons get merged because they happened to be shown at
+the same time.
+
 `confidence` — be honest. A short session with no clear signal is `unknown` with
 low confidence, and that is a perfectly good answer. A wrong label is worse than
 no label, because it is used to decide which memories are trusted.
+
+<<<RECALLED LESSONS
+{served}
+RECALLED LESSONS>>>
 
 <<<SESSION
 {digest}

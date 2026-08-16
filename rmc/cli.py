@@ -138,6 +138,19 @@ def _print_reflection_stats(store: Store) -> None:
     """
     captures = store.read_events("capture", limit=2000)
     nudges = store.read_events("nudge", limit=2000)
+
+    # Retrieval precision: of the lessons put in front of the model, how many
+    # actually bore on the work. Low precision is not a memory problem, it is a
+    # recall problem — the store is fine and the router is over-serving.
+    episodes = [e for e in store.episodes() if e.served]
+    shown = sum(len(e.served) for e in episodes)
+    used = sum(len(e.used) for e in episodes)
+    if shown:
+        print(
+            f"  precision  {used}/{shown} served lessons were used  "
+            + dim(f"({used / shown:.0%})")
+        )
+
     if not captures and not nudges:
         return
 
