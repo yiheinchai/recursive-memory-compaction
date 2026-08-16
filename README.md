@@ -167,9 +167,14 @@ text being tracked.
 ### What you see
 
 ```
-⋯ Recalling lessons…              (while the hook runs)
-⋯ RMC · 3 lessons · 961 tok       (after injection)
+⋯ Recalling lessons…                                    (while the hook runs)
+⋯ RMC · 2 lessons · 512 tok — Retry policy, Cache TTLs   (after injection)
+⋯ RMC · 1 lesson · 118 tok — Retry policy · 1 refreshed, 2 already in context
 ```
+
+The counts distinguish three different things: a lesson injected in full, a
+one-line refresher for one that is present but stale, and one skipped entirely
+because it is still fresh in context. Only the first is a lesson arriving.
 
 An injection is never silent. A memory system that edits your prompts without
 saying so is one you cannot notice going wrong.

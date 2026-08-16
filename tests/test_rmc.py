@@ -2223,14 +2223,35 @@ class TestRecallNotice(unittest.TestCase):
     """The line above every prompt. A count proves RMC fired; only the titles
     let you notice it fired on the wrong lessons."""
 
-    def _pack(self, titles, tokens=100, conflicts=()):
+    def _pack(self, titles, tokens=100, conflicts=(), refreshed=0, skipped=0):
         from rmc.recall import Pack
         p = Pack()
-        p.served = [f"n{i}" for i in range(len(titles))]
         p.titles = list(titles)
+        # served covers full injections and refreshers alike
+        p.served = ([f"n{i}" for i in range(len(titles))]
+                    + [f"r{i}" for i in range(refreshed)])
+        p.refreshed = [f"r{i}" for i in range(refreshed)]
+        p.skipped = [f"s{i}" for i in range(skipped)]
         p.tokens = tokens
         p.conflicts = list(conflicts)
         return p
+
+    def test_a_refresher_is_not_counted_as_a_lesson(self) -> None:
+        """A full body and a one-line reminder are materially different, and
+        reporting them as one number is why '2 lessons' could appear with a
+        single lesson visible."""
+        from rmc.hooks import recall_notice
+        note = recall_notice(self._pack(["Fix identified defects"], 118, refreshed=1))
+        self.assertIn("1 lesson ", note)
+        self.assertNotIn("2 lessons", note)
+        self.assertIn("1 refreshed", note)
+
+    def test_skips_are_named_so_a_zero_is_explicable(self) -> None:
+        """Nothing injected is a decision, not a failure — say why."""
+        from rmc.hooks import recall_notice
+        note = recall_notice(self._pack([], 0, skipped=3))
+        self.assertIn("0 lessons", note)
+        self.assertIn("3 already in context", note)
 
     def test_it_names_what_was_recalled(self) -> None:
         from rmc.hooks import recall_notice

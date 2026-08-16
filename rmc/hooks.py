@@ -183,7 +183,13 @@ def recall_notice(pack) -> str:
     only the titles let you notice it fired *wrongly* — which is the failure
     this line exists to make visible, and the one a bare number hides.
     """
-    count = len(pack.served)
+    # `served` covers three materially different things, and reporting them as
+    # one number is why "2 lessons" could show up with a single lesson visible:
+    # a full body is ~400 tokens of lesson, a refresher is a ~20-token reminder
+    # line, and a skip is nothing at all because the text is already in context.
+    refreshed = len(getattr(pack, "refreshed", []))
+    skipped = len(getattr(pack, "skipped", []))
+    count = len(pack.served) - refreshed
     note = f"RMC · {count} lesson{'s' if count != 1 else ''} · {pack.tokens} tok"
 
     titles = [t.strip() for t in getattr(pack, "titles", []) if t and t.strip()]
@@ -204,6 +210,14 @@ def recall_notice(pack) -> str:
                 note += f", +{left} more"
         else:
             note += f" — {titles[0][: max(12, room - 3)]}…"
+
+    extra = []
+    if refreshed:
+        extra.append(f"{refreshed} refreshed")
+    if skipped:
+        extra.append(f"{skipped} already in context")
+    if extra:
+        note += "  · " + ", ".join(extra)
 
     if pack.conflicts:
         note += "  ⚠ conflict"

@@ -185,7 +185,6 @@ def recall_pack(
                 chunks.append(reminder)
                 pack.refreshed.append(node.id)
                 pack.served.append(node.id)
-                pack.titles.append(node.title or node.family)
                 used += cost
             continue
 
