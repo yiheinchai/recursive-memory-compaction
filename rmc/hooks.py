@@ -193,49 +193,52 @@ def recall_notice(pack) -> str:
 NUDGE = """Automated learning check from the RMC harness — the user did not ask for
 this and it is NOT a request to capture anything.
 
-Look back over what you just did and ask: **were you wrong about anything?**
+Look back over the turns you just did and find:
 
-Weight the kinds of wrongness by how much they cost:
+  **Every point where the user had to steer you.**
 
-1. **Wrong about how something works.** You assumed this project, tool or
-   system behaved one way and it does not. The user corrected your
-   understanding, or reality did. These are the expensive ones — they are
-   invisible while you hold them, they make every downstream decision wrong,
-   and they usually leave no error message at all.
-2. **Wrong about what mattered.** You solved the stated problem and missed the
-   real one, or built something the user then reframed.
-3. **Wrong mechanically.** A command failed, a flag was wrong, a path did not
-   exist. These are loud and usually cheap, and most of them are not lessons.
+A correction, a rejection, a "no, like this", a restated requirement, a
+complaint about quality, a preference you did not know they held. Each one is a
+round of the user's time that a better-informed agent would not have cost them.
+That — not being wrong in the abstract — is the failure this check exists to
+find.
 
-Do not let (3) crowd out (1) just because it is the kind that announces itself.
-A turn in which nothing failed can still contain the most important thing you
-learned all day.
+For each, ask what you would have needed to know at the start to make that
+correction unnecessary. It is usually one of these, and the first three are the
+ones this check has historically missed:
+
+  1. **A standard or preference this user holds** — what they consider good,
+     how they want work presented, an aesthetic, a tone, a tool they expect.
+  2. **A method they expect applied** — a check to run, a bar to clear, an
+     order to work in, a perspective to take.
+  3. **A quality bar** — the level of fidelity or polish at which they stop
+     pushing back.
+  4. **A false belief about a tool, language, platform or library.** This counts
+     even though it surfaced as a bug. The test is whether a belief was wrong,
+     not whether it arrived with an error message.
+  5. **A false belief about this project.**
+  6. **A modelling error** — you represented something in a way that is not true
+     of it.
 {evidence}
-**"Nothing to capture" is the expected answer and needs no justification.** Most
-turns teach nothing. Say it in one line and finish — concluding no is this check
-working, not a failure to look hard enough.
+Then filter on usefulness rather than worthiness:
 
-Capture only if all of these hold:
-  (a) it is a reusable fact or model of how something works;
-  (b) an agent holding your old belief would take a wrong action;
-  (c) it is not already in the repo's code, docs, or a lesson you were served;
-  (d) it stays true after this task ends.
+  (a) would knowing this at the start have removed at least one round of
+      steering?
+  (b) does it apply to some task other than this exact file?
+  (c) is it still true tomorrow?
 
-If it clears the bar:
-
-    rmc add --family <slug> "<the corrected understanding, AND the wrong belief \
-it replaces>"
-
-Record the misconception as well as the correction. A lesson that states only
-the right answer lets the next agent arrive at the same wrong assumption and
-merely recognise the fix afterwards.
-
-Never invent a lesson to satisfy this check. Every low-value one permanently
-taxes retrieval, because it competes for attention on every future prompt."""
+Calibrate against the steering, not against a general prior. A session in which
+the user never had to redirect you almost certainly teaches nothing — say so and
+finish. A session in which they redirected you repeatedly almost certainly does,
+and returning nothing from one is this check failing. Do not invent a lesson to
+fill a gap; equally, do not talk yourself out of one because it feels small or
+obvious in hindsight. The user having to say it is the evidence that it was
+neither."""
 
 FAILURE_EVIDENCE = """
-For reference, {count} tool call{plural} failed since the last check — though
-these are category (3), and are the least likely thing here to be worth keeping:
+For reference, {count} tool call{plural} failed since the last check. Failures are
+the loudest material here and rarely the most valuable — an unmet expectation of
+the user's, or a belief that was quietly wrong, usually leaves no error at all:
 
 {lines}
 """
@@ -366,28 +369,63 @@ FORK_PROMPT = """You are a reflection pass running in a fork of this session. Th
 user cannot see you and is not waiting — the main session carried on without you.
 Do not continue the task, do not edit anything, and do not report progress.
 
-You have the whole conversation above. Read it as your own history and ask: were
-you wrong about anything?
+You have the whole conversation above. Read it as your own history and find:
 
-  1. Wrong about how something works — you believed this project, tool or system
-     behaved one way and it does not. Invisible while held, and it makes every
-     downstream decision wrong. These are the ones worth having.
-  2. Wrong about what mattered — you solved the stated problem, not the real one.
-  3. Wrong mechanically — a command failed. Loud, cheap, rarely a lesson.
+  **Every point where the user had to steer you.**
 
-If something clears all of: reusable, would make an ignorant agent act wrongly,
-not already in the repo's docs or a lesson you were served, and still true
-tomorrow — then run:
+A correction, a rejection, a "no, like this", a restated requirement, a
+complaint about quality, a preference you did not know they held. Each one is a
+round of the user's time that a better-informed agent would not have cost them.
+That — not being wrong in the abstract — is the failure this check exists to
+find.
 
-    rmc add --family <slug> "<the corrected understanding, AND the wrong belief \
+For each, ask what you would have needed to know at the start to make that
+correction unnecessary. It is usually one of these, and the first three are the
+ones this check has historically missed:
+
+  1. **A standard or preference this user holds** — what they consider good,
+     how they want work presented, an aesthetic, a tone, a tool they expect.
+  2. **A method they expect applied** — a check to run, a bar to clear, an
+     order to work in, a perspective to take.
+  3. **A quality bar** — the level of fidelity or polish at which they stop
+     pushing back.
+  4. **A false belief about a tool, language, platform or library.** This counts
+     even though it surfaced as a bug. The test is whether a belief was wrong,
+     not whether it arrived with an error message.
+  5. **A false belief about this project.**
+  6. **A modelling error** — you represented something in a way that is not true
+     of it.
+
+Then filter on usefulness rather than worthiness:
+
+  (a) would knowing this at the start have removed at least one round of
+      steering?
+  (b) does it apply to some task other than this exact file?
+  (c) is it still true tomorrow?
+
+If it clears the bar:
+
+    rmc add --family <slug> "<what to do, AND the wrong belief or blind spot \
 it replaces>"
 
-Otherwise say: nothing to capture.
+Record the blind spot as well as the correction. A lesson that states only the
+right answer lets the next agent arrive at the same wrong assumption and merely
+recognise the fix afterwards.
 
-{attribution}Reply with one line when you are done. Nothing else.
+**If the user had to tell you something that was already in a lesson you were
+served, do not add it again.** That is not a gap in what is known — it is a
+lesson that is not landing. Say so on your reply line, naming the node id, and
+capture nothing.
 
-Most sessions teach nothing, and saying so is this working correctly. Never
-invent a lesson: every low-value one permanently taxes future retrieval."""
+Calibrate against the steering, not against a general prior. A session in which
+the user never had to redirect you almost certainly teaches nothing — say so and
+finish. A session in which they redirected you repeatedly almost certainly does,
+and returning nothing from one is this check failing. Do not invent a lesson to
+fill a gap; equally, do not talk yourself out of one because it feels small or
+obvious in hindsight. The user having to say it is the evidence that it was
+neither.
+
+{attribution}Reply with one line when you are done. Nothing else."""
 
 
 ATTRIBUTION = """Second, these lessons were recalled into this session before the work

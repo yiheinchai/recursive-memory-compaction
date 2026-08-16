@@ -1307,13 +1307,41 @@ class TestReflectionTrigger(StoreCase):
         self.assertIsNotNone(result, "a long clean turn can still contain a conceptual error")
         self.assertEqual(result["decision"], "block")
 
-    def test_asks_about_conceptual_error_first(self) -> None:
+    def test_asks_what_the_user_had_to_steer(self) -> None:
+        """The trigger is observed steering, not a judgement about wrongness.
+
+        A user correction is evidence sitting in the transcript; "was I wrong
+        about anything" is a judgement the reflector has to reach for, and it
+        reliably answered no on sessions full of corrections.
+        """
         self.use_blocking_mode()
         reason = self.fire(self.transcript([True] * 14))["reason"]
-        conceptual = reason.index("Wrong about how something works")
-        mechanical = reason.index("Wrong mechanically")
-        self.assertLess(conceptual, mechanical, "the expensive kind must lead")
-        self.assertIn("nothing to capture", reason.lower())
+        self.assertIn("had to steer you", reason)
+        self.assertIn("teaches nothing", reason.lower(), "a null result stays permitted")
+
+    def test_puts_the_most_missed_kinds_first(self) -> None:
+        """Preferences, methods and quality bars lead.
+
+        They are what the user repeats every session until someone writes them
+        down, and they were the kinds the previous framing could not see at
+        all — it only asked about mistaken beliefs.
+        """
+        self.use_blocking_mode()
+        reason = self.fire(self.transcript([True] * 14))["reason"]
+        preference = reason.index("standard or preference this user holds")
+        belief = reason.index("false belief about a tool")
+        self.assertLess(preference, belief, "the kinds most often missed must lead")
+
+    def test_a_wrong_belief_still_counts_when_it_arrived_as_a_bug(self) -> None:
+        """Surfacing as a bug must not demote a wrong belief.
+
+        This is how the costliest lesson of a long debugging session gets
+        dropped: it looks mechanical, so a taxonomy that discounts mechanical
+        failures discards it.
+        """
+        self.use_blocking_mode()
+        reason = self.fire(self.transcript([True] * 14))["reason"]
+        self.assertIn("even though it surfaced as a bug", reason)
 
     def test_silent_on_a_trivial_turn(self) -> None:
         self.use_blocking_mode()
@@ -1395,7 +1423,7 @@ class TestReflectionTrigger(StoreCase):
         result = self.fire(self.transcript([True, False, False]))
         self.assertIsNotNone(result)
         self.assertIn("cmd1", result["reason"])
-        self.assertIn("least likely thing here to be worth keeping", result["reason"])
+        self.assertIn("rarely the most valuable", result["reason"])
 
     def test_does_not_re_fire_for_work_already_raised(self) -> None:
         self.use_blocking_mode()

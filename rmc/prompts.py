@@ -249,40 +249,50 @@ CANDIDATE>>>
 
 REFLECT = """RMC:reflect
 
-Read this session excerpt and decide whether it contains a reusable lesson.
+Read this session excerpt and decide whether it contains a lesson that would
+have saved the user a round of steering.
 
-Lessons come from two places, and the second is the more common one:
+Two things generate lessons, and the first is the one most often missed:
 
-  1. **The human corrected the agent.** What should it have known?
+  1. **The human had to steer the agent.** A correction, a rejection, a "no,
+     like this", a restated requirement, a complaint about quality, a
+     preference they turned out to hold. Each is a round of their time a
+     better-informed agent would not have cost them. What they had to say is
+     the lesson — and it is as often a standard, a method or a taste as it is
+     a fact.
   2. **The environment corrected the agent.** A command failed and a different
      one worked; a test rejected an approach; an API behaved unexpectedly; a
-     long chain of exploration converged on an answer. Nobody had to intervene —
-     the codebase, the test suite or the infrastructure taught it.
+     long detour converged on an answer. Nobody intervened — the codebase, the
+     tests or the platform taught it.
 
 The `WORKED OUT BY TRIAL` section below is the second kind, already paired as
-failed-attempt → what-worked. It is the highest-value material here: the whole
-point is that the next agent reaches the answer directly instead of repeating
-the detour. When you capture one, write down what to do AND the trap that made
-the detour necessary, or the next agent will simply fall into it again.
+failed-attempt → what-worked. When you capture one, write down what to do AND
+the trap that made the detour necessary, or the next agent falls into it again.
 
 Capture ONLY if all of these hold:
-  (a) it is a reusable fact or method, not a narrative of what happened;
-  (b) an agent that did not know it would take a wrong action or waste a run;
+  (a) knowing it at the start would have removed at least one exchange, one
+      detour, or one correction;
+  (b) it applies to some task other than this exact file;
   (c) it is not already obvious from the repository's own code or docs;
   (d) it stays true after this task ends.
 
-A trap that is specific to this codebase or this infrastructure passes (c) even
-if it would be obvious to someone who had already hit it — that is exactly the
-knowledge worth keeping.
+A preference, a quality bar or a working method passes (a) as readily as a
+technical fact does — often more so, because the user has to repeat those every
+time they are not written down. A trap specific to this codebase passes (c)
+even if it would be obvious to someone who had already hit it.
 
-`capture: false` is the expected answer for most sessions and needs no
-justification. Never invent a lesson to have something to return — every
-low-value lesson permanently taxes future retrievals.
+Calibrate on the steering, not on a prior. If the human never had to redirect
+the agent and nothing failed, `capture: false` is right and needs no
+justification. If they redirected it repeatedly, returning nothing is this check
+failing. Never invent a lesson — every low-value one taxes future retrieval —
+but do not dismiss one because it feels obvious in hindsight: the user having to
+say it is the evidence that it was not.
 
 If you do capture: write `body` as direct instruction to a future agent
-(imperative, no preamble, no "in this session"). Pick a short lowercase
-`family` slug naming the recurring situation it applies to, so later lessons
-about the same thing land beside it.
+(imperative, no preamble, no "in this session"), and include the blind spot it
+replaces, not only the right answer. Pick a short lowercase `family` slug naming
+the recurring situation it applies to, so later lessons about the same thing
+land beside it.
 
 Existing families (reuse one if it fits):
 <<<FAMILIES
