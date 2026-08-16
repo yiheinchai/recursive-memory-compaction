@@ -110,42 +110,94 @@ is implemented, and hardened against overfitting:
 
 ---
 
+## It runs by itself
+
+You do not drive RMC. You use Claude Code or Codex normally on your own repos,
+and the loop closes in the background:
+
+| When | What happens | Cost |
+|---|---|---|
+| you submit a prompt | matching apex lessons are injected as context | no model call — pure lexical match |
+| the session ends | the outcome is read from what you did next (corrections, approvals, test results) | no model call |
+| a correction happened | the correction *is* the diagnosis; it is matched against the delta manifest and the claim is re-attached next time | no model call |
+| something reusable happened | one reflection call mints a level-0 lesson | 1 call, detached |
+| a lesson has succeeded twice | a compression is attempted and replay-tested | detached, rejects freely |
+
+The expensive steps are detached into a background process, so nothing is ever
+added to the latency of your session. Spawned agents run with `RMC_CHILD=1`,
+which makes RMC's own hooks no-op — otherwise compression would recursively
+trigger compression.
+
 ## Install
 
-```bash
-git clone <this repo> && cd rmc
-python3 -m pip install -e .        # or: just run ./bin/rmc, stdlib only
-rmc init
+Requires Python 3.10+ and at least one of `claude` or `codex`. No third-party
+Python dependencies.
+
+**As a Claude Code plugin** (recommended — works in every repo):
+
+```
+/plugin marketplace add yiheinchai/recursive-memory-compaction
+/plugin install rmc@rmc
 ```
 
-No third-party dependencies. Python 3.10+.
-
-## Quickstart
+**Or from a clone**, into one repo:
 
 ```bash
-rmc init                                     # create .rmc/ store
-rmc task add tasks/retry.yaml                # register a task + its oracle
-rmc learn --task retry-http --from transcript.md   # mint the L0 lesson
-rmc solve --task retry-http --agent claude   # recall -> run -> verify
-rmc compact --family retry --rounds 3        # compress + regression-test
-rmc tree --family retry                      # inspect the tree
-rmc recall --task retry-http --show          # see the context pack that'd be sent
+git clone https://github.com/yiheinchai/recursive-memory-compaction
+cd recursive-memory-compaction && ./bin/rmc install --target claude --target codex
 ```
 
-Run the whole continual-learning loop unattended:
+`./bin/rmc` needs no virtualenv or `pip`; `pip install -e .` also works and puts
+`rmc` on your PATH. Add `--scope user` to install globally rather than per-repo.
+
+Undo with `rmc uninstall` — it removes only what it added and leaves your
+lessons in place.
+
+## Seeing what it knows
 
 ```bash
-rmc cycle --family retry --agent codex --rounds 5
+rmc status                        # families, levels, token cost, success rates
+rmc tree --family retry           # the tree, with delta manifests
+rmc recall --prompt "add retry"   # exactly what would be injected, and why
+rmc compact --list                # what is eligible for compression
+rmc doctor                        # backends, store, hook wiring
 ```
+
+In a session, `/rmc` does the same through the bundled skill.
+
+## Watch the whole cycle
+
+```bash
+python3 examples/walkthrough.py            # deterministic, offline, ~1 second
+python3 examples/walkthrough.py --agent claude
+```
+
+It mints a lesson, records episodes, compresses it, then fails a task that needed
+the dropped detail and shows descent recovering it — printing the score
+components so you can see *why* each candidate was chosen.
+
+## Tests
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+29 tests, no dependencies. They run against a simulated knowledge world where a
+task is solved iff the required facts are present in the lesson text, so the
+compress → fail → descend → rescue cycle is genuinely executed rather than
+mocked at the seams.
 
 ## Documentation
 
 | Doc | Contents |
 |---|---|
-| [DESIGN.md](DESIGN.md) | Tree semantics, delta manifests, selection policy, validation protocol |
-| [docs/integration.md](docs/integration.md) | Claude Code skill + hooks, Codex `AGENTS.md` wiring |
+| [DESIGN.md](DESIGN.md) | Tree semantics, delta manifests, selection policy, validation protocol, known failure modes |
+| [docs/integration.md](docs/integration.md) | How the hooks wire in, and how to run it with Codex |
 | [docs/cli.md](docs/cli.md) | Full command reference |
 
 ## Status
 
-Research harness. The store format is versioned but not yet stable.
+Research harness, v0.1. It works end to end and is tested, but the store format
+is not yet stable and the ambient outcome signals are heuristic — see
+[DESIGN.md §8](DESIGN.md#8-failure-modes-this-design-accepts) for what this
+design knowingly gets wrong.

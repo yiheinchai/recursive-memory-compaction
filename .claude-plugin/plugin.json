@@ -1,0 +1,15 @@
+{
+  "name": "rmc",
+  "version": "0.1.0",
+  "description": "Recursive Memory Compaction — lessons that get cheaper the more you use them. Recalls compressed lessons on every prompt, learns from corrections, and recursively compresses memories that keep working.",
+  "author": {
+    "name": "Yi Hein Chai"
+  },
+  "homepage": "https://github.com/yiheinchai/recursive-memory-compaction",
+  "keywords": [
+    "memory",
+    "continual-learning",
+    "context",
+    "compaction"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "rmc",
+  "owner": {
+    "name": "Yi Hein Chai",
+    "url": "https://github.com/yiheinchai"
+  },
+  "plugins": [
+    {
+      "name": "rmc",
+      "source": "./",
+      "description": "Recursive Memory Compaction — a lesson tree that compresses itself as you use it."
+    }
+  ]
+}

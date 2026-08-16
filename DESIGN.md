@@ -242,34 +242,80 @@ riskiest operation, so they use a stricter threshold
 
 ---
 
-## 6. Tasks and oracles
+## 6. Episodes — the ambient oracle
 
-A task is a YAML file:
+Compression validation is exactly the claim *"this shorter text still produces
+correct behaviour"*, so it needs a definition of correct. In a scripted harness
+you write oracles by hand. RMC runs inside someone's real repo, where nobody is
+going to author a YAML oracle per lesson — so the oracle has to be **harvested**.
 
-```yaml
-id: retry-http
-family: retry
-tags: [http, retry, backoff]
-prompt: |
-  Implement fetch_with_retry(url, deadline_ms) in src/net.py ...
-oracle:
-  type: command                 # command | contains | regex | json_equals | judge
-  command: pytest -q tests/test_net.py
-  cwd: ./sandbox
+Every session that ends well becomes an **episode**: a replayable regression
+test.
+
+```json
+{
+  "id": "e_4f1a",
+  "family": "retry",
+  "prompt": "add retry to the http client in api/client.py",
+  "outcome": "success",
+  "confidence": 0.85,
+  "served": ["n_7f2a91"],
+  "accepted_summary": "added fetch_with_retry with jittered backoff, deadline-capped",
+  "check": {}
+}
 ```
 
-Oracle types:
+Replaying an episode means: fresh agent process, candidate lesson + the original
+prompt, then compare against `accepted_summary`. The comparison uses, in order
+of preference:
 
-| Type | Passes when |
-|---|---|
-| `command` | Exit status 0. `{output}` in the command is substituted with a temp file holding the agent's final message. |
-| `contains` / `regex` | The agent output matches. |
-| `json_equals` | The agent's structured output deep-equals `expected`. |
-| `judge` | A separate agent, given a rubric, returns `{"pass": true}`. Used only where mechanical checks are impossible; noisier, so `judge` oracles get `n_votes` (default 3) and majority-vote. |
+1. a **mechanical check** harvested from the session (`check.type: "contains"` —
+   strings that must appear), which is exact and free of model noise;
+2. otherwise a **judge** call, told to compare outcomes rather than wording.
 
-Without an oracle none of this works — compression validation is exactly the
-claim "this shorter text still produces correct behaviour", and "correct" has to
-be mechanically decidable to be worth anything.
+A judge that cannot be read is scored as a **failure**, never a pass. Otherwise
+an infrastructure blip silently promotes a bad compression.
+
+### 6.1 Deciding the outcome
+
+`signals.py` reads the transcript and combines, strongest first:
+
+| Signal | Reads as | Weight |
+|---|---|---|
+| the user corrected the agent | failure | −0.65 |
+| the user approved ("perfect", "that works") | success | +0.60 |
+| tests passing *last* in the session | success | +0.35 |
+| tests failing *last* | failure | −0.30 |
+| a tool call was denied | failure | −0.35 |
+| real work, no correction | success | +0.25 |
+
+Pass/fail ordering matters rather than presence: red-then-green is the normal
+shape of successful work, not a failure.
+
+Host metadata beats text matching wherever it exists — Claude Code marks
+harness-injected turns `isMeta`, tool results `toolUseResult`, and refusals
+`toolDenialKind`. Without that, a slash-command payload gets scored as the user
+approving the work. (It did, during development.)
+
+### 6.2 Two different questions
+
+The session outcome and the *lesson's* outcome are not the same thing. A session
+where the user corrected the agent and then everything worked is:
+
+- a **success** for the episode — the final result was right, so it is a valid
+  regression test;
+- a **failure** for the served lesson — it was supposed to prevent that mistake.
+
+These are recorded separately. Conflating them makes lessons look good precisely
+when they most need repair.
+
+An explicit correction is also exempt from the confidence floor. Corrected-then-
+fixed sessions score near zero because their signals cancel, so a naive floor
+discards exactly the sessions with the most to teach.
+
+Below the floor, and with no correction, RMC records nothing at all. A noisy
+label is worse than no label: it poisons both the priors and the corpus that
+every future compression is judged against.
 
 ---
 
@@ -285,13 +331,16 @@ class Adapter(Protocol):
 
 | Adapter | Invocation | Structured output |
 |---|---|---|
-| `claude` | `claude -p --output-format json --model <m>` | fenced-JSON contract + parse, validated against schema |
-| `codex` | `codex exec --json --output-schema <f> -o <last>` | native `--output-schema` |
+| `claude` | `claude -p --output-format json --no-session-persistence` | JSON contract in the prompt, recovered by fenced/balanced-brace parsing |
+| `codex` | `codex exec --ephemeral -o <file>` | native `--output-schema` |
 | `mock` | in-process, scripted | trivially |
 
-Both real adapters run **read-only and sandboxed by default**
-(`--permission-mode plan` / `-s read-only`); a task that needs to write code opts
-in per-task via `sandbox: workspace-write`.
+Meta-calls (compress, diagnose, judge) are pure text transforms and run with
+tools denied (`--disallowedTools` / `-s read-only`); only replay, which has to
+actually do the work, gets write access, scoped to the directory it is handed.
+
+Every spawned process gets `RMC_CHILD=1`. RMC's hooks check it and no-op, which
+is the only thing stopping a compression run from triggering compression runs.
 
 The `mock` adapter exists so the entire control flow — descent, scoring,
 validation, regression bookkeeping — is testable offline and deterministically,
@@ -303,17 +352,28 @@ without burning tokens. The test suite runs against it.
 
 Stated plainly, since a research harness that hides its weaknesses is useless:
 
+- **The ambient outcome signal is heuristic.** Inferring success from "the user
+  did not object" is genuinely weak. It is mitigated by a confidence floor, by
+  preferring host metadata over text matching, and by requiring compressions to
+  clear a replay gate rather than trusting the signal directly — but a user who
+  silently fixes things themselves will teach RMC the wrong lesson.
 - **Oracle coverage bounds everything.** Lessons about taste, tone or judgement
-  have no cheap oracle, so they can only use `judge` oracles and will compress
-  more noisily.
+  have no mechanical check, so they fall back to judge calls and compress more
+  noisily than lessons about procedures.
 - **Diagnosis quality bounds descent.** If the diagnoser mislabels `category`,
   scoring falls back to lexical overlap and `prior`, which degrades toward
-  stepwise walking rather than breaking outright.
+  stepwise walking rather than breaking outright. During development a
+  mis-wired diagnoser silently reduced `delta_match` to zero and descent still
+  worked, carried by the prior — which is reassuring for robustness and a good
+  argument for asserting on score *components* in tests, not just outcomes.
 - **Merges can over-generalize.** Two procedures that look alike and differ in
   one precondition will merge, and the failure only shows up on a task that
   exercises the precondition. The regression set is the mitigation; it is not a
   proof.
 - **Compression is not monotone.** A level-4 node is not guaranteed better than
-  level-3 on unseen tasks — only on the regression set. Held-out evaluation
-  (`rmc eval --holdout`) is the honest measurement, and is reported separately
-  from the accept/reject gate.
+  level-3 on unseen tasks — only on the regression set it was validated against.
+  Held-out evaluation is the honest measurement and is not yet implemented, so
+  current accept/reject numbers should be read as in-sample.
+- **Lexical family matching will miss paraphrases.** Retrieval is a bag-of-words
+  Jaccard by design, because it runs on every prompt and must not cost a model
+  call. A prompt that shares no vocabulary with a lesson will not find it.

@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/rmc hook user-prompt-submit",
+            "timeout": 10,
+            "_rmc": true
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/rmc hook session-end",
+            "timeout": 15,
+            "_rmc": true
+          }
+        ]
+      }
+    ]
+  }
+}
