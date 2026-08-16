@@ -339,7 +339,10 @@ def _promote(
     )
     store.save_node(new)
 
-    node.compressed_into = new.id
+    # Append: a node compressed after being merged (or vice versa) keeps both
+    # abstractions. Assigning here is what used to orphan the earlier parent.
+    if new.id not in node.parents:
+        node.parents.append(new.id)
     store.save_node(node)
     store.invalidate()
     return new
@@ -374,6 +377,19 @@ def merge_nodes(
 ) -> CompactionResult:
     if len(nodes) < 2:
         return CompactionResult(node_id="", accepted=False, reason="need at least two nodes")
+
+    # Now that a node may have several parents, nothing else stops a merge from
+    # swallowing one of its own ancestors — which would make the graph cyclic
+    # and every upward walk non-terminating.
+    ids = {n.id for n in nodes}
+    for node in nodes:
+        clash = ids & {a.id for a in store.ancestors(node)}
+        if clash:
+            return CompactionResult(
+                node_id=",".join(sorted(ids)),
+                accepted=False,
+                reason=f"would create a cycle: {node.id} is already below {sorted(clash)}",
+            )
 
     config = store.config
     threshold = float(config.get("compaction.merge_threshold", 1.0))
@@ -459,7 +475,8 @@ def merge_nodes(
     )
     store.save_node(merged)
     for node in nodes:
-        node.compressed_into = merged.id
+        if merged.id not in node.parents:
+            node.parents.append(merged.id)
         store.save_node(node)
     store.invalidate()
     result.new_node = merged
@@ -661,8 +678,9 @@ def dream(
 
     for nodes, seen in groups[:limit]:
         # A group already sharing a parent has been consolidated before.
-        if len({n.compressed_into for n in nodes}) == 1 and nodes[0].compressed_into:
-            continue
+        shared = set.intersection(*(set(n.parents) for n in nodes)) if nodes else set()
+        if shared:
+            continue  # already consolidated under a common parent
         result = merge_nodes(store, adapter, nodes, dry_run=dry_run)
         label = f"{'+'.join(n.id for n in nodes)} (co-used {seen}x)"
         if result.accepted:

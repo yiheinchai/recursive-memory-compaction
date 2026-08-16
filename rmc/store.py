@@ -278,17 +278,27 @@ class Store:
         return out
 
     def ancestors(self, node: Node) -> list[Node]:
-        """Nodes upward via ``compressed_into``, nearest first."""
+        """Every node above this one, nearest first.
+
+        Breadth-first, because a node may be abstracted several ways at once and
+        each line upward is equally real. The seen-set is not paranoia: a merge
+        that swept up one of its own ancestors would otherwise loop forever.
+        """
         out: list[Node] = []
         seen = {node.id}
-        cur = node
-        while cur.compressed_into:
-            nxt = self.get(cur.compressed_into)
-            if nxt is None or nxt.id in seen:
-                break
-            seen.add(nxt.id)
-            out.append(nxt)
-            cur = nxt
+        frontier = list(node.parents)
+        while frontier:
+            nxt: list[str] = []
+            for ident in frontier:
+                if ident in seen:
+                    continue
+                seen.add(ident)
+                parent = self.get(ident)
+                if parent is None:
+                    continue
+                out.append(parent)
+                nxt.extend(parent.parents)
+            frontier = nxt
         return out
 
     def base_node(self, family: str) -> Node | None:

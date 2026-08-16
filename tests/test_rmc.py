@@ -343,7 +343,7 @@ class TestWalk(StoreCase):
         apex = self.add_node(
             id="n_apex", family="f", body="abstract", level=1, derived_from=[child.id]
         )
-        child.compressed_into = apex.id
+        child.parents = [apex.id]
         self.store.save_node(child)
         self.store.invalidate()
         return self.store.get("n_apex"), self.store.get("n_child")
@@ -466,7 +466,7 @@ class TestRecall(StoreCase):
         """An apex list must lead with the cheapest useful summary."""
         base = self.add_node(id="n_v", family="f", body="verbose original", level=0)
         apex = self.add_node(id="n_s", family="f", body="short", level=1, derived_from=[base.id])
-        base.compressed_into = apex.id
+        base.parents = [apex.id]
         self.store.save_node(base)
         self.store.invalidate()
         # The source is no longer an apex, so only the compression is served.
@@ -601,7 +601,7 @@ class TestCompaction(StoreCase):
         result = compress_node(self.store, MockAdapter(world=world), node)
         self.assertFalse(result.accepted)
         self.assertEqual(result.pass_rate, 0.0)
-        self.assertIsNone(self.store.get("n_base").compressed_into)
+        self.assertEqual(self.store.get("n_base").parents, [])
         self.assertTrue(self.store.get("n_base").preserve)
 
     def test_manifest_under_reporting_is_rejected(self) -> None:
@@ -652,7 +652,7 @@ class TestDescent(StoreCase):
                 Delta("S3 returns 200 with error bodies. @s3-body", "edge-case", base.id),
             ],
         )
-        base.compressed_into = apex.id
+        base.parents = [apex.id]
         self.store.save_node(base)
         self.store.invalidate()
 
@@ -685,7 +685,7 @@ class TestDescent(StoreCase):
         apex = self.add_node(
             id="n_e1", family="f", body="Short lesson. @a", level=1, derived_from=[base.id], dropped=[]
         )
-        base.compressed_into = apex.id
+        base.parents = [apex.id]
         self.store.save_node(base)
         self.store.invalidate()
 
@@ -705,6 +705,109 @@ class TestDescent(StoreCase):
         )
         self.assertTrue(result.ok)
         self.assertIn("@b", result.final_pack)
+
+
+class TestMultipleParents(StoreCase):
+    """A leaf can be abstracted in more than one direction at once.
+
+    Compressing a lesson into a terser form of itself, and merging it sideways
+    with another lesson into a shared generalisation, are different
+    abstractions over the same leaf. Both are worth keeping — and while the
+    parent link was a single field, the second silently destroyed the first.
+    """
+
+    def world(self):
+        return MockWorld({"e1": {"a"}, "e2": {"a"}})
+
+    def build(self):
+        leaf = self.add_node(
+            id="n_leaf",
+            family="f",
+            level=0,
+            body=(
+                "A long original lesson with several parts. @a\n\n"
+                "- A first supporting point that carries real detail and takes room. @b\n\n"
+                "- A second supporting point, also long, also detailed, also here. @c"
+            ),
+        )
+        self.add_episode("e1", "f", "do the thing", served=["n_leaf"])
+        self.add_episode("e2", "f", "do the other thing", served=["n_leaf"])
+        leaf.covers_tasks = ["e1", "e2"]
+        self.store.save_node(leaf)
+        self.store.invalidate()
+        return self.store.get("n_leaf")
+
+    def test_a_merge_after_a_compression_keeps_both_parents(self) -> None:
+        from rmc.compact import compress_node, merge_nodes
+
+        leaf = self.build()
+        adapter = MockAdapter(world=self.world())
+
+        compressed = compress_node(self.store, adapter, leaf)
+        self.assertTrue(compressed.accepted, compressed.reason)
+        first_parent = compressed.new_node.id
+        self.assertEqual(self.store.get("n_leaf").parents, [first_parent])
+
+        # Now merge the leaf sideways with an unrelated sibling.
+        other = self.add_node(id="n_side", family="f", level=0, body="Another lesson. @a")
+        merged = merge_nodes(self.store, adapter, [self.store.get("n_leaf"), other])
+        self.assertTrue(merged.accepted, merged.reason)
+
+        parents = self.store.get("n_leaf").parents
+        self.assertIn(first_parent, parents, "the compression must survive the merge")
+        self.assertIn(merged.new_node.id, parents)
+        self.assertEqual(len(parents), 2)
+
+    def test_ancestors_walks_every_line_upward(self) -> None:
+        a = self.add_node(id="n_a", family="f", body="a")
+        p1 = self.add_node(id="n_p1", family="f", body="p1", level=1, derived_from=["n_a"])
+        p2 = self.add_node(id="n_p2", family="f", body="p2", level=1, derived_from=["n_a"])
+        top = self.add_node(id="n_top", family="f", body="top", level=2, derived_from=["n_p1"])
+        a.parents = [p1.id, p2.id]
+        p1.parents = [top.id]
+        self.store.save_node(a)
+        self.store.save_node(p1)
+        self.store.invalidate()
+
+        found = {n.id for n in self.store.ancestors(self.store.get("n_a"))}
+        self.assertEqual(found, {"n_p1", "n_p2", "n_top"})
+
+    def test_a_node_with_any_parent_is_not_an_apex(self) -> None:
+        child = self.add_node(id="n_c", family="f", body="c")
+        parent = self.add_node(id="n_p", family="f", body="p", level=1, derived_from=["n_c"])
+        child.parents = [parent.id]
+        self.store.save_node(child)
+        self.store.invalidate()
+        self.assertEqual([n.id for n in self.store.apexes()], ["n_p"])
+
+    def test_a_merge_that_would_form_a_cycle_is_refused(self) -> None:
+        """Nothing else prevents a merge swallowing its own ancestor, and an
+        upward walk over a cyclic graph never terminates."""
+        from rmc.compact import merge_nodes
+
+        child = self.add_node(id="n_ch", family="f", body="child. @a")
+        parent = self.add_node(id="n_pa", family="f", body="parent. @a", level=1, derived_from=["n_ch"])
+        child.parents = [parent.id]
+        self.store.save_node(child)
+        self.store.invalidate()
+
+        result = merge_nodes(
+            self.store, MockAdapter(world=self.world()),
+            [self.store.get("n_ch"), self.store.get("n_pa")],
+        )
+        self.assertFalse(result.accepted)
+        self.assertIn("cycle", result.reason)
+
+    def test_legacy_stores_still_load(self) -> None:
+        """`compressed_into` is the pre-DAG spelling and is still on disk."""
+        path = self.store.nodes_dir / "f"
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "n_old.md").write_text(
+            "---\nid: n_old\nfamily: f\ncompressed_into: n_parent\n---\n\nbody\n"
+        )
+        self.store.invalidate()
+        self.assertEqual(self.store.get("n_old").parents, ["n_parent"])
+        self.assertFalse(self.store.get("n_old").is_apex)
 
 
 class TestRepair(StoreCase):
@@ -890,7 +993,7 @@ class TestPlacement(StoreCase):
         apex = self.add_node(
             id="n_apex2", family="retry", body="Retry idempotently.", level=1, derived_from=[base.id]
         )
-        base.compressed_into = apex.id
+        base.parents = [apex.id]
         self.store.save_node(base)
         self.store.invalidate()
 

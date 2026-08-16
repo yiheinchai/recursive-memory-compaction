@@ -546,13 +546,21 @@ def cmd_tree(args: argparse.Namespace) -> int:
     for family in families:
         apexes = [n for n in store.family_nodes(family) if n.is_apex]
         print(bold(family))
+        seen: set[str] = set()
         for apex in apexes:
-            _print_node(store, apex, prefix="  ", args=args)
+            _print_node(store, apex, prefix="  ", args=args, seen=seen)
         print()
     return 0
 
 
-def _print_node(store: Store, node, *, prefix: str, args) -> None:
+def _print_node(store: Store, node, *, prefix: str, args, seen: set[str] | None = None) -> None:
+    # A node reachable from two parents is printed once, with a pointer the
+    # second time. Without this the DAG renders as an exponentially larger tree.
+    seen = seen if seen is not None else set()
+    if node.id in seen:
+        print(f"{prefix}{dim(f'{node.id} (shown above)')}")
+        return
+    seen.add(node.id)
     flag = {"active": "", "demoted": yellow(" demoted"), "superseded": dim(" superseded")}.get(
         node.status, ""
     )
@@ -568,7 +576,7 @@ def _print_node(store: Store, node, *, prefix: str, args) -> None:
         holder = f" -> {delta.holder}" if delta.holder else ""
         print(f"{prefix}  {dim(f'△ [{delta.kind}] {delta.claim[:64]}{holder}')}")
     for child in store.children(node):
-        _print_node(store, child, prefix=prefix + "    ", args=args)
+        _print_node(store, child, prefix=prefix + "    ", args=args, seen=seen)
 
 
 def cmd_trace(args: argparse.Namespace) -> int:

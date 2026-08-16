@@ -3,10 +3,21 @@
 Edge directions are named explicitly because "parent" is ambiguous in a tree
 that grows upward from detail to abstraction:
 
-    compressed_into -> points UP,   toward less detail (at most one)
-    derived_from    -> points DOWN, toward more detail (may be several: merges)
+    parents      -> points UP,   toward less detail
+    derived_from -> points DOWN, toward more detail
 
-Recall walks *down* ``derived_from``. Learning grows *up* via ``compressed_into``.
+Both are lists, which makes this a DAG rather than a tree, and that is
+deliberate. A lesson can be abstracted in more than one direction: compressed
+vertically into a terser form of itself, *and* merged sideways with a different
+lesson into a shared generalisation. Those are two different abstractions over
+the same leaf and both are worth keeping.
+
+While `parents` was a single field, the second abstraction silently destroyed
+the first — a merge overwrote the pointer, leaving the earlier parent still
+claiming the node as a child while the node no longer acknowledged it. Not a
+missing feature; a corrupt graph.
+
+Recall walks *down* ``derived_from``. Learning grows *up* via ``parents``.
 """
 
 from __future__ import annotations
@@ -117,7 +128,7 @@ class Node:
     created: str = field(default_factory=utcnow)
     updated: str = field(default_factory=utcnow)
     derived_from: list[str] = field(default_factory=list)
-    compressed_into: str | None = None
+    parents: list[str] = field(default_factory=list)
     covers_tasks: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     dropped: list[Delta] = field(default_factory=list)
@@ -138,7 +149,7 @@ class Node:
 
     @property
     def is_apex(self) -> bool:
-        return self.compressed_into is None
+        return not self.parents
 
     def summary(self, *, limit: int = 240) -> str:
         """The routing view. Prefers the stored gist; degrades to a short head."""
@@ -165,7 +176,7 @@ class Node:
             "updated": self.updated,
             "tokens": self.tokens,
             "derived_from": list(self.derived_from),
-            "compressed_into": self.compressed_into,
+            "parents": list(self.parents),
             "covers_tasks": list(self.covers_tasks),
             "tags": list(self.tags),
             "preserve": list(self.preserve),
@@ -196,7 +207,9 @@ class Node:
             created=meta.get("created") or utcnow(),
             updated=meta.get("updated") or utcnow(),
             derived_from=_as_list(meta.get("derived_from")),
-            compressed_into=meta.get("compressed_into") or None,
+            # `compressed_into` is the pre-DAG spelling; read it so existing
+            # stores keep working.
+            parents=_as_list(meta.get("parents")) or _as_list(meta.get("compressed_into")),
             covers_tasks=_as_list(meta.get("covers_tasks")),
             tags=_as_list(meta.get("tags")),
             dropped=[Delta.from_dict(d) for d in (meta.get("dropped") or [])],
