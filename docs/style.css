@@ -1,13 +1,13 @@
 /* RMC — a deliberately flat, gridded, technical look.
-   Monochrome and light-only by design: ink on paper, with a single black
-   plate carrying the diagrams. A dark inversion would lose the drafting-paper
-   feel the grid marks depend on. */
+   Monochrome and light-only by design: ink on paper, with a soft grey plate
+   carrying the diagrams. A dark inversion would lose the drafting-paper feel
+   the grid marks depend on. */
 
 :root {
-  --accent: #0a0a0a;
-  --accent-hover: #333333;
-  --plate: #0a0a0a;
-  --ink: #0a0a0a;
+  --accent: #1a1a1a;
+  --accent-hover: #3d3d3d;
+  --plate: #f1f1f1;
+  --ink: #1a1a1a;
   --muted: #6b6b6b;
   --faint: #9a9a9a;
   --rule: #e6e6e6;
@@ -76,6 +76,8 @@ a:hover { text-decoration: underline; }
   align-items: center;
 }
 .nav-links a { color: var(--ink); font-size: 15px; }
+/* `.nav-links a` outranks `.btn`, so the button label needs to win back. */
+.nav-links a.btn { color: #fff; }
 .btn {
   display: inline-flex;
   align-items: center;
@@ -182,19 +184,21 @@ h1 .accent { color: #a3a3a3; }
   overflow: hidden;
 }
 .panel svg { width: 78%; height: auto; display: block; }
+.panel svg[hidden] { display: none; }
 /* drafting crosshairs, as on technical drawings */
+.panel { border: 1px solid var(--rule); }
 .panel::before {
   content: "";
   position: absolute;
   inset: 26px;
-  border: 1px solid rgba(255, 255, 255, .22);
+  border: 1px solid rgba(0, 0, 0, .13);
   pointer-events: none;
 }
 .tick {
   position: absolute;
   width: 9px;
   height: 9px;
-  background: #fff;
+  background: var(--ink);
   z-index: 2;
 }
 .tick.tl { top: 21px; left: 21px; }
@@ -264,17 +268,18 @@ h3 {
 
 pre, code { font-family: var(--mono); }
 pre {
-  background: var(--plate);
-  color: #f2f2f2;
+  background: #f7f7f7;
+  border: 1px solid var(--rule);
+  color: #1a1a1a;
   padding: 20px 22px;
   overflow-x: auto;
   font-size: 13.5px;
   line-height: 1.65;
   margin: 0 0 18px;
 }
-pre .c { color: #8a8a8a; }   /* comment  */
-pre .g { color: #d4d4d4; }   /* literal  */
-pre .b { color: #ffffff; font-weight: 500; }  /* command */
+pre .c { color: #8d8d8d; }   /* comment  */
+pre .g { color: #4a4a4a; }   /* literal  */
+pre .b { color: #000; font-weight: 600; }  /* command */
 p code, li code, td code {
   background: var(--panel);
   border: 1px solid var(--rule);
