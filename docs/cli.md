@@ -47,9 +47,19 @@ The tool for answering "why did it think that?".
 
 Reads stdin if `--prompt` is omitted.
 
+### `rmc conflicts [--family F]`
+Lessons that contradict each other, with the question that would settle each.
+These are also raised inside the recall pack, so you normally meet them while
+working rather than by running this.
+
+### `rmc resolve <node-id> [--drop]`
+Settle a conflict: keep this lesson (default) or archive it. Clears the disputed
+state on that node.
+
 ### `rmc events [--kind K] [--limit N]`
 Raw telemetry as JSONL. Useful kinds: `inject`, `observe`, `rescue`, `mint`,
-`compaction`, `merge`, `repair`, `error`.
+`placement`, `conflict`, `conflict-resolved`, `compaction`, `merge`, `repair`,
+`error`.
 
 ---
 
@@ -117,6 +127,10 @@ Any key can be overridden per-run by an environment variable:
 | `compaction.regression_k` | `5` | episodes replayed per validation |
 | `compaction.max_level` | `6` | deepest compression level |
 | `learning.min_tool_calls` | `8` | below this a session is ignored |
+| `placement.min_similarity` | `0.15` | below this a new lesson is a new leaf, with no model call |
+| `placement.consult` | `true` | ask a model how new knowledge relates to old |
+| `placement.candidates` | `3` | existing lessons compared in **one** reconciliation call |
+| `placement.surface_conflicts` | `true` | raise unresolved contradictions during recall |
 | `signals.min_confidence` | `0.5` | floor for acting on an outcome |
 | `privacy.redact` | `true` | scrub secrets before writing |
 | `limits.agent_timeout_s` | `180` | per spawned agent call |

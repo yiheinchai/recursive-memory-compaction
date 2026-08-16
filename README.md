@@ -118,15 +118,51 @@ and the loop closes in the background:
 | When | What happens | Cost |
 |---|---|---|
 | you submit a prompt | matching apex lessons are injected as context | no model call — pure lexical match |
-| the session ends | the outcome is read from what you did next (corrections, approvals, test results) | no model call |
+| the session ends | the outcome is read from what happened next: your corrections, and the environment's (failed commands, test results) | no model call |
 | a correction happened | the correction *is* the diagnosis; it is matched against the delta manifest and the claim is re-attached next time | no model call |
 | something reusable happened | one reflection call mints a level-0 lesson | 1 call, detached |
+| the new lesson touches known ground | it is reconciled with what is already there — folded in, set alongside, or flagged as a contradiction | 1 call, cached |
 | a lesson has succeeded twice | a compression is attempted and replay-tested | detached, rejects freely |
 
 The expensive steps are detached into a background process, so nothing is ever
 added to the latency of your session. Spawned agents run with `RMC_CHILD=1`,
 which makes RMC's own hooks no-op — otherwise compression would recursively
 trigger compression.
+
+
+### Learning does not need you
+
+Human corrections are the *rarer* source of lessons. Most of the time the
+environment does the teaching: a command fails, a different one works, a test
+rejects an approach. RMC pairs each tool call with its result, so it can recover
+what was learned by trial —
+
+```
+[Bash] tried `pytest tests/integration` -> failed: could not connect to postgres at :5432
+    then `PAYMENTS_PG_PORT=5433 pytest tests/integration` -> worked (after 4 attempts)
+```
+
+— and record both the fix *and* the trap. The point is to compress reasoning,
+not just text: something that cost four attempts to discover should cost zero
+next time.
+
+### New knowledge is reconciled, not appended
+
+A lesson that overlaps something already known is classified before it is
+stored: duplicate, refines, contradicts, specialises, or orthogonal. Refinements
+fold into the detailed node and patch the compressed ones above it. Orthogonal
+knowledge starts a new leaf.
+
+Contradictions are never settled silently — last-write-wins is how a memory
+rots. Both lessons stay, both are marked disputed, and a question is raised **at
+recall time**, when you are already thinking about that topic:
+
+```
+> Unresolved: Is 5434 the new permanent host port mapping for the payments
+> postgres container, or was 5433 only temporarily unavailable at the time?
+```
+
+`rmc conflicts` lists them; `rmc resolve <id>` settles them.
 
 ## Install
 
@@ -199,5 +235,5 @@ mocked at the seams.
 
 Research harness, v0.1. It works end to end and is tested, but the store format
 is not yet stable and the ambient outcome signals are heuristic — see
-[DESIGN.md §8](DESIGN.md#8-failure-modes-this-design-accepts) for what this
+[DESIGN.md §8](DESIGN.md#9-failure-modes-this-design-accepts) for what this
 design knowingly gets wrong.

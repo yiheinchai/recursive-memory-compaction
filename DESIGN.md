@@ -317,9 +317,105 @@ Below the floor, and with no correction, RMC records nothing at all. A noisy
 label is worse than no label: it poisons both the priors and the corpus that
 every future compression is judged against.
 
+### 6.3 Learning without a human
+
+Most learning does not involve a human at all. The environment corrects the
+agent constantly — a command fails, a test rejects an approach, an API behaves
+unexpectedly — and that correction is both a **stronger** oracle than "the user
+did not object" and always available.
+
+The transcript parser pairs each tool call to its result by id, so
+failure-then-success sequences can be recovered as `Discovery` records:
+
+```
+[Bash] tried `pytest tests/integration` -> failed: could not connect to postgres at :5432
+    then `PAYMENTS_PG_PORT=5433 pytest tests/integration` -> worked (after 4 attempts)
+```
+
+These feed three things:
+
+- **a success signal** — recovering from failures unaided scores +0.30, so a
+  session with no human in it can still be labelled confidently;
+- **priority in the reflection excerpt** — a paired failure→fix is far more
+  informative than a raw error log, so it leads;
+- **the reflection prompt itself**, which names self-discovery as the primary
+  source of lessons and requires the *trap* to be recorded alongside the fix.
+  Recording only the fix means the next agent falls into the same trap and merely
+  recognises the way out.
+
+An identical retry that succeeds the second time is flakiness, not discovery,
+and is excluded — the inputs must differ.
+
+The point is compression of reasoning, not just of text: a lesson that cost four
+attempts to discover should cost zero attempts next time.
+
 ---
 
-## 7. Backends
+## 7. Consolidation — where new knowledge goes
+
+Growing the tree is not "append a leaf". A newly learned lesson has to be made
+consistent with what is already known, or the memory accumulates contradictions
+it never notices. `placement.py` classifies the new lesson against the tree:
+
+| Relation | Action | Effect |
+|---|---|---|
+| `duplicate` | none | record the hit; the existing lesson is pulling its weight |
+| `refines` | fold into L0 | merge the detail in, then patch every ancestor |
+| `contradicts` | dispute both | keep both, attach a question, ask the human |
+| `specialises` | attach sibling | stands alongside; merge-compression may generalise them later |
+| `orthogonal` | new family | a genuinely new leaf |
+
+### 7.1 Refinement has to reach the apex
+
+Folding new detail into the level-0 node is only half the job. Every ancestor
+was compressed from the *old* body and validated against it, so each is now
+missing the new detail — and the apex is what actually gets served.
+
+Rather than invalidating those compressions (throwing away work that still
+mostly holds), the new detail is registered as a **rescue** on each ancestor.
+Recall re-attaches it immediately via the sticky-patch path, and `compact.repair`
+folds it in permanently once it has proven necessary. The tree keeps working
+while it catches up. This reuses the descent machinery exactly as-is.
+
+### 7.2 Contradictions are never resolved silently
+
+Last-write-wins means whichever lesson was written most recently is treated as
+true, regardless of which one is. So a contradiction instead:
+
+1. marks **both** nodes `disputed` — we do not know which is wrong;
+2. stores a generated question specific enough to settle it in one sentence;
+3. keeps serving the lesson, with the question attached.
+
+Point 3 matters. Withholding a contradicted lesson loses the knowledge *and*
+removes the occasion to ask about it. Surfacing at recall time means the question
+arrives when the user is already thinking about that topic — the same reason a
+student raises a confusion during the relevant lesson rather than at random.
+
+`rmc conflicts` lists open questions; `rmc resolve <id> [--drop]` settles them.
+
+### 7.3 Keeping reconciliation cheap
+
+Reconciliation runs on every new lesson, so its cost has to stay flat as the
+tree grows:
+
+- **A free lexical shortlist first.** A lesson with no close neighbour is filed
+  as a new leaf with no model call at all — the common case early on.
+- **One call for all candidates, not one per candidate.** Cost is constant in
+  tree size, and coverage *improves*: a contradiction with the second-best match
+  is no longer invisible.
+- **A free value-mismatch pre-filter.** Identifiers that both texts assign
+  differently (`PAYMENTS_PG_PORT=5433` vs `=5434`) are found by regex. This
+  catches contradictions between lessons that share almost no vocabulary —
+  exactly what a similarity floor misses — and the hint is passed to the
+  reconciler so it knows where to look.
+- **Cached verdicts.** Re-running learning never re-pays for a pair already
+  judged.
+
+The honest limit: reconciliation only compares against **apex** nodes, so a
+contradiction with detail that exists only deep in a subtree will be missed
+until that detail is surfaced by descent.
+
+## 8. Backends
 
 `rmc/adapters/` exposes one interface:
 
@@ -348,7 +444,7 @@ without burning tokens. The test suite runs against it.
 
 ---
 
-## 8. Failure modes this design accepts
+## 9. Failure modes this design accepts
 
 Stated plainly, since a research harness that hides its weaknesses is useless:
 
