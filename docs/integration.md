@@ -34,7 +34,7 @@ tagged entries — hooks you configured yourself are left alone.
 | Event | Command | Purpose | Budget |
 |---|---|---|---|
 | `UserPromptSubmit` | `rmc hook user-prompt-submit` | serve the lessons that bear on this prompt | 30s; instant while the store fits the budget |
-| `Stop` | `rmc hook stop` | after a substantial turn, reflect — off-thread by default | 15s, no model call inline |
+| `Stop` | `rmc hook stop` | after a substantial turn, reflect — off-thread by default | 15s, nothing inline |
 | `SessionEnd` | `rmc hook session-end` | parse the transcript, then detach the whole learner | 30s; returns in ~0.1s, always |
 
 `UserPromptSubmit` returns:
@@ -67,6 +67,33 @@ all, in milliseconds — there is nothing to choose between. That is deliberate 
 wrong lesson is worse than injecting none, and only a reader can tell the
 difference — but it is a real latency cost, so it is cached by prompt and can be
 switched off with `rmc config recall.enabled false`.
+
+### Where reflection runs
+
+`learning.nudge_mode` picks the trade:
+
+| Mode | Context the reflector sees | Cost | Interrupts you |
+|---|---|---|---|
+| `background` (default) | a transcript digest, ~3k tokens | one small call | no |
+| `fork` | the whole session, inherited | ~0.1× its tokens via cache reads | no |
+| `block` | the agent's own live context | none extra | **yes** — one turn |
+| `off` | — | none until session end | no |
+
+`fork` spawns `claude --resume <id> --fork-session` detached. `--fork-session`
+allocates a new session id, so the live session is never written to. It is
+affordable because prompt-cache reads bill at **0.1×** and the cache keys on
+prefix *content* rather than session identity — the fork hits what the live
+session just wrote. Claude Code uses a 1-hour cache TTL, which covers the
+reflection cooldown comfortably.
+
+It is not the default because 10% of a very large context still exceeds a 3k
+digest, and the digest has proven able to identify conceptual corrections rather
+than only mechanical ones. Pick `fork` when fidelity matters more than tokens —
+the digest necessarily drops nuance, and a conceptual mistake can live in the
+nuance.
+
+Every spawned reflector runs with `RMC_CHILD=1`; without it the fork fires these
+same hooks and forks itself, forever.
 
 ### Failure behaviour
 

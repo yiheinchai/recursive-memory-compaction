@@ -70,6 +70,9 @@ DEFAULTS: dict[str, Any] = {
         # block:      interrupt the agent to reflect in its own context. It has
         #   the live sense of what surprised it, but spends a turn and pollutes
         #   the working context — a real cost in the middle of a large task.
+        # fork:       reflect inside a fork of the live session — same context,
+        #   off the main thread. Costs ~0.1x its tokens thanks to prompt cache
+        #   reads, but 10% of a large context still exceeds a digest.
         # off:        no reflection until session end.
         "nudge_mode": "background",
         "nudge_after_tool_calls": 12,

@@ -1066,6 +1066,57 @@ class TestReflectionTrigger(StoreCase):
         self.use_blocking_mode()
         self.assertIsNone(self.fire(self.transcript([True, True])))
 
+    def test_fork_mode_copies_the_session_and_never_touches_the_original(self) -> None:
+        """A fork inherits the context; --fork-session keeps the live one safe.
+
+        It is affordable because cache reads bill at 0.1x and the cache keys on
+        prefix content, so the fork hits what the live session just wrote.
+        """
+        import rmc.hooks as hooks
+
+        self.store.config.set("learning.nudge_mode", "fork")
+        self.store.config.save(self.store.root / "config.yaml")
+
+        launched: list = []
+        original = hooks.subprocess.Popen
+
+        class FakePopen:
+            def __init__(self, argv, **kw):
+                launched.append((argv, kw))
+
+        hooks.subprocess.Popen = FakePopen
+        try:
+            result = self.fire(self.transcript([True] * 14), session="sess-abc")
+        finally:
+            hooks.subprocess.Popen = original
+
+        self.assertIsNone(result, "the agent must not be interrupted")
+        self.assertTrue(launched)
+        argv, kw = launched[0]
+        self.assertEqual(argv[:2], ["claude", "--resume"])
+        self.assertIn("--fork-session", argv)
+        self.assertIn("sess-abc", argv)
+        # Without RMC_CHILD the fork fires these hooks and forks itself forever.
+        self.assertEqual(kw["env"].get("RMC_CHILD"), "1")
+        self.assertTrue(kw.get("start_new_session"))
+
+    def test_fork_falls_back_rather_than_skipping_reflection(self) -> None:
+        import rmc.hooks as hooks
+
+        self.store.config.set("learning.nudge_mode", "fork")
+        self.store.config.save(self.store.root / "config.yaml")
+
+        spawned: list = []
+        orig_fork, orig_bg = hooks._spawn_fork, hooks.spawn_background
+        hooks._spawn_fork = lambda *a, **k: False
+        hooks.spawn_background = lambda store, args, cwd=None: spawned.append(args)
+        try:
+            self.fire(self.transcript([True] * 14))
+        finally:
+            hooks._spawn_fork, hooks.spawn_background = orig_fork, orig_bg
+        self.assertTrue(spawned, "a failed fork must degrade to the digest path")
+        self.assertEqual(spawned[0][0], "absorb")
+
     def test_default_mode_reflects_off_thread_without_interrupting(self) -> None:
         """Interrupting an agent mid-task costs a turn and pollutes its context.
 

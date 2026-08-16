@@ -261,6 +261,27 @@ def on_turn_end(payload: dict[str, Any]) -> int:
     store.write_session(session_id, state)
 
     mode = str(store.config.get("learning.nudge_mode", "background")).lower()
+    if mode == "fork":
+        # Reflect in a copy of the agent's own session: same context, same
+        # working memory, but off the main thread entirely.
+        #
+        # The reason this is affordable is prompt caching. A fork re-sends the
+        # conversation as its prefix, but cache reads bill at 0.1x, and the
+        # cache is keyed on prefix content rather than session identity — so
+        # the fork hits the cache the live session just wrote. Claude Code uses
+        # a 1-hour TTL, which comfortably covers the reflection cooldown.
+        #
+        # It is not the default because 10% of a very large context is still
+        # more than a transcript digest, and the digest has proven able to spot
+        # conceptual corrections. Choose fork when fidelity matters more than
+        # tokens.
+        if _spawn_fork(store, session_id, state.get("cwd") or os.getcwd()):
+            store.log("nudge", session=session_id, mode="fork", tools=new_tools)
+            return 0
+        # Fall through to background rather than silently skipping reflection.
+        store.log("nudge", session=session_id, mode="fork-failed", tools=new_tools)
+        mode = "background"
+
     if mode == "background":
         # Reflect *off* the main thread. Interrupting an agent in the middle of
         # a large task is its own cost: it spends a turn, pollutes the working
@@ -298,6 +319,72 @@ def on_turn_end(payload: dict[str, Any]) -> int:
         )
     print(json.dumps({"decision": "block", "reason": NUDGE.format(evidence=evidence)}))
     return 0
+
+
+FORK_PROMPT = """You are a reflection pass running in a fork of this session. The
+user cannot see you and is not waiting — the main session carried on without you.
+Do not continue the task, do not edit anything, and do not report progress.
+
+You have the whole conversation above. Read it as your own history and ask: were
+you wrong about anything?
+
+  1. Wrong about how something works — you believed this project, tool or system
+     behaved one way and it does not. Invisible while held, and it makes every
+     downstream decision wrong. These are the ones worth having.
+  2. Wrong about what mattered — you solved the stated problem, not the real one.
+  3. Wrong mechanically — a command failed. Loud, cheap, rarely a lesson.
+
+If something clears all of: reusable, would make an ignorant agent act wrongly,
+not already in the repo's docs or a lesson you were served, and still true
+tomorrow — then run exactly one command:
+
+    rmc add --family <slug> "<the corrected understanding, AND the wrong belief \
+it replaces>"
+
+Otherwise reply with the single line: nothing to capture.
+
+Most sessions teach nothing, and saying so is this working correctly. Never
+invent a lesson: every low-value one permanently taxes future retrieval."""
+
+
+def _spawn_fork(store: Store, session_id: str, cwd: str) -> bool:
+    """Fork the live session for reflection. True if the fork was launched."""
+    from .adapters._proc import child_env, which
+
+    if not session_id or which("claude") is None:
+        return False
+    argv = [
+        "claude",
+        "--resume",
+        session_id,
+        "--fork-session",  # new session id, so the live one is never touched
+        "-p",
+        FORK_PROMPT,
+        "--no-session-persistence",
+        "--permission-mode",
+        "acceptEdits",
+        "--allowedTools",
+        "Bash",  # it needs exactly one tool: to run `rmc add`
+    ]
+    log_path = store.root / "background.log"
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as log:
+            subprocess.Popen(
+                argv,
+                cwd=cwd,
+                stdout=log,
+                stderr=log,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                # child_env sets RMC_CHILD=1: without it the fork fires these
+                # same hooks and forks itself, forever.
+                env=child_env(),
+            )
+        return True
+    except Exception as exc:  # pragma: no cover - best effort
+        store.log("error", where="fork", error=f"{type(exc).__name__}: {exc}")
+        return False
 
 
 def _now() -> float:

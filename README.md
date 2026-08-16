@@ -205,12 +205,12 @@ run the same reflection with no claim on the session at all. That is the default
 (`nudge_mode: background`); `block` interrupts the agent instead, trading that
 cost for the live sense of what surprised it.
 
-Both CLIs can fork a session with its context (`claude --resume <id>
---fork-session`, `codex fork`), which would give a reflector the full
-conversation rather than a digest. RMC does not do this by default: forking
-re-sends the entire context as input on every reflection, where the digest is a
-few thousand tokens, and the digest has proven sufficient — it correctly
-identified conceptual corrections in testing, not just mechanical ones.
+`nudge_mode: fork` goes further, reflecting inside a fork of the live session
+(`claude --resume <id> --fork-session`) so the reflector inherits the whole
+conversation instead of a digest. That is affordable because prompt-cache reads
+bill at **0.1×** and the cache keys on prefix content, not session identity — the
+fork hits what the live session just wrote. It is not the default only because
+10% of a very large context still exceeds a 3k digest.
 
 ### Is the nudge necessary? RMC measures it
 
