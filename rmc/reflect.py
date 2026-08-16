@@ -326,6 +326,7 @@ def mint(
         body=body,
         level=0,
         title=str(run.data.get("title") or family),
+        gist=str(run.data.get("gist") or ""),
         tags=[_slug(t) for t in (run.data.get("tags") or []) if str(t).strip()][:8],
         origin="reflection",
     )

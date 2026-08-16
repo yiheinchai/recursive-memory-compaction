@@ -417,20 +417,25 @@ class Store:
         return rows[-limit:]
 
     # ----------------------------------------------------------------- locks
-    def lock(self, name: str, *, stale_s: int = 1800) -> "FileLock":
-        return FileLock(self.root / f"{name}.lock", stale_s=stale_s)
+    def lock(self, name: str, *, stale_s: int = 1800, wait_s: float = 0.0) -> "FileLock":
+        return FileLock(self.root / f"{name}.lock", stale_s=stale_s, wait_s=wait_s)
 
 
 class FileLock:
-    """Best-effort advisory lock so a background compactor cannot race a hook."""
+    """Advisory lock. ``wait_s`` turns it from try-once into wait-then-try.
 
-    def __init__(self, path: Path, *, stale_s: int = 1800) -> None:
+    Two flavours are needed. A compactor that loses the lock should simply skip —
+    whatever the winner does, the loser would have duplicated. A *writer* must
+    wait instead: giving up would silently drop a lesson.
+    """
+
+    def __init__(self, path: Path, *, stale_s: int = 1800, wait_s: float = 0.0) -> None:
         self.path = path
         self.stale_s = stale_s
+        self.wait_s = wait_s
         self.acquired = False
 
-    def __enter__(self) -> "FileLock":
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+    def _try(self) -> bool:
         if self.path.exists():
             age = time.time() - self.path.stat().st_mtime
             if age > self.stale_s:
@@ -439,9 +444,21 @@ class FileLock:
             fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             os.write(fd, str(os.getpid()).encode())
             os.close(fd)
-            self.acquired = True
+            return True
         except FileExistsError:
-            self.acquired = False
+            return False
+
+    def __enter__(self) -> "FileLock":
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        deadline = time.time() + self.wait_s
+        while True:
+            if self._try():
+                self.acquired = True
+                break
+            if time.time() >= deadline:
+                self.acquired = False
+                break
+            time.sleep(0.15)
         return self
 
     def __exit__(self, *exc: Any) -> None:

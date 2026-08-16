@@ -271,7 +271,9 @@ def compress_node(
     if dry_run:
         return result
 
-    result.new_node = _promote(store, node, body, dropped, run.data.get("title"), episodes)
+    result.new_node = _promote(
+        store, node, body, dropped, run.data.get("title"), episodes, run.data.get("gist")
+    )
     store.log(
         "compaction",
         node=node.id,
@@ -308,6 +310,7 @@ def _promote(
     dropped: list[Delta],
     title: Any,
     episodes: list[Episode],
+    gist: Any = None,
 ) -> Node:
     """Write the compressed node and re-link the family."""
     # New losses are held by `node`; inherited losses keep their original holder,
@@ -327,6 +330,7 @@ def _promote(
         body=body,
         level=node.level + 1,
         title=str(title or node.title or node.family),
+        gist=str(gist or node.gist or ""),
         derived_from=[node.id],
         covers_tasks=sorted({*node.covers_tasks, *(e.id for e in episodes)}),
         tags=list(node.tags),

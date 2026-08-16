@@ -43,6 +43,15 @@ COMPRESS_SCHEMA = {
         },
         "rationale": {"type": "string"},
         "title": {"type": "string"},
+        "gist": {
+            "type": "string",
+            "description": (
+                "One line, at most 25 words, naming what this lesson is about and "
+                "when it applies. A future agent reads only this to decide whether "
+                "to open the lesson at all, so it must be specific: name the tool, "
+                "command or system, not the category."
+            ),
+        },
     },
 }
 
@@ -90,6 +99,15 @@ REFLECT_SCHEMA = {
         "title": {"type": "string"},
         "body": {"type": "string"},
         "tags": {"type": "array", "items": {"type": "string"}},
+        "gist": {
+            "type": "string",
+            "description": (
+                "One line, at most 25 words, naming what this lesson is about and "
+                "when it applies. A future agent reads only this to decide whether "
+                "to open the lesson at all, so it must be specific: name the tool, "
+                "command or system, not the category."
+            ),
+        },
     },
 }
 

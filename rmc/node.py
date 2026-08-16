@@ -109,6 +109,11 @@ class Node:
     body: str = ""
     level: int = 0
     title: str = ""
+    # One line, written when the lesson is minted or compressed. This is what
+    # the router sees. Relevance is decided over gists, not bodies: sending 700
+    # characters per lesson to *choose* which lessons to send is the scaling
+    # bug that eats the context it was meant to protect.
+    gist: str = ""
     created: str = field(default_factory=utcnow)
     updated: str = field(default_factory=utcnow)
     derived_from: list[str] = field(default_factory=list)
@@ -135,6 +140,13 @@ class Node:
     def is_apex(self) -> bool:
         return self.compressed_into is None
 
+    def summary(self, *, limit: int = 240) -> str:
+        """The routing view. Prefers the stored gist; degrades to a short head."""
+        if self.gist.strip():
+            return self.gist.strip()
+        head = " ".join(self.body.split())
+        return head[: limit - 1] + "…" if len(head) > limit else head
+
     def deltas_by_kind(self, kind: str) -> list[Delta]:
         return [d for d in self.dropped if d.kind == kind]
 
@@ -144,6 +156,7 @@ class Node:
             "id": self.id,
             "family": self.family,
             "title": self.title,
+            "gist": self.gist,
             "level": self.level,
             "status": self.status,
             "origin": self.origin,
@@ -179,6 +192,7 @@ class Node:
             body=body,
             level=int(meta.get("level") or 0),
             title=str(meta.get("title") or ""),
+            gist=str(meta.get("gist") or ""),
             created=meta.get("created") or utcnow(),
             updated=meta.get("updated") or utcnow(),
             derived_from=_as_list(meta.get("derived_from")),

@@ -1171,6 +1171,81 @@ class TestReflectionTrigger(StoreCase):
         self.assertIsNone(self.fire(self.transcript([False, False])))
 
 
+class TestConcurrentReflectors(StoreCase):
+    """Two reflectors may overlap. Neither may record the same lesson twice.
+
+    The defence is reconciliation, not scheduling: a time-based rule fails
+    whenever a reflector outlives its window, whereas asking "is this already
+    known?" is correct however the two runs interleave. What it requires is that
+    decide-and-write be atomic, so the second reflector sees the first's write.
+    """
+
+    def test_a_writer_waits_rather_than_dropping_the_lesson(self) -> None:
+        held = self.store.lock("write")
+        held.__enter__()
+        try:
+            self.assertTrue(held.acquired)
+            # A non-waiting caller gives up immediately...
+            with self.store.lock("write") as impatient:
+                self.assertFalse(impatient.acquired)
+        finally:
+            held.__exit__()
+        # ...and once released, the lock is takeable again.
+        with self.store.lock("write", wait_s=1) as after:
+            self.assertTrue(after.acquired)
+
+    def test_a_stale_lock_does_not_wedge_the_store(self) -> None:
+        """A reflector killed mid-write must not block every future one."""
+        import os
+        import time
+
+        path = self.store.root / "write.lock"
+        path.write_text("99999")
+        os.utime(path, (time.time() - 7200, time.time() - 7200))
+        with self.store.lock("write", stale_s=60) as lock:
+            self.assertTrue(lock.acquired)
+
+    def test_the_second_reflector_sees_the_first_and_reconciles(self) -> None:
+        """The actual defence: a duplicate is judged, not raced."""
+        from rmc.placement import apply, decide
+
+        self.add_node(id="n_first", family="deploy", body="Use the argo plugin to promote.")
+
+        def route(prompt, schema):
+            if "RMC:related" in prompt:
+                return {"picks": [{"id": "n_first", "verdict": "relevant"}]}
+            return {"match": "n_first", "relation": "duplicate", "rationale": "already known"}
+
+        decision = decide(
+            self.store, MockAdapter(router=route), body="Promote with the argo plugin.",
+            family_hint="deploy",
+        )
+        result = apply(self.store, decision, Node(id="n_second", family="deploy", body="dup"))
+        self.assertEqual(decision.action, "duplicate")
+        self.assertIsNone(self.store.get("n_second"), "the duplicate must not be stored")
+
+
+class TestRoutingCost(StoreCase):
+    def test_routing_sends_a_gist_not_the_body(self) -> None:
+        """Deciding what to load must not cost more than loading it.
+
+        The router used to send 700 characters of body per candidate, so triage
+        grew with the store: ~185k tokens to choose among 1000 lessons.
+        """
+        from rmc.judge import _render
+
+        body = "A very long lesson body. " * 200
+        node = self.add_node(id="n_g", family="f", title="Deploys", gist="Promote with argo, never kubectl apply.", body=body)
+        rendered = _render(node)
+        self.assertIn("Promote with argo", rendered)
+        self.assertNotIn("A very long lesson body. A very long", rendered)
+        self.assertLess(len(rendered), 300)
+
+    def test_a_lesson_without_a_gist_still_routes_cheaply(self) -> None:
+        node = self.add_node(id="n_ng", family="f", title="T", body="x " * 2000)
+        self.assertLess(len(node.summary()), 300)
+
+
 class TestHooks(StoreCase):
     def test_recursion_guard(self) -> None:
         import os

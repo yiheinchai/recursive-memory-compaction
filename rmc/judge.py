@@ -487,11 +487,17 @@ REMOVED DETAILS>>>
 """
 
 
-def _render(node: Node, *, limit: int = 700) -> str:
-    depth = "" if node.is_apex else f" (a detailed form, L{node.level})"
-    detail = f", {len(node.dropped)} details available beneath it" if node.dropped else ""
-    header = f"[id: {node.id}] {node.title or node.family}{depth}{detail}"
-    return f"{header}\n{truncate(node.body, limit)}"
+def _render(node: Node) -> str:
+    """One compact line per lesson, for deciding which to open.
+
+    Routing used to send 700 characters of body per candidate, which made the
+    decision cost grow with the store until choosing what to load cost more than
+    loading everything — 1000 lessons came to ~185k tokens spent purely on
+    triage. A gist is ~30.
+    """
+    depth = "" if node.is_apex else f" L{node.level}"
+    detail = f" [+{len(node.dropped)} details beneath]" if node.dropped else ""
+    return f"[{node.id}]{depth} {node.title or node.family}{detail} — {node.summary()}"
 
 
 # --------------------------------------------------------------------------- #

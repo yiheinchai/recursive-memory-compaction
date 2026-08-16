@@ -95,6 +95,29 @@ nuance.
 Every spawned reflector runs with `RMC_CHILD=1`; without it the fork fires these
 same hooks and forks itself, forever.
 
+### Overlapping reflectors
+
+Reflectors can overlap — a slow one can still be running when the next fires.
+They are not prevented from doing so, because two reflectors looking at
+different windows may legitimately find different things.
+
+What is prevented is recording the same lesson twice, and the defence is
+**reconciliation, not scheduling**. Every capture is checked against what is
+already known and a duplicate is stored as nothing. A minimum time apart would
+not achieve this: whatever gap you pick, a reflector that outlives it reopens
+the race, and two reflectors an hour apart can still reach the same conclusion.
+
+The one thing scheduling cannot fix is a *read-decide-write* race: if both
+reflectors read the store before either writes, both conclude "new". So
+`rmc add` holds a write lock across decide-and-write, and a writer **waits**
+for it rather than skipping — losing the lock and giving up would silently drop
+a lesson. Stale locks (from a killed reflector) expire rather than wedging the
+store.
+
+`rmc absorb` additionally takes a lock of its own and *skips* if another absorb
+holds it, since two digest passes over the same transcript would only duplicate
+work.
+
 ### Failure behaviour
 
 Every hook path is wrapped and returns exit 0. A broken store, an unparseable

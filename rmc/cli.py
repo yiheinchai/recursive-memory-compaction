@@ -260,14 +260,25 @@ def cmd_add(args: argparse.Namespace) -> int:
         origin="manual",
     )
 
-    decision = decide(
-        store,
-        adapter,
-        body=body,
-        family_hint=family,
-        consult=not args.no_reconcile,
-    )
-    result = apply(store, decision, node)
+    # Reconciliation is what stops two reflectors recording the same lesson —
+    # but only if each one *sees* what the other wrote. Deciding and writing must
+    # therefore be atomic: without this, two reflectors that start together both
+    # read a store lacking the lesson, both conclude "new", and both create it.
+    #
+    # A writer waits rather than skipping. Losing the lock and giving up would
+    # silently drop a lesson, which is worse than being slow.
+    with store.lock("write", wait_s=90) as lock:
+        if not lock.acquired:
+            return die("another reflector is holding the write lock; try again")
+        store.invalidate()  # pick up anything written while we waited
+        decision = decide(
+            store,
+            adapter,
+            body=body,
+            family_hint=family,
+            consult=not args.no_reconcile,
+        )
+        result = apply(store, decision, node)
 
     verb = {
         "new-family": "new lesson",

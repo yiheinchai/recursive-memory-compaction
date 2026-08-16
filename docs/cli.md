@@ -97,6 +97,10 @@ is available to the very next prompt in the same conversation.
 
 `--no-reconcile` stores it without the consistency check.
 
+Deciding and writing happen under a lock, so concurrent reflectors cannot both
+conclude "new" about the same lesson. A writer waits for the lock rather than
+skipping.
+
 ### `rmc observe --transcript PATH [--served ids] [--session id]`
 Judge a finished session and fold the result into the tree: update node stats,
 file the episode, and work out which dropped detail any correction was about.
