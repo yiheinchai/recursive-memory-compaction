@@ -162,7 +162,8 @@ Any key can be overridden per-run by an environment variable:
 | `compaction.regression_k` | `5` | episodes replayed per validation |
 | `compaction.max_level` | `6` | deepest compression level |
 | `learning.min_tool_calls` | `8` | below this a session is ignored |
-| `learning.nudge_enabled` | `true` | after a substantial turn, ask the agent whether it was wrong about anything |
+| `learning.nudge_enabled` | `true` | reflect after a substantial turn |
+| `learning.nudge_mode` | `background` | `background` reflects off-thread and never interrupts; `block` interrupts the agent to reflect in its own context; `off` waits for session end |
 | `learning.nudge_after_tool_calls` | `12` | activity that makes a turn worth a thought |
 | `learning.nudge_after_turns` | `3` | human turns that do the same |
 | `learning.min_surprises` | `2` | failed tool calls that also do |

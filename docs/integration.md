@@ -34,7 +34,7 @@ tagged entries — hooks you configured yourself are left alone.
 | Event | Command | Purpose | Budget |
 |---|---|---|---|
 | `UserPromptSubmit` | `rmc hook user-prompt-submit` | serve the lessons that bear on this prompt | 30s; instant while the store fits the budget |
-| `Stop` | `rmc hook stop` | after a substantial turn, give the agent an occasion to reflect | 15s, no model call |
+| `Stop` | `rmc hook stop` | after a substantial turn, reflect — off-thread by default | 15s, no model call inline |
 | `SessionEnd` | `rmc hook session-end` | parse the transcript, then detach the whole learner | 30s; returns in ~0.1s, always |
 
 `UserPromptSubmit` returns:

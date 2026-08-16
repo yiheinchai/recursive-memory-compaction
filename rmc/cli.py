@@ -332,6 +332,21 @@ def cmd_absorb(args: argparse.Namespace) -> int:
     facts = parse_transcript(path)
     served = [s for s in (args.served or "").split(",") if s]
 
+    # Mid-session reflection and the session-end sweep can overlap; only one may
+    # write. Losing the lock is fine — whatever the winner learns, the loser
+    # would have learned too.
+    lock = store.lock("absorb")
+    with lock:
+        if not lock.acquired:
+            print("absorb: another run holds the lock; skipping")
+            return 0
+        return _absorb(store, adapter, facts, served, args)
+
+
+def _absorb(store, adapter, facts, served, args) -> int:
+    from .compact import run_due
+    from .reflect import mint, observe
+
     result = observe(
         store,
         facts,

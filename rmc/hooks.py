@@ -258,8 +258,31 @@ def on_turn_end(payload: dict[str, Any]) -> int:
     state["nudged_turns"] = len(facts.user_messages)
     state["nudged_at"] = _now()
     store.write_session(session_id, state)
+
+    mode = str(store.config.get("learning.nudge_mode", "background")).lower()
+    if mode == "background":
+        # Reflect *off* the main thread. Interrupting an agent in the middle of
+        # a large task is its own cost: it spends a turn, pollutes the working
+        # context with meta-cognition, and breaks concentration precisely when
+        # concentration is worth most.
+        #
+        # The transcript is the context, serialised — so a detached process
+        # reading it can do the same reflection with no claim on the session at
+        # all. The agent is never told this happened.
+        args = ["absorb", "--transcript", str(transcript), "--session", session_id or "unknown"]
+        if state.get("served"):
+            args += ["--served", ",".join(state["served"])]
+        spawn_background(store, args, cwd=state.get("cwd") or os.getcwd())
+        store.log("nudge", session=session_id, mode="background", tools=new_tools)
+        return 0
+
     store.log(
-        "nudge", session=session_id, tools=new_tools, turns=new_turns, failures=len(fresh_failures)
+        "nudge",
+        session=session_id,
+        mode="block",
+        tools=new_tools,
+        turns=new_turns,
+        failures=len(fresh_failures),
     )
 
     evidence = ""

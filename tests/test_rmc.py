@@ -1002,6 +1002,11 @@ class TestReflectionTrigger(StoreCase):
         path.write_text("\n".join(json.dumps(r) for r in rows))
         return path
 
+    def use_blocking_mode(self) -> None:
+        """Opt into interrupting the agent; the default reflects off-thread."""
+        self.store.config.set("learning.nudge_mode", "block")
+        self.store.config.save(self.store.root / "config.yaml")
+
     def fire(self, path: Path, session: str = "s", **extra):
         import io
         import json
@@ -1018,11 +1023,13 @@ class TestReflectionTrigger(StoreCase):
 
     def test_fires_on_substantial_work_even_when_nothing_failed(self) -> None:
         """The case a failure-gated trigger misses, and the reason it was wrong."""
+        self.use_blocking_mode()
         result = self.fire(self.transcript([True] * 14))
         self.assertIsNotNone(result, "a long clean turn can still contain a conceptual error")
         self.assertEqual(result["decision"], "block")
 
     def test_asks_about_conceptual_error_first(self) -> None:
+        self.use_blocking_mode()
         reason = self.fire(self.transcript([True] * 14))["reason"]
         conceptual = reason.index("Wrong about how something works")
         mechanical = reason.index("Wrong mechanically")
@@ -1030,15 +1037,38 @@ class TestReflectionTrigger(StoreCase):
         self.assertIn("nothing to capture", reason.lower())
 
     def test_silent_on_a_trivial_turn(self) -> None:
+        self.use_blocking_mode()
         self.assertIsNone(self.fire(self.transcript([True, True])))
 
+    def test_default_mode_reflects_off_thread_without_interrupting(self) -> None:
+        """Interrupting an agent mid-task costs a turn and pollutes its context.
+
+        The transcript is the context serialised, so a detached process can do
+        the same reflection with no claim on the session at all.
+        """
+        import rmc.hooks as hooks
+
+        spawned: list = []
+        original = hooks.spawn_background
+        hooks.spawn_background = lambda store, args, cwd=None: spawned.append(args)
+        try:
+            result = self.fire(self.transcript([True] * 14))
+        finally:
+            hooks.spawn_background = original
+
+        self.assertIsNone(result, "the agent must not be interrupted")
+        self.assertTrue(spawned, "but the reflection must still happen")
+        self.assertEqual(spawned[0][0], "absorb")
+
     def test_failures_still_count_as_substance(self) -> None:
+        self.use_blocking_mode()
         result = self.fire(self.transcript([True, False, False]))
         self.assertIsNotNone(result)
         self.assertIn("cmd1", result["reason"])
         self.assertIn("least likely thing here to be worth keeping", result["reason"])
 
     def test_does_not_re_fire_for_work_already_raised(self) -> None:
+        self.use_blocking_mode()
         path = self.transcript([False, False])
         self.assertIsNotNone(self.fire(path))
         self.assertIsNone(self.fire(path), "the same turn must not nag twice")

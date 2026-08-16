@@ -65,6 +65,13 @@ DEFAULTS: dict[str, Any] = {
         # agent decides what it sees. These thresholds only ask "did this turn
         # have enough substance to be worth a thought".
         "nudge_enabled": True,
+        # background: a detached process reflects on the transcript, and the
+        #   agent is never interrupted. Costs nothing on the main thread.
+        # block:      interrupt the agent to reflect in its own context. It has
+        #   the live sense of what surprised it, but spends a turn and pollutes
+        #   the working context — a real cost in the middle of a large task.
+        # off:        no reflection until session end.
+        "nudge_mode": "background",
         "nudge_after_tool_calls": 12,
         "nudge_after_turns": 3,
         "min_surprises": 2,  # failed tool calls also make a turn substantial

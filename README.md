@@ -152,7 +152,7 @@ and the loop closes in the background:
 | you submit a prompt | the model is asked which remembered lessons bear on it, walking the tree from the most abstract nodes down | 1 call, cached by prompt |
 | the session ends | the model reads the session and judges how it went, whether you had to steer, and what was worked out by trial | 1 call, detached |
 | a correction happened | the correction *is* the diagnosis; the model picks which dropped detail it was about, and that claim is re-attached next time | 1 call |
-| a substantial turn ends | the agent is given an occasion to ask whether it was *wrong* about anything, and decides for itself | no model call |
+| a substantial turn ends | a detached process reflects on the work so far, without interrupting the agent | 1 call, detached |
 | you teach it something | `rmc add` records it immediately, reconciled, available to your next prompt | 1–2 calls |
 | something reusable happened | a reflection call mints a level-0 lesson from the transcript | 1 call, detached |
 | the new lesson touches known ground | it is reconciled with what is already there — folded in, set alongside, or flagged as a contradiction | 1 call, cached |
@@ -196,6 +196,21 @@ Do not let (3) crowd out (1) just because it is the kind that announces itself.
 
 "Nothing to capture" is the expected answer, and if several nudges in a row
 produce nothing the cooldown backs off automatically.
+
+**By default none of this touches the agent.** Interrupting a session mid-task
+has a real cost — it spends a turn, pollutes the working context with
+meta-cognition, and breaks concentration exactly when concentration is worth
+most. But the transcript *is* the context, serialised, so a detached process can
+run the same reflection with no claim on the session at all. That is the default
+(`nudge_mode: background`); `block` interrupts the agent instead, trading that
+cost for the live sense of what surprised it.
+
+Both CLIs can fork a session with its context (`claude --resume <id>
+--fork-session`, `codex fork`), which would give a reflector the full
+conversation rather than a digest. RMC does not do this by default: forking
+re-sends the entire context as input on every reflection, where the digest is a
+few thousand tokens, and the digest has proven sufficient — it correctly
+identified conceptual corrections in testing, not just mechanical ones.
 
 ### Is the nudge necessary? RMC measures it
 
