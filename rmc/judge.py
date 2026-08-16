@@ -179,11 +179,16 @@ class Judge:
         *,
         cache_name: str = "judge-cache",
         use_cache: bool = True,
+        timeout: int | None = None,
     ) -> None:
         self.store = store
         self.adapter = adapter
         self.cache_name = cache_name
         self.use_cache = use_cache
+        # A hook has a hard deadline. Bounding the call here means recall
+        # degrades to "inject nothing" rather than being killed mid-flight with
+        # its output discarded.
+        self.timeout = timeout
         self.calls = 0
 
     # ------------------------------------------------------------- plumbing
@@ -235,7 +240,9 @@ class Judge:
         run = self.adapter.run(
             prompt,
             schema=schema,
-            timeout=timeout or int(self.store.config.get("limits.agent_timeout_s", 180)),
+            timeout=timeout
+            or self.timeout
+            or int(self.store.config.get("limits.agent_timeout_s", 180)),
         )
         self.calls += 1
         if not run.ok or not run.data:

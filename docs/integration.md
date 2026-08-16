@@ -60,7 +60,9 @@ Unresolved contradictions are flagged there too. For the full picture — what w
 offered to the model, what it decided and why, and the exact text injected — run
 `rmc trace --prompt "..."`.
 
-Recall costs a model call on the hot path. That is deliberate — injecting the
+Recall costs a model call on the hot path **only once the store outgrows
+`max_pack_tokens`**. Below that everything is served unfiltered, with no call at
+all, in milliseconds — there is nothing to choose between. That is deliberate — injecting the
 wrong lesson is worse than injecting none, and only a reader can tell the
 difference — but it is a real latency cost, so it is cached by prompt and can be
 switched off with `rmc config recall.enabled false`.

@@ -147,6 +147,8 @@ Any key can be overridden per-run by an environment variable:
 | `recall.strategy` | `delta-patch` | `delta-patch`, `delta-jump`, or `stepwise` |
 | `recall.max_pack_tokens` | `1200` | ceiling on injected context |
 | `recall.max_families` | `3` | lesson families served per prompt |
+| `recall.always_judge` | `false` | filter for relevance even when the whole store fits in the budget (it is served unfiltered otherwise — there is nothing to choose) |
+| `recall.timeout_s` | `20` | bound on the routing call, kept under the hook deadline |
 | `recall.judge_calls` | `2` | model calls the relevance walk may spend |
 | `recall.max_depth` | `2` | how far down the tree the walk may look |
 | `recall.max_expansions` | `3` | descents before escalating to L0 |

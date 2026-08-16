@@ -6,7 +6,8 @@
           {
             "type": "command",
             "command": "/Users/yihein.chai/Documents/learn/rmc/bin/rmc hook user-prompt-submit",
-            "timeout": 10,
+            "timeout": 30,
+            "statusMessage": "Recalling lessons\u2026",
             "_rmc": true
           }
         ]
@@ -18,7 +19,8 @@
           {
             "type": "command",
             "command": "/Users/yihein.chai/Documents/learn/rmc/bin/rmc hook session-end",
-            "timeout": 15,
+            "timeout": 30,
+            "statusMessage": "Learning from this session\u2026",
             "_rmc": true
           }
         ]

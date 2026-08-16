@@ -22,6 +22,13 @@ DEFAULTS: dict[str, Any] = {
         "judge_calls": 2,  # model calls the relevance walk may spend
         "max_depth": 2,  # how far down the tree the walk may look
         "max_expansions": 3,
+        # When every stored lesson fits in max_pack_tokens there is nothing to
+        # choose between, so recall serves them all without asking. Set this to
+        # force relevance filtering even then.
+        "always_judge": False,
+        # Bound on the routing call, kept below the hook's own deadline so a
+        # slow judgement degrades to "inject nothing" instead of being killed.
+        "timeout_s": 20,
     },
     "selection": {
         # The model decides which dropped detail explains a failure; the other

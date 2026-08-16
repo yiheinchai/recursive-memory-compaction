@@ -96,7 +96,27 @@ pack = selected node bodies
        [+ any unresolved conflict, as a question]
 ```
 
-### 3.1 Choosing what to serve
+### 3.1 When there is nothing to choose
+
+Relevance filtering only matters under **scarcity**. If every stored lesson fits
+inside `max_pack_tokens`, there is no selection problem: serve them all, ask
+nothing, return in milliseconds. Filtering switches on only once the tree
+outgrows the budget.
+
+This is not a heuristic standing in for judgement — it is the observation that
+judgement is needed to *choose*, and there is no choice to make. It also happens
+to be the common case: a young store is small, and that is exactly when you least
+want a model call on every prompt.
+
+Getting this wrong is not theoretical. An earlier version asked on every prompt
+regardless, and with a 464-token store against a 1200-token budget it spent a
+`claude -p` round trip picking two lessons out of two — and blew the hook's
+10-second deadline doing it, so the injection was discarded entirely. Recall
+went from timing out to 0.09s.
+
+`recall.always_judge: true` forces filtering anyway.
+
+### 3.2 Choosing what to serve, when there is a choice
 
 Which lessons bear on a prompt is a judgement about meaning, so the model makes
 it (`judge.relevance`). The harness supplies the search shape:
@@ -117,7 +137,7 @@ re-asking the same thing is free.
 
 The structural gate: an empty store asks nothing at all.
 
-### 3.2 Budgets
+### 3.3 Budgets
 
 ```yaml
 recall:
@@ -125,6 +145,8 @@ recall:
   max_families: 3            # lessons served per prompt
   judge_calls: 2             # model calls the relevance walk may spend
   max_depth: 2               # how far down the walk may look
+  timeout_s: 20              # bound on the routing call, under the hook deadline
+  always_judge: false        # filter even when everything would fit
   max_expansions: 3          # descents during a failure, see §4
   strategy: delta-patch      # delta-patch | delta-jump | stepwise
 ```

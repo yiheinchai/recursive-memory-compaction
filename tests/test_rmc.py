@@ -402,7 +402,31 @@ def judge_for(store, route):
 
 
 class TestRecall(StoreCase):
+    def force_judging(self) -> None:
+        """Opt into relevance filtering — tiny stores skip it by design."""
+        self.store.config.set("recall.always_judge", True)
+
+    def test_everything_is_served_when_it_all_fits_in_the_budget(self) -> None:
+        """Under the budget there is nothing to choose, so nothing is asked."""
+        self.add_node(id="n_a", family="retry", body="Retry idempotent calls.")
+        self.add_node(id="n_b", family="graphql", body="Batch queries.")
+        log: list = []
+        pack = recall_pack(self.store, "anything at all", counting_router({"picks": []}, log))
+        self.assertEqual(sorted(pack.served), ["n_a", "n_b"])
+        self.assertEqual(log, [], "must not spend a call choosing from what it can afford")
+
+    def test_filtering_switches_on_once_the_store_outgrows_the_budget(self) -> None:
+        self.store.config.set("recall.max_pack_tokens", 20)
+        self.add_node(id="n_a", family="retry", body="Retry idempotent calls. " * 20)
+        self.add_node(id="n_b", family="graphql", body="Batch queries. " * 20)
+        log: list = []
+        adapter = counting_router({"picks": [{"id": "n_a", "verdict": "relevant"}]}, log)
+        pack = recall_pack(self.store, "retry the call", adapter)
+        self.assertEqual(len(log), 1, "scarcity is what makes the judgement necessary")
+        self.assertEqual(pack.served, ["n_a"])
+
     def test_serves_what_the_model_selects(self) -> None:
+        self.force_judging()
         self.add_node(id="n_r", family="retry", title="Retry", body="Retry idempotent calls.", level=2)
         self.add_node(id="n_g", family="graphql", title="GraphQL", body="Batch queries.", level=1)
         adapter = router({"picks": [{"id": "n_r", "verdict": "relevant", "why": "same subject"}]})
@@ -414,6 +438,7 @@ class TestRecall(StoreCase):
         self.assertEqual(pack.reasons["n_r"], "same subject")
 
     def test_nothing_selected_means_nothing_injected(self) -> None:
+        self.force_judging()
         self.add_node(id="n_r", family="retry", body="Retry idempotent calls.")
         pack = recall_pack(self.store, "what colour should the logo be", router({"picks": []}))
         self.assertFalse(pack)
@@ -424,6 +449,7 @@ class TestRecall(StoreCase):
         self.assertEqual(log, [], "no lessons means no question to ask")
 
     def test_conflict_is_surfaced_with_the_lesson(self) -> None:
+        self.force_judging()
         self.add_node(
             id="n_c",
             family="db",
@@ -440,6 +466,7 @@ class TestRecall(StoreCase):
         self.assertEqual(pack.conflicts, ["n_c"])
 
     def test_previously_rescued_claims_are_reattached(self) -> None:
+        self.force_judging()
         self.add_node(id="n_p", family="f", body="Short.", dropped=[Delta("the missing bit", "parameter")])
         self.store.log("rescue", node="n_p", claim="the missing bit")
         pack = recall_pack(

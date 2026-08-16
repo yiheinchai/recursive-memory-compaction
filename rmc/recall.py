@@ -79,8 +79,29 @@ def select_lessons(
         # nothing to ask about.
         return WalkResult()
 
+    # Second structural gate, and the one that matters most in practice: if the
+    # whole store fits in the context budget there is nothing to *choose*, so
+    # asking which lessons to pick is pure waste — a model call, and the latency
+    # of one, spent selecting from a set we can afford entirely.
+    #
+    # This is not a heuristic standing in for judgement. It is the observation
+    # that judgement is only needed under scarcity, and early on there is none.
+    # Relevance filtering starts mattering when the tree outgrows the budget,
+    # and that is exactly when it switches on.
+    pack_budget = int(store.config.get("recall.max_pack_tokens", 1200))
+    total = sum(n.tokens for n in roots)
+    if total <= pack_budget and not store.config.get("recall.always_judge", False):
+        result = WalkResult(selected=roots)
+        for node in roots:
+            result.picks[node.id] = Pick(
+                id=node.id,
+                verdict="relevant",
+                why=f"whole store is {total} tokens, under the {pack_budget} budget — served without filtering",
+            )
+        return result
+
     budget = budget or Budget(max_calls=int(store.config.get("recall.judge_calls", 2)))
-    judge = Judge(store, adapter)
+    judge = Judge(store, adapter, timeout=int(store.config.get("recall.timeout_s", 20)))
     result = walk(
         judge,
         prompt,

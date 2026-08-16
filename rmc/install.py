@@ -17,8 +17,8 @@ from typing import Any
 MARKER = "rmc hook"
 
 CLAUDE_EVENTS = {
-    "UserPromptSubmit": ("user-prompt-submit", 10, "Recalling lessons…"),
-    "SessionEnd": ("session-end", 15, "Learning from this session…"),
+    "UserPromptSubmit": ("user-prompt-submit", 30, "Recalling lessons…"),
+    "SessionEnd": ("session-end", 30, "Learning from this session…"),
 }
 
 
