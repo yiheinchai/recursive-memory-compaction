@@ -60,11 +60,15 @@ class MockAdapter:
         router: Callable[[str, dict | None], Any] | None = None,
         world: MockWorld | None = None,
         model: str | None = None,
+        diagnosis_kind: str = "edge-case",
     ) -> None:
         self.responses = list(responses or [])
         self.router = router
         self.world = world or MockWorld()
         self.model = model
+        # Matches the kind `_compress` assigns to what it drops, so the
+        # categorical join in the selector is exercised rather than bypassed.
+        self.diagnosis_kind = diagnosis_kind
         self.calls: list[dict[str, Any]] = []
 
     def available(self) -> bool:
@@ -109,38 +113,54 @@ class MockAdapter:
         return self._solve(prompt)
 
     def _compress(self, prompt: str) -> dict[str, Any]:
-        """Drop the last fact-bearing line, and honestly declare it as a delta.
+        """Drop the last fact-bearing *block*, and honestly declare it as a delta.
 
-        A well-behaved compressor. ``MockAdapter(router=...)`` is how tests
-        simulate a badly-behaved one that under-reports its manifest.
+        Blocks, not lines: a real compressor removes a whole idea, and a lesson
+        written with wrapped bullets would otherwise lose a sentence fragment
+        while the concept it belongs to stays behind.
+
+        This is the well-behaved compressor. ``MockAdapter(router=...)`` is how
+        tests simulate a badly-behaved one that under-reports its manifest.
         """
         body = _section(prompt, "LESSON")
-        lines = [ln for ln in body.splitlines() if ln.strip()]
-        fact_lines = [ln for ln in lines if FACT_RE.search(ln)]
-        preserve = set(FACT_RE.findall(_section(prompt, "PRESERVE")))
+        blocks = [b for b in re.split(r"\n\s*\n", body) if b.strip()]
+        if len(blocks) < 2:  # unwrapped lesson: fall back to line granularity
+            blocks = [ln for ln in body.splitlines() if ln.strip()]
 
-        droppable = [ln for ln in fact_lines if not (self.facts(ln) & preserve)]
+        preserve = set(FACT_RE.findall(_section(prompt, "PRESERVE")))
+        droppable = [
+            b for b in blocks if FACT_RE.search(b) and not (self.facts(b) & preserve)
+        ]
+
         if not droppable:
-            kept, dropped_lines = lines, []
+            kept, dropped = blocks, []
         else:
             victim = droppable[-1]
-            kept = [ln for ln in lines if ln != victim]
-            dropped_lines = [victim]
+            kept = [b for b in blocks if b != victim]
+            dropped = [victim]
 
         return {
-            "body": "\n".join(kept).strip() or "(empty)",
+            "body": "\n\n".join(b.strip() for b in kept).strip() or "(empty)",
             "dropped": [
-                {"claim": ln.strip(), "kind": "parameter", "holder": None}
-                for ln in dropped_lines
+                {
+                    "claim": " ".join(b.split()).lstrip("- ").strip(),
+                    "kind": "edge-case",
+                    "holder": None,
+                }
+                for b in dropped
             ],
-            "rationale": "mock: removed the trailing fact line",
+            "rationale": "mock: removed the trailing fact-bearing block",
         }
 
     def _diagnose(self, prompt: str) -> dict[str, Any]:
-        missing = sorted(self.facts(_section(prompt, "MISSING")))
+        complaint = _section(prompt, "MISSING")
+        # Prefer explicit @fact tokens, but fall back to the raw complaint text
+        # so that a verifier which reports in prose still yields something the
+        # selector can match lexically — exactly as a real diagnoser would.
+        missing = sorted(self.facts(complaint)) or [complaint.strip()]
         return {
-            "category": "parameter",
-            "missing": missing or ["unspecified detail"],
+            "category": self.diagnosis_kind,
+            "missing": [m for m in missing if m] or ["unspecified detail"],
             "wrong_step": "mock diagnosis",
             "confidence": 0.9,
         }

@@ -357,18 +357,24 @@ class TestDescent(StoreCase):
             body="Retry idempotent ops. @idempotent",
             level=1,
             derived_from=[base.id],
-            dropped=[Delta("S3 returns 200 with error bodies. @s3-body", "parameter", base.id)],
+            dropped=[
+                # Distractors of the wrong kind and topic, so a rescue can only
+                # succeed if the manifest match is genuinely doing the work.
+                Delta("prefer table-driven tests for the parser", "example", base.id),
+                Delta("the deploy pipeline caches node_modules", "reference", base.id),
+                Delta("S3 returns 200 with error bodies. @s3-body", "edge-case", base.id),
+            ],
         )
         base.compressed_into = apex.id
         self.store.save_node(base)
         self.store.invalidate()
 
         world = MockWorld({"t_s3": {"idempotent", "s3-body"}})
-        adapter = MockAdapter(world=world)
+        adapter = MockAdapter(world=world, diagnosis_kind="edge-case")
 
         def verify(run, pack):
             ok, missing = world.solves("t_s3", pack)
-            return ok, f"missing {sorted(missing)}"
+            return ok, "missing: " + " ".join(f"@{m}" for m in sorted(missing))
 
         result = solve_with_descent(
             self.store,
@@ -384,6 +390,16 @@ class TestDescent(StoreCase):
         # The apex alone must have failed first, or the test proves nothing.
         self.assertGreaterEqual(len(result.attempts), 2)
         self.assertFalse(result.attempts[0].ok)
+        # The right claim must be picked on the FIRST descent, past two
+        # distractors, and the delta term must be what picked it. Without this
+        # the suite still passes when delta_match silently degrades to zero and
+        # the prior alone carries the choice.
+        self.assertEqual(len(result.attempts), 2)
+        self.assertGreater(result.rescued_by.parts["delta"], 0.0)
+        self.assertGreater(
+            result.rescued_by.parts["delta"],
+            max(result.rescued_by.parts["affinity"], result.rescued_by.parts["prior"]),
+        )
 
     def test_escalates_to_level_zero_when_no_delta_helps(self) -> None:
         base = self.add_node(
