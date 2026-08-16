@@ -13,27 +13,30 @@
   "use strict";
 
   var SVGNS = "http://www.w3.org/2000/svg";
-  var SCALE = 0.5;                 // px per token
-  var ROW = { 2: 220, 1: 300, 0: 380 };
-  var NODE_H = 34;
-  var BAND = { x: 56, y: 36, w: 800, h: 48, pad: 20, gap: 12, barY: 49, barH: 22 };
+  // One scale for everything, so a bar in the meter is the same width as the
+  // node it came from. The meter's full width is the budget it drains from.
+  var SCALE = 1.03;                // px per token
+  var FIELD = { x: 106, r: 940 };
+  var ROW = { 2: 132, 1: 212, 0: 292 };
+  var NODE_H = 32;
+  var BAND = { y: 26, h: 30, gap: 8 };
 
   // Every node the story ever contains. `col` is the visual column it lives in
   // so a lesson stays put as it is compressed.
   var NODES = {
-    A0: { tok: 260, level: 0, cx: 190 },
-    B0: { tok: 220, level: 0, cx: 450 },
-    C0: { tok: 200, level: 0, cx: 700 },
-    A1: { tok: 195, level: 1, cx: 190 },
-    B1: { tok: 165, level: 1, cx: 450 },
-    A2: { tok: 146, level: 2, cx: 190 },
-    M:  { tok: 210, level: 2, cx: 575 }
+    A0: { tok: 260, level: 0, cx: 240 },
+    B0: { tok: 220, level: 0, cx: 520 },
+    C0: { tok: 200, level: 0, cx: 762 },
+    A1: { tok: 195, level: 1, cx: 240 },
+    B1: { tok: 165, level: 1, cx: 520 },
+    A2: { tok: 146, level: 2, cx: 240 },
+    M:  { tok: 210, level: 2, cx: 641 }
   };
 
   var COLUMNS = [
-    { cx: 190, label: "retrying flaky calls" },
-    { cx: 450, label: "cache invalidation" },
-    { cx: 700, label: "deploy rollback" }
+    { cx: 240, label: "retrying flaky calls" },
+    { cx: 520, label: "cache invalidation" },
+    { cx: 762, label: "deploy rollback" }
   ];
 
   // Each state is the entire store at one moment.
@@ -96,7 +99,7 @@
       };
     }
     // Pack the context band left to right, in load order.
-    var x = BAND.x + BAND.pad;
+    var x = FIELD.x;
     out._band = {};
     for (var i = 0; i < state.load.length; i++) {
       var w = width(state.load[i]);
@@ -109,36 +112,49 @@
 
   function build(root) {
     var svg = el("svg", {
-      viewBox: "0 0 900 470", fill: "none", stroke: "#1a1a1a",
-      "stroke-width": "1.5", role: "img",
-      "aria-label": "A memory tree growing downward while the context loaded on every prompt shrinks"
+      viewBox: "0 0 960 372", fill: "none", stroke: "#1a1a1a",
+      "stroke-width": "1.4", role: "img",
+      "aria-label": "A memory tree growing downward while the context loaded on every prompt drains"
     });
 
     var chrome = el("g", {});
+    // The meter: a fixed budget that the loaded lessons fill.
     chrome.appendChild(el("rect", {
-      x: BAND.x, y: BAND.y, width: BAND.w, height: BAND.h,
-      "stroke-dasharray": "5 5", opacity: ".55"
+      x: FIELD.x, y: BAND.y, width: FIELD.r - FIELD.x, height: BAND.h,
+      fill: "#ededed", stroke: "none"
     }));
+    // Hairline rules give the field a grid to sit on.
+    chrome.appendChild(el("path", {
+      d: "M" + FIELD.x + " 84H" + FIELD.r, stroke: "#e2e2e2", "stroke-width": 1
+    }));
+    [2, 1, 0].forEach(function (lv) {
+      chrome.appendChild(el("path", {
+        d: "M" + FIELD.x + " " + (ROW[lv] + NODE_H) + "H" + FIELD.r,
+        stroke: "#ededed", "stroke-width": 1
+      }));
+    });
+
     var labels = el("g", {
       stroke: "none", fill: "#1a1a1a",
       "font-family": "ui-monospace, SFMono-Regular, Menlo, monospace"
     });
     function txt(x, y, s, size, op, anchor) {
-      var t = el("text", { x: x, y: y, "font-size": size || 13, opacity: op || 1 });
+      var t = el("text", { x: x, y: y, "font-size": size || 12, opacity: op || 1 });
       if (anchor) t.setAttribute("text-anchor", anchor);
       t.textContent = s;
       labels.appendChild(t);
       return t;
     }
-    txt(BAND.x, 26, "LOADED INTO CONTEXT, EVERY PROMPT", 11.5, 0.6).setAttribute("letter-spacing", "1.4");
-    txt(BAND.x, 130, "THE STORE", 11.5, 0.6).setAttribute("letter-spacing", "1.4");
+    txt(FIELD.x, 14, "CONTEXT LOADED PER PROMPT", 10.5, 0.42).setAttribute("letter-spacing", "1.7");
+    txt(FIELD.r, 14, "BUDGET", 10.5, 0.42, "end").setAttribute("letter-spacing", "1.7");
+    txt(FIELD.x, 108, "THE STORE", 10.5, 0.42).setAttribute("letter-spacing", "1.7");
     [2, 1, 0].forEach(function (lv) {
-      txt(22, ROW[lv] + 22, "L" + lv, 13, 0.45);
+      txt(88, ROW[lv] + 21, "L" + lv, 11, 0.32, "end");
     });
-    COLUMNS.forEach(function (c) { txt(c.cx, 432, c.label, 12, 0.55, "middle"); });
+    COLUMNS.forEach(function (c) { txt(c.cx, 350, c.label, 11.5, 0.42, "middle"); });
     chrome.appendChild(labels);
 
-    var gEdges = el("g", { opacity: ".45" });
+    var gEdges = el("g", {});
     var gNodes = el("g", {});
     var gBand = el("g", {});
     svg.appendChild(chrome);
@@ -149,12 +165,12 @@
     var parts = {};
     for (var id in NODES) {
       var g = el("g", {});
-      var rect = el("rect", { height: NODE_H, y: 0, x: 0, width: 0, fill: "#f1f1f1" });
+      var rect = el("rect", { height: NODE_H, y: 0, x: 0, width: 0 });
       var label = el("text", {
-        "font-size": 12.5, "text-anchor": "middle", stroke: "none",
-        fill: "#1a1a1a", "font-family": "ui-monospace, SFMono-Regular, Menlo, monospace"
+        "font-size": 12, "text-anchor": "end", stroke: "none",
+        "font-family": "ui-monospace, SFMono-Regular, Menlo, monospace"
       });
-      var badge = el("path", { "stroke-width": 2.2, "stroke-linecap": "round", "stroke-linejoin": "round", opacity: 0 });
+      var badge = el("path", { "stroke-width": 1.7, "stroke-linecap": "round", "stroke-linejoin": "round", opacity: 0 });
       g.appendChild(rect); g.appendChild(label); g.appendChild(badge);
       gNodes.appendChild(g);
       parts[id] = { g: g, rect: rect, label: label, badge: badge };
@@ -162,12 +178,12 @@
 
     var bandBars = {};
     for (var id2 in NODES) {
-      var b = el("rect", { y: BAND.barY, height: BAND.barH, x: 0, width: 0, fill: "#1a1a1a", stroke: "none", opacity: 0 });
+      var b = el("rect", { y: BAND.y, height: BAND.h, x: 0, width: 0, fill: "#1a1a1a", stroke: "none", opacity: 0 });
       gBand.appendChild(b);
       bandBars[id2] = b;
     }
     var patchBar = el("rect", {
-      y: BAND.barY, height: BAND.barH, x: 0, width: 0,
+      y: BAND.y, height: BAND.h, x: 0, width: 0,
       fill: "none", stroke: "#1a1a1a", "stroke-dasharray": "3 3", opacity: 0
     });
     gBand.appendChild(patchBar);
@@ -187,10 +203,14 @@
 
     var cur = {};
     for (var id in NODES) cur[id] = { x: NODES[id].cx, y: ROW[NODES[id].level], w: 0, o: 0 };
-    var curBand = {}, curPatch = { x: 0, w: 0, o: 0 };
-    for (var id2 in NODES) curBand[id2] = { x: BAND.x + BAND.pad, w: 0, o: 0 };
+    var curBand = {}, curPatch = { x: 0, w: 0, o: 0 }, curTok = 0;
+    for (var id2 in NODES) curBand[id2] = { x: FIELD.x, w: 0, o: 0 };
 
     var index = 0, from = null, to = target(STATES[0]), t0 = 0, DUR = 700, raf = null;
+    var fromTok = 0, toTok = 0;
+    function loadOf(st) {
+      return st.load.reduce(function (n, id) { return n + NODES[id].tok; }, 0) + (st.patch || 0);
+    }
     var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     function ease(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
@@ -202,15 +222,19 @@
         var c = cur[id], p = view.parts[id];
         p.g.setAttribute("transform", "translate(" + c.x + "," + c.y + ")");
         p.g.setAttribute("opacity", c.o);
+        var lit = s.load.indexOf(id) >= 0;
         p.rect.setAttribute("width", Math.max(0, c.w));
-        p.rect.setAttribute("stroke-width", s.load.indexOf(id) >= 0 ? 2.6 : 1.5);
-        p.label.setAttribute("x", c.w / 2);
-        p.label.setAttribute("y", NODE_H / 2 + 4.5);
-        p.label.textContent = c.w > 46 ? NODES[id].tok : "";
+        p.rect.setAttribute("fill", lit ? "#1a1a1a" : "#ffffff");
+        p.rect.setAttribute("stroke", lit ? "none" : "#1a1a1a");
+        p.label.setAttribute("x", c.w - 11);
+        p.label.setAttribute("y", NODE_H / 2 + 4);
+        p.label.setAttribute("fill", lit ? "#ffffff" : "#1a1a1a");
+        p.label.textContent = c.w > 40 ? NODES[id].tok : "";
         var isUsed = s.used.indexOf(id) >= 0;
         p.badge.setAttribute("opacity", isUsed ? 1 : 0);
+        p.badge.setAttribute("stroke", "#1a1a1a");
         p.badge.setAttribute("d", isUsed
-          ? "M" + (c.w + 10) + " " + (NODE_H / 2) + "l5 5 9 -11" : "M0 0");
+          ? "M" + (c.w + 13) + " " + (NODE_H / 2) + "l4 4 8 -10" : "M0 0");
       }
 
       // Edges are redrawn from live positions so they track the tween.
@@ -223,8 +247,8 @@
         var line = el("path", {
           d: "M" + (a.x + a.w / 2) + " " + a.y +
              "L" + (b.x + b.w / 2) + " " + (b.y + NODE_H),
-          stroke: "#1a1a1a", "stroke-width": hot ? 2.6 : 1.5,
-          opacity: hot ? 1 : 0.55, "stroke-dasharray": hot ? "6 4" : ""
+          stroke: "#1a1a1a", "stroke-width": hot ? 1.8 : 1,
+          opacity: hot ? 1 : 0.26, "stroke-dasharray": hot ? "5 4" : ""
         });
         view.gEdges.appendChild(line);
       });
@@ -239,9 +263,8 @@
       view.patchBar.setAttribute("width", Math.max(0, curPatch.w));
       view.patchBar.setAttribute("opacity", curPatch.o);
 
-      var loaded = s.load.reduce(function (n, id) { return n + NODES[id].tok; }, 0) + (s.patch || 0);
       hud.kept.textContent = s.kept;
-      hud.tok.textContent = loaded;
+      hud.tok.textContent = Math.round(curTok);
       hud.cap.textContent = s.cap;
       Array.prototype.forEach.call(hud.dots, function (d, i) {
         d.setAttribute("aria-selected", String(i === index));
@@ -261,6 +284,7 @@
         b.w = lerp(fb ? fb.w : 0, tb ? tb.w : 0, k);
         b.o = lerp(fb ? 1 : 0, tb ? 1 : 0, k);
       }
+      curTok = lerp(fromTok, toTok, k);
       curPatch.x = to._patch ? to._patch.x : curPatch.x;
       curPatch.w = lerp(from._patch ? from._patch.w : 0, to._patch ? to._patch.w : 0, k);
       curPatch.o = lerp(from._patch ? 1 : 0, to._patch ? 1 : 0, k);
@@ -276,6 +300,8 @@
       for (var id2 in NODES) if (curBand[id2].o > 0.01) from._band[id2] = { x: curBand[id2].x, w: curBand[id2].w };
       from._patch = curPatch.o > 0.01 ? { x: curPatch.x, w: curPatch.w } : null;
       to = target(STATES[index]);
+      fromTok = curTok;
+      toTok = loadOf(STATES[index]);
       t0 = performance.now();
       if (raf) cancelAnimationFrame(raf);
       raf = requestAnimationFrame(step);
