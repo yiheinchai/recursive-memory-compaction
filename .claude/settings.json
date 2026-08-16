@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/yihein.chai/Documents/learn/rmc/bin/rmc hook user-prompt-submit",
+            "timeout": 10,
+            "_rmc": true
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/yihein.chai/Documents/learn/rmc/bin/rmc hook session-end",
+            "timeout": 15,
+            "_rmc": true
+          }
+        ]
+      }
+    ]
+  }
+}

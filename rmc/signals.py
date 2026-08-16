@@ -58,10 +58,13 @@ _APPROVAL = re.compile(
 )
 
 _TEST_PASS = re.compile(
-    r"(?i)\b("
-    r"\d+ passed|all tests? passed|tests? pass\b|build succeeded|✓ \d+|ok \d+ tests?"
-    r"|0 failed|no errors found|compiled successfully"
-    r")\b"
+    r"(?i)("
+    r"\b\d+ passed|\ball tests? passed|\btests? pass\b|\bbuild succeeded|✓ \d+"
+    r"|\b0 failed|\bno errors found|\bcompiled successfully"
+    # unittest prints a bare "OK" on its own line after "Ran N tests"
+    r"|^OK$|^OK \(|\bRan \d+ tests? in [\d.]+s\s*\n+OK"
+    r")",
+    re.MULTILINE,
 )
 
 _TEST_FAIL = re.compile(
@@ -72,8 +75,34 @@ _TEST_FAIL = re.compile(
 )
 
 _DENIED = re.compile(
-    r"(?i)(user (?:denied|rejected|doesn'?t want)|tool use was rejected|permission denied by user)"
+    r"(?i)(user (?:denied|rejected|doesn'?t want)|tool use was rejected"
+    r"|permission denied by user|request interrupted by user)"
 )
+
+# Hosts inject synthetic turns that wear the user role but were never typed by a
+# human: slash-command envelopes, harness reminders, command stdout. Scoring
+# them as intent is how a `/goal` payload gets read as the user approving the
+# work. Strip them before anything looks for corrections or approvals.
+_SYNTHETIC_BLOCK = re.compile(
+    r"<(command-name|command-message|command-args|local-command-stdout|"
+    r"system-reminder|cross-session-message|task-notification)>.*?"
+    r"</\1>",
+    re.DOTALL | re.IGNORECASE,
+)
+_SYNTHETIC_OPEN = re.compile(
+    r"<(command-name|command-message|command-args|local-command-stdout|"
+    r"system-reminder)>.*",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def strip_synthetic(text: str) -> str:
+    """Remove host-injected envelopes, leaving only what a human actually typed."""
+    if not text:
+        return ""
+    cleaned = _SYNTHETIC_BLOCK.sub(" ", text)
+    cleaned = _SYNTHETIC_OPEN.sub(" ", cleaned)  # unclosed/truncated envelopes
+    return cleaned.strip()
 
 
 @dataclass
@@ -167,8 +196,23 @@ def _absorb(row: dict[str, Any], facts: SessionFacts) -> None:
 
     if role == "user":
         text = _text_of(content)
-        # Tool results arrive wearing the user role; keep them out of the
-        # human-intent channel or every tool output reads as a correction.
+
+        # Prefer the host's own metadata over guessing from the text. Claude
+        # Code marks harness-injected turns with `isMeta`, tool results with
+        # `toolUseResult`, and refusals with `toolDenialKind`. Without this, a
+        # slash-command payload gets scored as the user approving the work.
+        if row.get("toolDenialKind") or row.get("interruptedMessageId"):
+            facts.denied = True
+            return
+        if row.get("isMeta"):
+            return
+        if row.get("toolUseResult") is not None:
+            facts.tool_outputs.append(text)
+            return
+
+        # Tool results also arrive wearing the user role on hosts that do not
+        # set `toolUseResult`; keep them out of the human-intent channel or
+        # every tool output reads as a correction.
         if isinstance(content, list) and any(
             isinstance(b, dict) and b.get("type") == "tool_result" for b in content
         ):
@@ -176,8 +220,13 @@ def _absorb(row: dict[str, Any], facts: SessionFacts) -> None:
             if _DENIED.search(text):
                 facts.denied = True
             return
-        if text.strip():
-            facts.user_messages.append(text)
+        if _DENIED.search(text):
+            facts.denied = True
+        human = strip_synthetic(text)
+        # Some hosts re-inject a standing instruction on every turn. Counting it
+        # once per turn would let a single phrase dominate the whole score.
+        if human and human not in facts.user_messages:
+            facts.user_messages.append(human)
         return
 
     if role == "assistant":
@@ -202,6 +251,14 @@ def _absorb(row: dict[str, Any], facts: SessionFacts) -> None:
 # --------------------------------------------------------------------------- #
 
 
+def _last_pos(pattern: re.Pattern[str], text: str) -> int:
+    """Index of the last match, or -1. Used to decide red-then-green ordering."""
+    last = -1
+    for match in pattern.finditer(text):
+        last = match.start()
+    return last
+
+
 def classify(facts: SessionFacts, *, min_tool_calls: int = 8) -> Outcome:
     """Combine signals into a single labelled outcome with a confidence."""
     evidence: list[str] = []
@@ -221,13 +278,15 @@ def classify(facts: SessionFacts, *, min_tool_calls: int = 8) -> Outcome:
         score -= 0.35
         evidence.append("a tool call was denied")
 
+    # Red-then-green is the normal shape of successful work, so what matters is
+    # which signal came *last*, not which appeared at all.
     tail = "\n".join(facts.tool_outputs[-12:])
-    if _TEST_PASS.search(tail):
+    last_pass = _last_pos(_TEST_PASS, tail)
+    last_fail = _last_pos(_TEST_FAIL, tail)
+    if last_pass > last_fail:
         score += 0.35
-        evidence.append("tests passed near the end of the session")
-    # Only count a failing test if nothing passed afterwards — a red-then-green
-    # run is the normal shape of successful work, not a failure.
-    elif _TEST_FAIL.search(tail):
+        evidence.append("tests passing at the end of the session")
+    elif last_fail > last_pass:
         score -= 0.3
         evidence.append("tests failing at the end of the session")
 

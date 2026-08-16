@@ -23,16 +23,26 @@ CLAUDE_EVENTS = {
 
 
 def rmc_command(subcommand: str) -> str:
-    """A command line that will work from inside a hook.
+    """A command line that will work from inside a hook, in any repo.
 
-    Prefers the installed console script; falls back to ``python -m rmc`` with
-    an absolute interpreter path, since a hook's PATH is not the user's shell
-    PATH.
+    A hook does not inherit the user's shell PATH, and its cwd is the *user's*
+    project, not RMC's — so a bare ``python3 -m rmc`` only resolves by accident.
+    Resolution order:
+
+    1. an installed ``rmc`` console script (pip install);
+    2. the ``bin/rmc`` shim from a clone, which sets PYTHONPATH itself;
+    3. an explicit PYTHONPATH pointing at wherever this package was imported from.
     """
     script = shutil.which("rmc")
     if script:
         return f"{script} hook {subcommand}"
-    return f"{sys.executable} -m rmc hook {subcommand}"
+
+    pkg_parent = Path(__file__).resolve().parent.parent
+    shim = pkg_parent / "bin" / "rmc"
+    if shim.is_file() and os.access(shim, os.X_OK):
+        return f"{shim} hook {subcommand}"
+
+    return f'PYTHONPATH="{pkg_parent}" {sys.executable} -m rmc hook {subcommand}'
 
 
 # --------------------------------------------------------------------------- #
