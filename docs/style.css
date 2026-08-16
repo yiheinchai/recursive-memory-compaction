@@ -239,8 +239,9 @@ figure.fig { margin: 0 0 30px; }
 }
 .pane-in { transition: transform .38s cubic-bezier(.4,0,.2,1), opacity .5s ease; }
 .pane.dim .pane-in { opacity: .28; }
-.pane[data-pane="1"] { opacity: 0; pointer-events: none; }
+.pane[data-pane="1"], .pane[data-pane="2"] { opacity: 0; pointer-events: none; }
 .cc.on-b .pane[data-pane="1"] { opacity: 1; }
+.cc.on-c .pane[data-pane="2"] { opacity: 1; }
 .pane.gone { opacity: 0; transform: translateY(-10px); }
 
 .ln { display: none; margin-bottom: 9px; }
@@ -255,9 +256,9 @@ figure.fig { margin: 0 0 30px; }
 .ln.recall .ln-head, .ln.recall .mark { color: var(--cc-accent); }
 
 /* --- the rush: the whole transcript reels, lightly blurred --- */
-.ln.grindline { color: var(--cc-dim); margin-bottom: 6px; }
+.ln.grindline { color: var(--cc-dim); margin-bottom: 4px; }
 .ln.grindline .ln-head { white-space: pre; }
-.pane.rushing .pane-in { filter: blur(.65px); opacity: .62; }
+.pane.rushing .pane-in { filter: blur(.7px); opacity: .58; }
 .pane-in { transition: transform .38s cubic-bezier(.4,0,.2,1), opacity .5s ease, filter .4s ease; }
 .rush-tag {
   position: absolute;
@@ -282,7 +283,7 @@ figure.fig { margin: 0 0 30px; }
 }
 .store-head .store-note { color: var(--ink); font: inherit; letter-spacing: inherit; }
 .store-slot {
-  height: 62px;
+  min-height: 62px;
   margin: 0 18px;
   border: 1px dashed #cfcfcf;
   background: #fbfbfb;
@@ -292,38 +293,79 @@ figure.fig { margin: 0 0 30px; }
 
 /* --- the lesson, lifted out of one tab and dropped into the other --- */
 
-/* One card, living in stage coordinates, so it can travel between the
-   transcript and the store without belonging to either. */
-.lesson-float {
-  position: absolute;
-  top: 0; left: 0;
-  width: 200px;
-  min-height: 62px;
+/* One card design, three instances: what is on disk, the copy injected into a
+   session, and the shorter one compaction writes. They are separate objects
+   because they are separate things — the copy in a transcript is history and
+   must never be rewritten under the reader. */
+.lesson-card {
   box-sizing: border-box;
-  display: flex; align-items: center; gap: 14px;
-  opacity: 0;
+  display: flex; align-items: flex-start; gap: 14px;
   color: #fff;
   background: #24242b;
   border-left: 2px solid var(--cc-accent);
   padding: 10px 14px;
+  font-family: var(--mono);
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.6;
+}
+.lesson-card .lf-text { flex: 1; min-width: 0; }
+.lesson-card .lf-tok {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11.5px; color: #74747e; letter-spacing: .02em;
+  white-space: nowrap;
+}
+.lesson-card .lf-tok b { color: #d2d2d8; font-weight: 400; }
+
+.lesson-card.floating {
+  position: absolute;
+  top: 0; left: 0;
+  width: 200px;
+  opacity: 0;
   transform-origin: 0 0;
   transition: opacity .35s ease,
               transform .78s cubic-bezier(.45,0,.2,1),
               box-shadow .4s ease,
-              min-height .4s ease;
+              background .4s ease,
+              padding .4s ease;
 }
-.lesson-float .lf-text { flex: 1; min-width: 0; }
-.lesson-float .lf-tok {
-  flex: none; align-self: flex-start;
-  font-size: 11px; color: #9a9aa4;
-  letter-spacing: .04em;
+.lesson-card.floating.on { opacity: 1; }
+
+/* Inside the terminal it is a transcript line, not a panel resting on one. */
+.lesson-card.inline {
+  background: transparent;
+  box-shadow: none;
+  padding: 3px 0 3px 12px;
 }
-.lesson-float .lf-tok b { color: #fff; font-weight: 500; }
-.lesson-float.on { opacity: 1; }
-.lesson-float.lift { box-shadow: 0 18px 36px rgba(0,0,0,.55), 0 0 0 1px rgba(217,119,87,.65); }
-.lesson-float.compacting { box-shadow: 0 0 0 1px rgba(217,119,87,.65); min-height: 44px; }
+
+.lesson-card.in-store { opacity: 0; transition: opacity .35s ease; }
+.lesson-card.in-store.on { opacity: 1; }
+
+.lesson-card.lift { box-shadow: 0 18px 36px rgba(0,0,0,.55), 0 0 0 1px rgba(217,119,87,.65); }
+
+/* Compaction, made watchable: the clauses on their way out are struck through
+   in the accent colour, a sweep runs across the card, then they leave and the
+   text reflows tighter. */
+.lesson-card .seg { transition: color .3s ease, opacity .3s ease; }
+.lesson-card .seg.dropping {
+  color: var(--cc-accent);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.lesson-card.compacting {
+  position: absolute;
+  box-shadow: 0 0 0 1px rgba(217,119,87,.9), 0 0 30px rgba(217,119,87,.3);
+  overflow: hidden;
+}
+.lesson-card.compacting::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 0%, rgba(217,119,87,.24) 45%,
+                              rgba(255,255,255,.18) 52%, transparent 100%);
+  animation: sweep .95s cubic-bezier(.4,0,.2,1) 2;
+  pointer-events: none;
+}
+@keyframes sweep { from { transform: translateX(-110%); } to { transform: translateX(110%); } }
 .lesson-gap { height: 0; transition: height .3s ease; }
 @keyframes pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(217,119,87,0); }

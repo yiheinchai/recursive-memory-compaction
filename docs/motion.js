@@ -27,10 +27,17 @@
   // 1. The Claude Code window                                               //
   // ======================================================================= //
 
-  var LESSON_LONG  = "Retry idempotent remote calls on 5xx and timeouts. S3 answers 200 " +
-                     "with the error in the body — parse the body, not the status. " +
-                     "3 attempts; backoff 100 / 400 / 1600 ms.";
-  var LESSON_SHORT = "Retry idempotent calls; parse bodies, not status codes.";
+  /* The lesson as removable parts. Compression is then something you can
+     watch happen — the clauses that go are struck out and then leave — rather
+     than one string being swapped for another behind your back. */
+  var SEGS = [
+    { t: "Retry idempotent calls",                    lv: [0, 1, 2] },
+    { t: " on 5xx and timeouts",                      lv: [0, 1] },
+    { t: ", 3 attempts, backoff 100 / 400 / 1600 ms", lv: [0] },
+    { t: ". S3 answers 200 with the error in the body, so parse the body, not the status code.", lv: [0, 1] },
+    { t: "; parse bodies, not status codes.",         lv: [2] }
+  ];
+  var TOK = [260, 146, 92];
 
   var MARK = { user: "›", status: "✱", bullet: "⏺", recall: "⋯" };
 
@@ -51,15 +58,13 @@
 
   var PROMPT_A = "the S3 retry keeps silently failing";
   var PROMPT_B = "add retry to the payments client";
+  var PROMPT_C = "same for the webhook sender";
 
   var OPEN_A = [
     { kind: "status", text: "Investigating… (3s · ↑ 1.4k tokens · esc to interrupt)" },
     { kind: "bullet", text: "Bash(curl -sI $BUCKET/objects/42)", out: "HTTP/1.1 200 OK" }
   ];
 
-  /* The grind. These are ordinary transcript rows, not a widget — the whole
-     terminal reels through them, because that is what a long session looks
-     like. Blurred just enough that you read the motion, not the words. */
   var GRIND = [
     "⏺ Status is 200, so the client reads it as success.",
     "⏺ Update(src/storage/s3.ts)",
@@ -99,33 +104,28 @@
     { kind: "user",   text: "S3 returns 200 with the error in the body" },
     { kind: "bullet", text: "Parsing the body, not the status. Fixed.", out: "42 passed" }
   ];
-
   var REFLECT = [
     { kind: "recall", text: "RMC · reflecting off-thread…" },
     { kind: "recall", text: "RMC · learned 1 lesson · n_7f2a · scope: global" }
   ];
-
   var ACT_B = [
     { kind: "bullet", text: "Idempotency key set, and I'm parsing the response body." },
     { kind: "bullet", text: "Update(src/payments/client.ts)", out: "Updated with 4 additions" },
     { kind: "bullet", text: "Done — first try." }
   ];
-
-  var COMPACT = { kind: "recall", text: "RMC · lesson used, work succeeded · compacting…" };
+  var ACT_C = [
+    { kind: "bullet", text: "Update(src/webhooks/sender.ts)", out: "Updated with 3 additions" },
+    { kind: "bullet", text: "Done — first try." }
+  ];
 
   var SPIN = ["◐", "◓", "◑", "◒"];
 
   function terminal(root) {
     var q = function (s) { return root.querySelector(s); };
     var stage = q(".cc-stage");
-    var paneA = q("[data-pane='0']");
-    var paneB = q("[data-pane='1']");
-    var inA = paneA.querySelector(".pane-in");
-    var inB = paneB.querySelector(".pane-in");
+    var panes = [q("[data-pane='0']"), q("[data-pane='1']"), q("[data-pane='2']")];
+    var ins = panes.map(function (p) { return p.querySelector(".pane-in"); });
     var tabs = root.querySelectorAll("[data-tab]");
-    var float = q("[data-lesson]");
-    var lText = q("[data-lesson-text]");
-    var lTok = q("[data-lesson-tok]");
     var storeSlot = q("[data-store-slot]");
     var storeNote = q("[data-store-note]");
     var typed = q("[data-typed]");
@@ -134,10 +134,48 @@
     var spin = q("[data-term-spin]");
     var rushTag = q("[data-rush-tag]");
 
-    // ---- build once ------------------------------------------------------
+    /* Three separate cards, because they are three separate things:
+         store  — what is on disk
+         ctx    — the copy injected into a session; once written it is history
+         work   — the new, shorter lesson compaction produces off-thread
+       Shortening the copy already sitting in the transcript would be a lie. */
+    function makeCard(cls) {
+      var el = h("div", cls);
+      var text = h("span", "lf-text");
+      var segs = SEGS.map(function (sg) {
+        var sp = h("span", "seg", sg.t);
+        text.appendChild(sp);
+        return sp;
+      });
+      var tok = h("b", null, String(TOK[0]));
+      var wrap = h("span", "lf-tok");
+      wrap.appendChild(tok);
+      wrap.appendChild(document.createTextNode(" tok"));
+      el.appendChild(text);
+      el.appendChild(wrap);
+      return {
+        el: el, segs: segs, tok: tok,
+        level: function (n) {
+          segs.forEach(function (sp, i) {
+            sp.classList.remove("dropping");
+            sp.style.display = SEGS[i].lv.indexOf(n) >= 0 ? "" : "none";
+          });
+          tok.textContent = TOK[n];
+        }
+      };
+    }
+
+    var store = makeCard("lesson-card in-store");
+    var ctx = makeCard("lesson-card floating");
+    var work = makeCard("lesson-card floating");
+    storeSlot.appendChild(store.el);
+    stage.appendChild(ctx.el);
+    stage.appendChild(work.el);
+
+    // ---- transcripts -----------------------------------------------------
     var userA = row({ kind: "user", text: PROMPT_A });
     var openA = OPEN_A.map(row);
-    var grind = GRIND.map(function (t) {
+    var grind = GRIND.concat(GRIND, GRIND).map(function (t) {
       var el = h("div", "ln grindline");
       el.appendChild(h("div", "ln-head", t));
       return el;
@@ -146,207 +184,257 @@
     var reflect = REFLECT.map(row);
     var gapA = h("div", "lesson-gap");
     [userA].concat(openA, grind, closeA, reflect, [gapA])
-      .forEach(function (n) { inA.appendChild(n); });
+      .forEach(function (n) { ins[0].appendChild(n); });
 
-    var recall = row({ kind: "recall", text: "Recalling lessons…" });
-    var slotB = h("div", "lesson-gap");
-    var userB = row({ kind: "user", text: PROMPT_B });
-    var actB = ACT_B.map(row);
-    var compactLine = row(COMPACT);
-    [recall, slotB, userB].concat(actB, [compactLine])
-      .forEach(function (n) { inB.appendChild(n); });
+    function session(prompt, acts) {
+      var recall = row({ kind: "recall", text: "Recalling lessons…" });
+      var gapTop = h("div", "lesson-gap");
+      var user = row({ kind: "user", text: prompt });
+      var rows = acts.map(row);
+      var comp = row({ kind: "recall", text: "RMC · lesson used, work succeeded · compacting off-thread…" });
+      var gapEnd = h("div", "lesson-gap");
+      return {
+        recall: recall, txt: recall.querySelector(".txt"),
+        gapTop: gapTop, gapEnd: gapEnd, user: user, rows: rows, comp: comp,
+        all: [recall, user].concat(rows, [comp]),
+        nodes: [recall, gapTop, user].concat(rows, [comp, gapEnd])
+      };
+    }
+    var B = session(PROMPT_B, ACT_B);
+    var C = session(PROMPT_C, ACT_C);
+    B.nodes.forEach(function (n) { ins[1].appendChild(n); });
+    C.nodes.forEach(function (n) { ins[2].appendChild(n); });
 
-    var recallTxt = recall.querySelector(".txt");
-    var lines = [userA].concat(openA, grind, closeA, reflect,
-                               [recall, userB], actB, [compactLine]);
+    var lines = [userA].concat(openA, grind, closeA, reflect, B.all, C.all);
 
     // ---- primitives ------------------------------------------------------
     var timers = [];
     function later(ms, fn) { timers.push(setTimeout(fn, ms)); }
     function clearAll() { timers.forEach(clearTimeout); timers = []; }
 
-    function roll(pane, inner, ms) {
-      var over = Math.max(0, inner.offsetHeight - (pane.clientHeight - 30));
-      inner.style.transition = ms
-        ? "transform " + ms + "ms linear"
-        : "transform .38s cubic-bezier(.4,0,.2,1)";
-      inner.style.transform = "translateY(" + (-over) + "px)";
+    function roll(i, ms) {
+      var over = Math.max(0, ins[i].offsetHeight - (panes[i].clientHeight - 30));
+      ins[i].style.transition = ms ? "transform " + ms + "ms linear"
+                                   : "transform .38s cubic-bezier(.4,0,.2,1)";
+      ins[i].style.transform = "translateY(" + (-over) + "px)";
     }
-    function show(n, pane, inner) {
-      n.classList.add("on");
-      if (pane) roll(pane, inner);
-    }
+    function show(n, i) { n.classList.add("on"); if (i != null) roll(i); }
     function typeInto(text, ms, done) {
       var i = 0;
       var step = function () {
         typed.textContent = text.slice(0, ++i);
         if (i < text.length) timers.push(setTimeout(step, ms));
-        else if (done) timers.push(setTimeout(done, 420));
+        else if (done) timers.push(setTimeout(done, 380));
       };
       timers.push(setTimeout(step, ms));
     }
     function tab(n) {
       Array.prototype.forEach.call(tabs, function (t, i) { t.classList.toggle("on", i === n); });
-      root.querySelector(".cc").classList.toggle("on-b", n === 1);
+      var cc = root.querySelector(".cc");
+      cc.classList.toggle("on-b", n === 1);
+      cc.classList.toggle("on-c", n === 2);
+    }
+    function at(card, target, quiet) {
+      var s = stage.getBoundingClientRect(), t = target.getBoundingClientRect();
+      if (quiet) card.el.style.transition = "none";
+      card.el.style.width = t.width + "px";
+      card.el.style.transform = "translate(" + (t.left - s.left) + "px," + (t.top - s.top) + "px)";
+      if (quiet) { void card.el.offsetWidth; card.el.style.transition = ""; }
+    }
+    function dockInto(card, gap, paneIdx, quiet) {
+      card.el.classList.add("inline");
+      card.el.style.width = (panes[paneIdx].clientWidth - 36) + "px";
+      gap.style.height = (card.el.offsetHeight + 10) + "px";
+      roll(paneIdx);
+      at(card, gap, quiet);
+    }
+    function countTo(card, to) {
+      var from = Number(card.tok.textContent) || to, t0 = null;
+      requestAnimationFrame(function tick(now) {
+        if (t0 === null) t0 = now;
+        var k = Math.min(1, (now - t0) / 750);
+        card.tok.textContent = Math.round(from + (to - from) * (1 - Math.pow(1 - k, 3)));
+        if (k < 1) requestAnimationFrame(tick); else card.tok.textContent = TOK[to === TOK[1] ? 1 : 2];
+      });
     }
 
-    /* Fly the lesson card to sit exactly over a target box. Every target is
-       inset the same amount from the stage, so no width tween is needed. */
-    function flyTo(target) {
-      var s = stage.getBoundingClientRect();
-      var t = target.getBoundingClientRect();
-      float.style.width = t.width + "px";
-      float.style.transform =
-        "translate(" + (t.left - s.left) + "px," + (t.top - s.top) + "px)";
+    /* Strike what is going, sweep, let it leave, reflow tighter. */
+    function compress(card, from, to, gap, paneIdx) {
+      card.el.classList.add("compacting");
+      card.segs.forEach(function (sp, i) {
+        if (SEGS[i].lv.indexOf(from) >= 0 && SEGS[i].lv.indexOf(to) < 0) sp.classList.add("dropping");
+      });
+      later(1050, function () {
+        card.level(to);
+        var t0 = null, fromTok = TOK[from];
+        requestAnimationFrame(function tick(now) {
+          if (t0 === null) t0 = now;
+          var k = Math.min(1, (now - t0) / 700);
+          card.tok.textContent = Math.round(fromTok + (TOK[to] - fromTok) * (1 - Math.pow(1 - k, 3)));
+          if (k < 1) requestAnimationFrame(tick); else card.tok.textContent = TOK[to];
+        });
+        gap.style.height = (card.el.offsetHeight + 10) + "px";
+        roll(paneIdx);
+        at(card, gap);
+      });
+      later(2000, function () { card.el.classList.remove("compacting"); });
     }
 
     function reset() {
       clearAll();
       lines.forEach(function (n) { n.classList.remove("on"); });
-      inA.style.transition = ""; inA.style.transform = "";
-      inB.style.transition = ""; inB.style.transform = "";
-      paneA.classList.remove("dim", "rushing");
+      ins.forEach(function (n) { n.style.transition = ""; n.style.transform = ""; });
+      panes[0].classList.remove("dim", "rushing");
+      panes.forEach(function (p) { p.classList.remove("gone"); });
       rushTag.classList.remove("on");
-      gapA.style.height = "0px";
-      float.className = "lesson-float";
-      float.style.transform = "";
-      lText.textContent = LESSON_LONG;
-      lTok.textContent = "260";
+      [gapA, B.gapTop, B.gapEnd, C.gapTop, C.gapEnd].forEach(function (g) { g.style.height = "0px"; });
+      [ctx, work].forEach(function (c) {
+        c.el.className = "lesson-card floating";
+        c.el.style.transform = ""; c.el.style.width = "";
+        c.level(0);
+      });
+      store.el.className = "lesson-card in-store";
+      store.level(0);
       storeSlot.classList.remove("full");
       storeNote.textContent = "empty";
-      typed.textContent = "";
-      foot.textContent = "";
-      recallTxt.textContent = "Recalling lessons…";
+      typed.textContent = ""; foot.textContent = "";
+      B.txt.textContent = "Recalling lessons…";
+      C.txt.textContent = "Recalling lessons…";
       title.textContent = "Fix the silent S3 retry failure";
       tab(0);
-      paneA.classList.remove("gone");
     }
 
     // ---- the run ---------------------------------------------------------
     function run() {
       reset();
 
-      typeInto(PROMPT_A, 42, function () {
-        typed.textContent = "";
-        show(userA, paneA, inA);
-        foot.textContent = "1,180 tokens";
+      typeInto(PROMPT_A, 38, function () {
+        typed.textContent = ""; show(userA, 0); foot.textContent = "1,180 tokens";
       });
-      var t = PROMPT_A.length * 42 + 500;
+      var t = PROMPT_A.length * 38 + 460;
 
-      later(t + 250, function () { show(openA[0], paneA, inA); });
-      later(t + 800, function () { show(openA[1], paneA, inA); });
-
-      // The rush: reveal the whole grind at once, then reel the transcript
-      // through it at a constant speed. The terminal scrolls, not a widget.
-      later(t + 1400, function () {
+      later(t + 250, function () { show(openA[0], 0); });
+      later(t + 750, function () { show(openA[1], 0); });
+      later(t + 1300, function () {
         grind.forEach(function (n) { n.classList.add("on"); });
-        paneA.classList.add("rushing");
+        panes[0].classList.add("rushing");
         rushTag.classList.add("on");
-        requestAnimationFrame(function () { roll(paneA, inA, 3600); });
+        requestAnimationFrame(function () { roll(0, 3200); });
       });
-      [1800, 2400, 3000, 3600, 4200, 4800].forEach(function (d, i) {
+      [1700, 2200, 2700, 3200, 3700, 4200].forEach(function (d, i) {
         later(t + d, function () {
           foot.textContent = [1600, 2200, 2700, 3300, 3800, 4200][i].toLocaleString() + " tokens";
         });
       });
-      later(t + 5100, function () {
-        paneA.classList.remove("rushing");
-        rushTag.classList.remove("on");
+      later(t + 4600, function () {
+        panes[0].classList.remove("rushing"); rushTag.classList.remove("on");
       });
-
-      later(t + 5500, function () { show(closeA[0], paneA, inA); });
-      later(t + 6200, function () { show(closeA[1], paneA, inA); });
-      later(t + 6800, function () { foot.textContent = "4,200 tokens to get here"; });
-
-      // Reflection, exactly as RMC announces it.
-      later(t + 7300, function () {
-        show(reflect[0], paneA, inA);
-        title.textContent = "RMC · reflecting on session 14";
+      later(t + 4900, function () { show(closeA[0], 0); });
+      later(t + 5500, function () { show(closeA[1], 0); });
+      later(t + 6000, function () { foot.textContent = "4,200 tokens to get here"; });
+      later(t + 6500, function () {
+        show(reflect[0], 0); title.textContent = "RMC · reflecting on session 14";
       });
-      later(t + 8200, function () { show(reflect[1], paneA, inA); });
-
-      // The lesson is written, then filed in the store.
+      later(t + 7300, function () { show(reflect[1], 0); });
+      later(t + 7900, function () {
+        dockInto(work, gapA, 0, true);
+        later(200, function () { work.el.classList.add("on"); });
+      });
       later(t + 8900, function () {
-        gapA.style.height = "62px";
-        roll(paneA, inA);
-        later(340, function () {
-          flyTo(gapA);
-          float.classList.add("on");
-        });
+        work.el.classList.remove("inline");
+        work.el.classList.add("lift");
+        panes[0].classList.add("dim");
       });
-      later(t + 10000, function () { float.classList.add("lift"); paneA.classList.add("dim"); });
-      later(t + 10900, function () {
-        float.classList.remove("lift");
-        flyTo(storeSlot);
+      later(t + 9800, function () {
+        work.el.classList.remove("lift");
+        at(work, storeSlot);
+      });
+      later(t + 10600, function () {
+        work.el.classList.remove("on");
+        store.el.classList.add("on");
         storeSlot.classList.add("full");
-        storeNote.textContent = "1 lesson · 260 tok";
+        storeNote.textContent = "1 lesson · L0 · 260 tok";
       });
 
-      // Session two.
-      later(t + 12300, function () {
-        tab(1);
-        paneA.classList.add("gone");
-        title.textContent = "Add retry to the payments client";
-        foot.textContent = "";
-      });
-      later(t + 12900, function () {
-        typeInto(PROMPT_B, 42, function () {
-          typed.textContent = "";
-          show(userB, paneB, inB);
+      /* A later session: a COPY is injected, the work succeeds, and the
+         compaction that follows produces a NEW card at the foot of the
+         transcript. What is already in context stays exactly as it was. */
+      function act(S, idx, prompt, level, startAt, titleText, doneText) {
+        later(startAt, function () {
+          tab(idx);
+          panes.forEach(function (p, i) { p.classList.toggle("gone", i !== idx); });
+          title.textContent = titleText;
+          foot.textContent = "";
         });
-      });
-      var u = t + 12900 + PROMPT_B.length * 42 + 920;
+        later(startAt + 450, function () {
+          typeInto(prompt, 38, function () { typed.textContent = ""; show(S.user, idx); });
+        });
+        var u = startAt + 450 + prompt.length * 38 + 760;
 
-      later(u + 200, function () { show(recall, paneB, inB); });
-      later(u + 900, function () {
-        recallTxt.textContent = "RMC · 1 lesson · 260 tok";
-        storeSlot.classList.remove("full");
-        storeNote.textContent = "recalled";
-        flyTo(slotB);
-      });
-      later(u + 1800, function () { show(actB[0], paneB, inB); });
-      later(u + 2400, function () { show(actB[1], paneB, inB); });
-      later(u + 3100, function () { show(actB[2], paneB, inB); });
-      later(u + 3600, function () { foot.textContent = "340 tokens · first try"; });
+        later(u + 150, function () { show(S.recall, idx); });
+        later(u + 750, function () {
+          S.txt.textContent = "RMC · 1 lesson · L" + level + " · " + TOK[level] + " tok";
+          ctx.level(level);
+          ctx.el.className = "lesson-card floating";
+          at(ctx, storeSlot, true);           // the copy starts at the store…
+          ctx.el.classList.add("on");
+          requestAnimationFrame(function () { dockInto(ctx, S.gapTop, idx); });
+          storeNote.textContent = "1 lesson · L" + level + " · " + TOK[level] + " tok · recalled";
+        });
 
-      // Used, and it worked — so it earns a shorter form on the way back.
-      later(u + 4300, function () { show(compactLine, paneB, inB); });
-      later(u + 5100, function () {
-        float.classList.add("compacting");
-        lText.textContent = LESSON_SHORT;
-        lTok.textContent = "146";
-        later(60, function () { flyTo(slotB); });
-      });
-      later(u + 6100, function () {
-        float.classList.remove("compacting");
-        flyTo(storeSlot);
-        storeSlot.classList.add("full");
-        storeNote.textContent = "1 lesson · 146 tok";
-      });
-      later(u + 6900, function () { foot.textContent = "next recall costs 44% less"; });
+        var k = u + 1700;
+        S.rows.forEach(function (r, i) { later(k + i * 600, function () { show(r, idx); }); });
+        k += S.rows.length * 600;
+        later(k + 250, function () {
+          foot.textContent = (level === 0 ? "340" : "290") + " tokens · first try";
+        });
+        later(k + 800, function () { show(S.comp, idx); });
 
-      later(u + 10500, run);
+        // the new, shorter lesson is written at the end of the session
+        later(k + 1300, function () {
+          work.level(level);
+          work.el.className = "lesson-card floating";
+          dockInto(work, S.gapEnd, idx, true);
+          later(180, function () { work.el.classList.add("on"); });
+        });
+        later(k + 2000, function () { compress(work, level, level + 1, S.gapEnd, idx); });
+        later(k + 4300, function () {
+          work.el.classList.remove("inline");
+          at(work, storeSlot);
+        });
+        later(k + 5100, function () {
+          work.el.classList.remove("on");
+          store.level(level + 1);
+          storeNote.textContent = "1 lesson · L" + (level + 1) + " · " + TOK[level + 1] + " tok";
+        });
+        later(k + 5500, function () { foot.textContent = doneText; });
+        return k + 5500;
+      }
+
+      var e1 = act(B, 1, PROMPT_B, 0, t + 12000, "Add retry to the payments client",
+                   "260 → 146 tok · 44% cheaper to recall");
+      var e2 = act(C, 2, PROMPT_C, 1, e1 + 1600, "Same for the webhook sender",
+                   "started at 260 · now 92 · same behaviour");
+      later(e2 + 4200, run);
     }
 
     if (REDUCED) {
       reset();
-      tab(1);
-      paneA.classList.add("gone");
-      lText.textContent = LESSON_SHORT; lTok.textContent = "146";
-      recallTxt.textContent = "RMC · 1 lesson · 146 tok";
-      [recall, userB].concat(actB).forEach(function (n) { n.classList.add("on"); });
+      tab(2);
+      panes.forEach(function (p, i) { p.classList.toggle("gone", i !== 2); });
+      ctx.level(1); C.txt.textContent = "RMC · 1 lesson · L1 · 146 tok";
+      C.all.forEach(function (n) { n.classList.add("on"); });
+      dockInto(ctx, C.gapTop, 2, true); ctx.el.classList.add("on");
+      store.level(2); store.el.classList.add("on");
       storeSlot.classList.add("full");
-      storeNote.textContent = "1 lesson · 146 tok";
-      float.classList.add("on");
-      flyTo(storeSlot);
-      title.textContent = "Add retry to the payments client";
-      foot.textContent = "340 tokens · first try";
+      storeNote.textContent = "1 lesson · L2 · 92 tok";
+      title.textContent = "Same for the webhook sender";
+      foot.textContent = "started at 260 · now 92 · same behaviour";
       return;
     }
 
     var frame = 0;
     setInterval(function () { spin.textContent = SPIN[frame++ % SPIN.length]; }, 260);
-
     var replay = q("[data-replay]");
     if (replay) replay.addEventListener("click", run);
 
