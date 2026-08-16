@@ -8,7 +8,11 @@ venv/
 .pytest_cache/
 .DS_Store
 
-# RMC runtime store (nodes are data, not source). Keep examples/ committed.
+# RMC's own store, ignored here because this repo's lessons are about RMC
+# development rather than something to ship. In a normal project you usually
+# WANT to commit .rmc/nodes and .rmc/episodes so the team shares the lessons and
+# their regression corpus — `.rmc/.gitignore` already excludes the machine-local
+# parts (sessions/, events.jsonl). See docs/integration.md.
 .rmc/
 !examples/**/.rmc/
 sandbox/
