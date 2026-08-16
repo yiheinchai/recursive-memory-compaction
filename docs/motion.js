@@ -35,9 +35,17 @@
     { t: " on 5xx and timeouts",                      lv: [0, 1] },
     { t: ", 3 attempts, backoff 100 / 400 / 1600 ms", lv: [0] },
     { t: ". S3 answers 200 with the error in the body, so parse the body, not the status code.", lv: [0, 1] },
-    { t: "; parse bodies, not status codes.",         lv: [2] }
+    { t: "; parse bodies, not status codes.",         lv: [2] },
+    // level 3 is the shared parent the merge produces
+    { t: "Key every outbound call for idempotency before retrying it, and judge success from the body, not the status.", lv: [3] }
   ];
-  var TOK = [260, 146, 92];
+  var TOK = [260, 146, 92, 118];
+
+  /* A second lesson, learned in a different repo. It never compresses on its
+     own here — its role is to be needed alongside the first one, which is what
+     earns the pair a shared parent. */
+  var SEGS_B = [{ t: "Give every outbound request an idempotency key before you retry it.", lv: [0] }];
+  var TOK_B = [92];
 
   var MARK = { user: "›", status: "✱", bullet: "⏺", recall: "⋯" };
 
@@ -121,12 +129,13 @@
   var SPIN = ["◐", "◓", "◑", "◒"];
 
   function terminal(root) {
-    var q = function (s) { return root.querySelector(s); };
+    var q = function (sel) { return root.querySelector(sel); };
     var stage = q(".cc-stage");
     var panes = [q("[data-pane='0']"), q("[data-pane='1']"), q("[data-pane='2']")];
     var ins = panes.map(function (p) { return p.querySelector(".pane-in"); });
+    var panY = [0, 0, 0];
     var tabs = root.querySelectorAll("[data-tab]");
-    var storeSlot = q("[data-store-slot]");
+    var slots = root.querySelectorAll("[data-store-slot]");
     var storeNote = q("[data-store-note]");
     var typed = q("[data-typed]");
     var title = q("[data-term-title]");
@@ -134,45 +143,66 @@
     var spin = q("[data-term-spin]");
     var rushTag = q("[data-rush-tag]");
 
-    /* Three separate cards, because they are three separate things:
-         store  — what is on disk
-         ctx    — the copy injected into a session; once written it is history
-         work   — the new, shorter lesson compaction produces off-thread
-       Shortening the copy already sitting in the transcript would be a lie. */
-    function makeCard(cls) {
-      var el = h("div", cls);
+    /* Cards are REAL children of wherever they live — a line in the transcript
+       or a row in the store. Nothing is absolutely positioned over the
+       terminal, so nothing can drift out of sync when the transcript scrolls.
+       Movement is animated by flying a throwaway ghost along the path while
+       the real element sits, hidden, at its destination. */
+    function makeCard(SPEC, TOKS) {
+      SPEC = SPEC || SEGS; TOKS = TOKS || TOK;
+      var el = h("div", "lesson-card");
       var text = h("span", "lf-text");
-      var segs = SEGS.map(function (sg) {
+      var segs = SPEC.map(function (sg) {
         var sp = h("span", "seg", sg.t);
         text.appendChild(sp);
         return sp;
       });
-      var tok = h("b", null, String(TOK[0]));
+      var tok = h("b", null, String(TOKS[0]));
       var wrap = h("span", "lf-tok");
       wrap.appendChild(tok);
       wrap.appendChild(document.createTextNode(" tok"));
-      el.appendChild(text);
-      el.appendChild(wrap);
+      el.appendChild(text); el.appendChild(wrap);
       return {
-        el: el, segs: segs, tok: tok,
+        el: el, segs: segs, tok: tok, spec: SPEC, toks: TOKS,
         level: function (n) {
           segs.forEach(function (sp, i) {
             sp.classList.remove("dropping");
-            sp.style.display = SEGS[i].lv.indexOf(n) >= 0 ? "" : "none";
+            sp.style.display = SPEC[i].lv.indexOf(n) >= 0 ? "" : "none";
           });
-          tok.textContent = TOK[n];
+          tok.textContent = TOKS[n];
         }
       };
     }
 
-    var store = makeCard("lesson-card in-store");
-    var ctx = makeCard("lesson-card floating");
-    var work = makeCard("lesson-card floating");
-    storeSlot.appendChild(store.el);
-    stage.appendChild(ctx.el);
-    stage.appendChild(work.el);
+    var ctx   = makeCard();
+    var ctxB  = makeCard(SEGS_B, TOK_B);
+    var work  = makeCard();
+    var workB = makeCard(SEGS_B, TOK_B);
+    var cards = [ctx, ctxB, work, workB];
+    var limbo = h("div", "limbo");
+    stage.appendChild(limbo);
+    cards.forEach(function (c) { limbo.appendChild(c.el); });
+
+    var tiers = root.querySelectorAll("[data-store-slot]");   // [L2, L1, L0]
+    function tierFor(level) { return tiers[2 - level]; }
+
+    /* Park a card in the store tree as a permanent node, and mark whichever
+       level is now the apex — the only row recall ever reads. */
+    function fileAt(card, level) {
+      travel(card, tierFor(level), "in-store stored");
+      later(20, function () { markApex(level); });
+    }
+    function markApex(level) {
+      Array.prototype.forEach.call(root.querySelectorAll(".tier"), function (t) {
+        var lv = Number(t.getAttribute("data-tier"));
+        t.classList.toggle("live", t.querySelector(".lesson-card") !== null);
+        t.classList.toggle("apex", lv === level);
+      });
+    }
 
     // ---- transcripts -----------------------------------------------------
+    function mount() { return h("div", "lesson-mount"); }
+
     var userA = row({ kind: "user", text: PROMPT_A });
     var openA = OPEN_A.map(row);
     var grind = GRIND.concat(GRIND, GRIND).map(function (t) {
@@ -182,26 +212,27 @@
     });
     var closeA = CLOSE_A.map(row);
     var reflect = REFLECT.map(row);
-    var gapA = h("div", "lesson-gap");
-    [userA].concat(openA, grind, closeA, reflect, [gapA])
+    var mountA = mount();
+    [userA].concat(openA, grind, closeA, reflect, [mountA])
       .forEach(function (n) { ins[0].appendChild(n); });
 
-    function session(prompt, acts) {
+    function session(prompt, acts, isPair) {
       var recall = row({ kind: "recall", text: "Recalling lessons…" });
-      var gapTop = h("div", "lesson-gap");
+      var top = mount(), end = mount();
       var user = row({ kind: "user", text: prompt });
       var rows = acts.map(row);
-      var comp = row({ kind: "recall", text: "RMC · lesson used, work succeeded · compacting off-thread…" });
-      var gapEnd = h("div", "lesson-gap");
+      var comp = row({ kind: "recall", text: isPair
+        ? "RMC · both lessons used together, 3rd time · merging into a shared parent…"
+        : "RMC · lesson used, work succeeded · compacting off-thread…" });
       return {
         recall: recall, txt: recall.querySelector(".txt"),
-        gapTop: gapTop, gapEnd: gapEnd, user: user, rows: rows, comp: comp,
+        top: top, end: end, user: user, rows: rows, comp: comp,
         all: [recall, user].concat(rows, [comp]),
-        nodes: [recall, gapTop, user].concat(rows, [comp, gapEnd])
+        nodes: [recall, top, user].concat(rows, [comp, end])
       };
     }
-    var B = session(PROMPT_B, ACT_B);
-    var C = session(PROMPT_C, ACT_C);
+    var B = session(PROMPT_B, ACT_B, false);
+    var C = session(PROMPT_C, ACT_C, true);
     B.nodes.forEach(function (n) { ins[1].appendChild(n); });
     C.nodes.forEach(function (n) { ins[2].appendChild(n); });
 
@@ -214,9 +245,10 @@
 
     function roll(i, ms) {
       var over = Math.max(0, ins[i].offsetHeight - (panes[i].clientHeight - 30));
+      panY[i] = -over;
       ins[i].style.transition = ms ? "transform " + ms + "ms linear"
                                    : "transform .38s cubic-bezier(.4,0,.2,1)";
-      ins[i].style.transform = "translateY(" + (-over) + "px)";
+      ins[i].style.transform = "translateY(" + panY[i] + "px)";
     }
     function show(n, i) { n.classList.add("on"); if (i != null) roll(i); }
     function typeInto(text, ms, done) {
@@ -234,72 +266,97 @@
       cc.classList.toggle("on-b", n === 1);
       cc.classList.toggle("on-c", n === 2);
     }
-    function at(card, target, quiet) {
-      var s = stage.getBoundingClientRect(), t = target.getBoundingClientRect();
-      if (quiet) card.el.style.transition = "none";
-      card.el.style.width = t.width + "px";
-      card.el.style.transform = "translate(" + (t.left - s.left) + "px," + (t.top - s.top) + "px)";
-      if (quiet) { void card.el.offsetWidth; card.el.style.transition = ""; }
+
+    /* Move a card for real, then fly a ghost along the path it took. The pane
+       scroll is applied first and its delta folded into the target, or the
+       ghost would land where the transcript used to be. */
+    function travel(card, dest, cls, paneIdx) {
+      var el = card.el;
+      var first = el.getBoundingClientRect();
+      var wasVisible = first.width > 0 && el.offsetParent !== null && !el.classList.contains("hidden");
+      var prevY = paneIdx != null ? panY[paneIdx] : 0;
+
+      el.className = "lesson-card " + (cls || "");
+      dest.appendChild(el);
+      if (paneIdx != null) roll(paneIdx);
+
+      var last = el.getBoundingClientRect();
+      var shiftY = paneIdx != null ? (panY[paneIdx] - prevY) : 0;
+      if (!wasVisible) { el.classList.add("pop"); return; }
+
+      var sr = stage.getBoundingClientRect();
+      var ghost = el.cloneNode(true);
+      ghost.className = el.className + " ghost";
+      ghost.style.left = (first.left - sr.left) + "px";
+      ghost.style.top = (first.top - sr.top) + "px";
+      ghost.style.width = first.width + "px";
+      stage.appendChild(ghost);
+      el.style.visibility = "hidden";
+      void ghost.offsetWidth;
+      ghost.style.transform = "translate(" + (last.left - first.left) + "px," +
+                              (last.top + shiftY - first.top) + "px)";
+      later(760, function () {
+        if (ghost.parentNode) ghost.parentNode.removeChild(ghost);
+        el.style.visibility = "";
+      });
     }
-    function dockInto(card, gap, paneIdx, quiet) {
-      card.el.classList.add("inline");
-      card.el.style.width = (panes[paneIdx].clientWidth - 36) + "px";
-      gap.style.height = (card.el.offsetHeight + 10) + "px";
-      roll(paneIdx);
-      at(card, gap, quiet);
-    }
-    function countTo(card, to) {
-      var from = Number(card.tok.textContent) || to, t0 = null;
+
+    function countCard(card, from, to, ms) {
+      var t0 = null;
       requestAnimationFrame(function tick(now) {
         if (t0 === null) t0 = now;
-        var k = Math.min(1, (now - t0) / 750);
+        var k = Math.min(1, (now - t0) / (ms || 750));
         card.tok.textContent = Math.round(from + (to - from) * (1 - Math.pow(1 - k, 3)));
-        if (k < 1) requestAnimationFrame(tick); else card.tok.textContent = TOK[to === TOK[1] ? 1 : 2];
+        if (k < 1) requestAnimationFrame(tick); else card.tok.textContent = to;
       });
     }
 
     /* Strike what is going, sweep, let it leave, reflow tighter. */
-    function compress(card, from, to, gap, paneIdx) {
+    function compress(card, from, to, paneIdx) {
       card.el.classList.add("compacting");
       card.segs.forEach(function (sp, i) {
-        if (SEGS[i].lv.indexOf(from) >= 0 && SEGS[i].lv.indexOf(to) < 0) sp.classList.add("dropping");
+        if (card.spec[i].lv.indexOf(from) >= 0 && card.spec[i].lv.indexOf(to) < 0) {
+          sp.classList.add("dropping");
+        }
       });
       later(1050, function () {
+        var was = Number(card.tok.textContent);
         card.level(to);
-        var t0 = null, fromTok = TOK[from];
-        requestAnimationFrame(function tick(now) {
-          if (t0 === null) t0 = now;
-          var k = Math.min(1, (now - t0) / 700);
-          card.tok.textContent = Math.round(fromTok + (TOK[to] - fromTok) * (1 - Math.pow(1 - k, 3)));
-          if (k < 1) requestAnimationFrame(tick); else card.tok.textContent = TOK[to];
-        });
-        gap.style.height = (card.el.offsetHeight + 10) + "px";
+        countCard(card, was, TOK[to], 700);
         roll(paneIdx);
-        at(card, gap);
       });
       later(2000, function () { card.el.classList.remove("compacting"); });
     }
 
     function reset() {
       clearAll();
+      Array.prototype.forEach.call(stage.querySelectorAll(".ghost"), function (g) {
+        g.parentNode.removeChild(g);
+      });
+      Array.prototype.forEach.call(root.querySelectorAll(".merge-row"), function (r) {
+        r.parentNode.removeChild(r);
+      });
       lines.forEach(function (n) { n.classList.remove("on"); });
-      ins.forEach(function (n) { n.style.transition = ""; n.style.transform = ""; });
+      ins.forEach(function (n, i) { n.style.transition = ""; n.style.transform = ""; panY[i] = 0; });
       panes[0].classList.remove("dim", "rushing");
       panes.forEach(function (p) { p.classList.remove("gone"); });
       rushTag.classList.remove("on");
-      [gapA, B.gapTop, B.gapEnd, C.gapTop, C.gapEnd].forEach(function (g) { g.style.height = "0px"; });
-      [ctx, work].forEach(function (c) {
-        c.el.className = "lesson-card floating";
-        c.el.style.transform = ""; c.el.style.width = "";
+      cards.forEach(function (c) {
+        c.el.className = "lesson-card";
+        c.el.style.visibility = "";
+        limbo.appendChild(c.el);
         c.level(0);
       });
-      store.el.className = "lesson-card in-store";
-      store.level(0);
-      storeSlot.classList.remove("full");
-      storeNote.textContent = "empty";
+      Array.prototype.forEach.call(tiers, function (sl) {
+        while (sl.firstChild) sl.removeChild(sl.firstChild);
+      });
+      Array.prototype.forEach.call(root.querySelectorAll(".tier"), function (t) {
+        t.classList.remove("live", "apex");
+      });
       typed.textContent = ""; foot.textContent = "";
       B.txt.textContent = "Recalling lessons…";
       C.txt.textContent = "Recalling lessons…";
+      storeNote.textContent = "empty";
       title.textContent = "Fix the silent S3 retry failure";
       tab(0);
     }
@@ -336,30 +393,16 @@
         show(reflect[0], 0); title.textContent = "RMC · reflecting on session 14";
       });
       later(t + 7300, function () { show(reflect[1], 0); });
-      later(t + 7900, function () {
-        dockInto(work, gapA, 0, true);
-        later(200, function () { work.el.classList.add("on"); });
-      });
-      later(t + 8900, function () {
-        work.el.classList.remove("inline");
-        work.el.classList.add("lift");
-        panes[0].classList.add("dim");
-      });
-      later(t + 9800, function () {
+      later(t + 7900, function () { work.level(0); travel(work, mountA, "inline", 0); });
+      later(t + 8900, function () { work.el.classList.add("lift"); panes[0].classList.add("dim"); });
+      later(t + 9700, function () {
         work.el.classList.remove("lift");
-        at(work, storeSlot);
-      });
-      later(t + 10600, function () {
-        work.el.classList.remove("on");
-        store.el.classList.add("on");
-        storeSlot.classList.add("full");
-        storeNote.textContent = "1 lesson · L0 · 260 tok";
+        fileAt(work, 0);
+        storeNote.textContent = "1 lesson · apex L0 · 260 tok";
+        work = makeCard(); limbo.appendChild(work.el);   // next session needs a fresh one
       });
 
-      /* A later session: a COPY is injected, the work succeeds, and the
-         compaction that follows produces a NEW card at the foot of the
-         transcript. What is already in context stays exactly as it was. */
-      function act(S, idx, prompt, level, startAt, titleText, doneText) {
+      function act(S, idx, prompt, level, startAt, titleText, doneText, pair) {
         later(startAt, function () {
           tab(idx);
           panes.forEach(function (p, i) { p.classList.toggle("gone", i !== idx); });
@@ -373,13 +416,28 @@
 
         later(u + 150, function () { show(S.recall, idx); });
         later(u + 750, function () {
-          S.txt.textContent = "RMC · 1 lesson · L" + level + " · " + TOK[level] + " tok";
+          var total = pair ? TOK[level] + TOK_B[0] : TOK[level];
+          S.txt.textContent = pair
+            ? "RMC · 2 lessons · " + total + " tok"
+            : "RMC · 1 lesson · L" + level + " · " + TOK[level] + " tok";
           ctx.level(level);
-          ctx.el.className = "lesson-card floating";
-          at(ctx, storeSlot, true);           // the copy starts at the store…
-          ctx.el.classList.add("on");
-          requestAnimationFrame(function () { dockInto(ctx, S.gapTop, idx); });
-          storeNote.textContent = "1 lesson · L" + level + " · " + TOK[level] + " tok · recalled";
+          ctx.el.className = "lesson-card";
+          limbo.appendChild(ctx.el);
+          var src = tierFor(level).firstChild;
+          if (src) {                        // start the copy where the node sits
+            var r = src.getBoundingClientRect(), sr0 = stage.getBoundingClientRect();
+            ctx.el.className = "lesson-card in-store stored";
+            tierFor(level).appendChild(ctx.el);
+          }
+          travel(ctx, S.top, "inline", idx);
+          if (pair) {
+            ctxB.level(0);
+            ctxB.el.className = "lesson-card in-store stored";
+            tierFor(level).appendChild(ctxB.el);
+            travel(ctxB, S.top, "inline", idx);
+          }
+          storeNote.textContent = (pair ? "2 lessons · " : "1 lesson · L" + level + " · ") +
+                                  total + " tok · recalled";
         });
 
         var k = u + 1700;
@@ -390,31 +448,71 @@
         });
         later(k + 800, function () { show(S.comp, idx); });
 
-        // the new, shorter lesson is written at the end of the session
+        if (!pair) {
+          later(k + 1300, function () { work.level(level); travel(work, S.end, "inline", idx); });
+          later(k + 2000, function () { compress(work, level, level + 1, idx); });
+          later(k + 4200, function () {
+            fileAt(work, level + 1);
+            storeNote.textContent = "1 lesson · apex L" + (level + 1) + " · " + TOK[level + 1] + " tok";
+            work = makeCard(); limbo.appendChild(work.el);
+          });
+          later(k + 5400, function () { foot.textContent = doneText; });
+          return k + 5400;
+        }
+
+        /* Both were used, so they earn a shared parent. The two lessons are
+           written side by side at the foot of the transcript, slide into each
+           other, and what comes out is one new lesson. */
+        var row2 = h("div", "merge-row");
+        var burst = h("span", "burst");
         later(k + 1300, function () {
-          work.level(level);
-          work.el.className = "lesson-card floating";
-          dockInto(work, S.gapEnd, idx, true);
-          later(180, function () { work.el.classList.add("on"); });
+          work.level(level); workB.level(0);
+          row2.appendChild(burst);
+          S.end.appendChild(row2);
+          travel(work, row2, "inline merge-a", idx);
+          travel(workB, row2, "inline merge-b", idx);
         });
-        later(k + 2000, function () { compress(work, level, level + 1, S.gapEnd, idx); });
-        later(k + 4300, function () {
-          work.el.classList.remove("inline");
-          at(work, storeSlot);
+        later(k + 2400, function () { row2.classList.add("armed"); });
+        later(k + 2900, function () { row2.classList.add("clash"); });
+        later(k + 3450, function () {
+          var was = TOK[level] + TOK_B[0];
+          row2.classList.add("boom");
+          workB.el.className = "lesson-card";
+          limbo.appendChild(workB.el);
+          row2.classList.remove("clash", "armed");
+          work.el.className = "lesson-card inline merge-a born";
+          work.level(3);
+          countCard(work, was, TOK[3], 850);
+          roll(idx);
         });
-        later(k + 5100, function () {
-          work.el.classList.remove("on");
-          store.level(level + 1);
-          storeNote.textContent = "1 lesson · L" + (level + 1) + " · " + TOK[level + 1] + " tok";
+        later(k + 4400, function () {
+          row2.classList.remove("boom");
+          work.el.classList.remove("born");
         });
-        later(k + 5500, function () { foot.textContent = doneText; });
-        return k + 5500;
+        later(k + 4900, function () {
+          fileAt(work, 2);
+          storeNote.textContent = "3 nodes · apex L2 · shared parent · " + TOK[3] + " tok";
+          work = makeCard(); limbo.appendChild(work.el);
+        });
+        later(k + 6100, function () { foot.textContent = doneText; });
+        return k + 6100;
       }
 
       var e1 = act(B, 1, PROMPT_B, 0, t + 12000, "Add retry to the payments client",
-                   "260 → 146 tok · 44% cheaper to recall");
-      var e2 = act(C, 2, PROMPT_C, 1, e1 + 1600, "Same for the webhook sender",
-                   "started at 260 · now 92 · same behaviour");
+                   "260 → 146 tok · 44% cheaper to recall", false);
+
+      // Something learned in a different repo lands in the same global store.
+      later(e1 + 700, function () {
+        var b = makeCard(SEGS_B, TOK_B);
+        limbo.appendChild(b.el);
+        b.level(0);
+        fileAt(b, 1);
+        tierFor(1).classList.add("landed");
+        later(1000, function () { tierFor(1).classList.remove("landed"); });
+        storeNote.textContent = "2 lessons · +1 learned in another repo";
+      });
+      var e2 = act(C, 2, PROMPT_C, 1, e1 + 2400, "Same for the webhook sender",
+                   "2 lessons · 238 tok  →  one shared parent · 118 tok", true);
       later(e2 + 4200, run);
     }
 
@@ -422,14 +520,23 @@
       reset();
       tab(2);
       panes.forEach(function (p, i) { p.classList.toggle("gone", i !== 2); });
-      ctx.level(1); C.txt.textContent = "RMC · 1 lesson · L1 · 146 tok";
+      ctx.level(1); ctxB.level(0);
+      C.txt.textContent = "RMC · 2 lessons · 238 tok";
       C.all.forEach(function (n) { n.classList.add("on"); });
-      dockInto(ctx, C.gapTop, 2, true); ctx.el.classList.add("on");
-      store.level(2); store.el.classList.add("on");
-      storeSlot.classList.add("full");
-      storeNote.textContent = "1 lesson · L2 · 92 tok";
+      C.top.appendChild(ctx.el); ctx.el.className = "lesson-card inline";
+      C.top.appendChild(ctxB.el); ctxB.el.className = "lesson-card inline";
+      var m = makeCard(); m.level(3);
+      tierFor(2).appendChild(m.el); m.el.className = "lesson-card in-store stored";
+      var a1 = makeCard(); a1.level(1);
+      tierFor(1).appendChild(a1.el); a1.el.className = "lesson-card in-store stored";
+      var b1 = makeCard(SEGS_B, TOK_B); b1.level(0);
+      tierFor(1).appendChild(b1.el); b1.el.className = "lesson-card in-store stored";
+      var a0 = makeCard(); a0.level(0);
+      tierFor(0).appendChild(a0.el); a0.el.className = "lesson-card in-store stored";
+      markApex(2);
+      storeNote.textContent = "3 nodes · apex L2 · shared parent · " + TOK[3] + " tok";
       title.textContent = "Same for the webhook sender";
-      foot.textContent = "started at 260 · now 92 · same behaviour";
+      foot.textContent = "2 lessons · 238 tok  →  one shared parent · 118 tok";
       return;
     }
 

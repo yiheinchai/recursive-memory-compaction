@@ -282,21 +282,94 @@ figure.fig { margin: 0 0 30px; }
   padding: 0 0 8px;
 }
 .store-head .store-note { color: var(--ink); font: inherit; letter-spacing: inherit; }
-.store-slot {
-  min-height: 62px;
-  margin: 0 18px;
-  border: 1px dashed #cfcfcf;
-  background: #fbfbfb;
-  transition: border-color .3s ease, background .3s ease;
+/* The store drawn as what it is: a lineage. Each compaction files a node one
+   level up, and the ones underneath stay reachable forever — which is the
+   clearest way to show that nothing is ever deleted. */
+.store-tree { margin: 0 18px; }
+.tier {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  min-height: 34px;
+  padding: 5px 0;
+  position: relative;
 }
-.store-slot.full { border-color: transparent; background: transparent; }
+.tier .lv {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .12em;
+  color: #c2c2c2;
+  padding-top: 9px;
+  transition: color .3s ease;
+}
+.tier.live .lv { color: var(--faint); }
+.tier.apex .lv { color: var(--ink); }
+
+/* the rail, with a tick at every level that holds a node */
+.tier::before {
+  content: "";
+  position: absolute;
+  left: 25px; top: 0; bottom: 0;
+  border-left: 1px solid #e4e4e4;
+}
+.tier:first-child::before { top: 16px; }
+.tier:last-child::before  { bottom: calc(100% - 18px); }
+.tier.live::after {
+  content: "";
+  position: absolute;
+  left: 22px; top: 15px;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #d0d0d0;
+  transition: background .3s ease, box-shadow .3s ease;
+}
+.tier.apex::after { background: var(--ink); box-shadow: 0 0 0 3px rgba(0,0,0,.07); }
+
+.tier-cards {
+  display: flex;
+  gap: 10px;
+  min-height: 30px;
+  align-items: stretch;
+}
+.tier-cards:empty {
+  border: 1px dashed #e0e0e0;
+  background: #fbfbfb;
+}
+.tier-cards > .lesson-card { flex: 1 1 0; min-width: 0; }
+
+/* nodes below the apex are kept, but they are not what recall pays for */
+.lesson-card.stored {
+  font-size: 12px;
+  padding: 7px 12px;
+  opacity: .42;
+  transition: opacity .4s ease, background .4s ease;
+}
+.tier.apex .lesson-card.stored { opacity: 1; }
+.tier.landed .lesson-card { animation: land .9s ease 1; }
+@keyframes land {
+  0%   { box-shadow: 0 0 0 0 rgba(217,119,87,0); }
+  40%  { box-shadow: 0 0 0 3px rgba(217,119,87,.55); }
+  100% { box-shadow: 0 0 0 0 rgba(217,119,87,0); }
+}
+
+/* Two cards closing on each other, about to become one. */
+.lesson-card.merging {
+  box-shadow: 0 0 0 1px rgba(217,119,87,.9), 0 0 34px rgba(217,119,87,.32);
+  z-index: 3;
+}
 
 /* --- the lesson, lifted out of one tab and dropped into the other --- */
 
-/* One card design, three instances: what is on disk, the copy injected into a
-   session, and the shorter one compaction writes. They are separate objects
-   because they are separate things — the copy in a transcript is history and
-   must never be rewritten under the reader. */
+/* One card design, several instances: what is on disk, the copies injected
+   into a session, and the shorter ones compaction writes. Each is a REAL child
+   of wherever it lives — a line in the transcript, a row in the store — so it
+   scrolls and reflows with its container. Nothing is parked on top of the
+   terminal, which is what used to drift out of sync and overlap. */
+.limbo { display: none; }
+.lesson-mount:empty { display: none; }
+.lesson-mount { margin-bottom: 9px; }
+
 .lesson-card {
   box-sizing: border-box;
   display: flex; align-items: flex-start; gap: 14px;
@@ -317,34 +390,37 @@ figure.fig { margin: 0 0 30px; }
 }
 .lesson-card .lf-tok b { color: #d2d2d8; font-weight: 400; }
 
-.lesson-card.floating {
-  position: absolute;
-  top: 0; left: 0;
-  width: 200px;
-  opacity: 0;
-  transform-origin: 0 0;
-  transition: opacity .35s ease,
-              transform .78s cubic-bezier(.45,0,.2,1),
-              box-shadow .4s ease,
-              background .4s ease,
-              padding .4s ease;
-}
-.lesson-card.floating.on { opacity: 1; }
-
-/* Inside the terminal it is a transcript line, not a panel resting on one. */
+/* In the transcript it is a line, not a panel resting on one. */
 .lesson-card.inline {
   background: transparent;
-  box-shadow: none;
   padding: 3px 0 3px 12px;
+  box-shadow: none;
+}
+.lesson-card.inline + .lesson-card.inline { margin-top: 6px; }
+.lesson-card.in-store + .lesson-card.in-store { margin-top: 8px; }
+
+.lesson-card.pop { animation: cardIn .4s cubic-bezier(.2,.7,.3,1) both; }
+@keyframes cardIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; } }
+
+/* The travelling copy: a throwaway clone, free of any overflow clipping. */
+.ghost {
+  position: absolute;
+  z-index: 60;
+  margin: 0 !important;
+  pointer-events: none;
+  transition: transform .75s cubic-bezier(.45,0,.2,1);
+  box-shadow: 0 18px 36px rgba(0,0,0,.5);
 }
 
-.lesson-card.in-store { opacity: 0; transition: opacity .35s ease; }
-.lesson-card.in-store.on { opacity: 1; }
+.lesson-card.lift {
+  box-shadow: 0 18px 36px rgba(0,0,0,.55), 0 0 0 1px rgba(217,119,87,.65);
+  background: #24242b;
+  padding: 10px 14px;
+  transition: box-shadow .4s ease, background .4s ease, padding .4s ease;
+}
 
-.lesson-card.lift { box-shadow: 0 18px 36px rgba(0,0,0,.55), 0 0 0 1px rgba(217,119,87,.65); }
-
-/* Compaction, made watchable: the clauses on their way out are struck through
-   in the accent colour, a sweep runs across the card, then they leave and the
+/* Compaction, made watchable: the clauses on their way out strike through in
+   the accent colour, a sweep runs across the card, then they leave and the
    text reflows tighter. */
 .lesson-card .seg { transition: color .3s ease, opacity .3s ease; }
 .lesson-card .seg.dropping {
@@ -353,9 +429,11 @@ figure.fig { margin: 0 0 30px; }
   text-decoration-thickness: 1px;
 }
 .lesson-card.compacting {
-  position: absolute;
-  box-shadow: 0 0 0 1px rgba(217,119,87,.9), 0 0 30px rgba(217,119,87,.3);
+  position: relative;
   overflow: hidden;
+  background: #24242b;
+  padding: 10px 14px;
+  box-shadow: 0 0 0 1px rgba(217,119,87,.9), 0 0 30px rgba(217,119,87,.3);
 }
 .lesson-card.compacting::after {
   content: "";
@@ -365,6 +443,67 @@ figure.fig { margin: 0 0 30px; }
   animation: sweep .95s cubic-bezier(.4,0,.2,1) 2;
   pointer-events: none;
 }
+
+/* The merge: two lessons side by side, driven into each other, and one new
+   lesson thrown out of the collision. */
+.merge-row {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.merge-row > .lesson-card {
+  flex: 1 1 0;
+  min-width: 0;
+  transition: transform .58s cubic-bezier(.55,0,.25,1),
+              opacity .28s ease,
+              box-shadow .35s ease,
+              background .35s ease,
+              padding .35s ease,
+              flex-basis .5s cubic-bezier(.4,0,.2,1);
+}
+.merge-row.armed > .lesson-card {
+  background: #24242b;
+  padding: 10px 14px;
+  box-shadow: 0 0 0 1px rgba(217,119,87,.85), 0 0 26px rgba(217,119,87,.26);
+}
+.merge-row.clash > .merge-a { transform: translateX(calc(50% + 6px)); }
+.merge-row.clash > .merge-b { transform: translateX(calc(-50% - 6px)); opacity: .55; }
+
+/* the flash at the point of impact */
+.merge-row .burst {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 10px; height: 10px; margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0;
+  transform: scale(0);
+  pointer-events: none;
+  z-index: 4;
+}
+.merge-row.boom .burst { animation: boom .6s cubic-bezier(.15,.85,.3,1) 1; }
+@keyframes boom {
+  0%   { opacity: 1; transform: scale(.5);
+         box-shadow: 0 0 30px 12px rgba(255,255,255,.85), 0 0 60px 26px rgba(217,119,87,.9); }
+  45%  { opacity: .9; }
+  100% { opacity: 0; transform: scale(5);
+         box-shadow: 0 0 70px 0 rgba(255,255,255,0), 0 0 120px 0 rgba(217,119,87,0); }
+}
+
+/* what comes out of the collision */
+.merge-row > .lesson-card.born {
+  animation: born .65s cubic-bezier(.2,.85,.3,1) 1;
+  box-shadow: 0 0 0 1px rgba(217,119,87,.9), 0 0 34px rgba(217,119,87,.34);
+  background: #24242b;
+  padding: 10px 14px;
+}
+@keyframes born {
+  0%   { transform: scale(.92); opacity: .35; }
+  55%  { transform: scale(1.02); opacity: 1; }
+  100% { transform: scale(1); }
+}
+
 @keyframes sweep { from { transform: translateX(-110%); } to { transform: translateX(110%); } }
 .lesson-gap { height: 0; transition: height .3s ease; }
 @keyframes pulse {

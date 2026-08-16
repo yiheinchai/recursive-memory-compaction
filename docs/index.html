@@ -56,55 +56,10 @@
   </div>
 </div>
 
-<!-- ------------------------------------------------------- the same lesson -->
+<!-- ------------------------------------------------------ what a lesson is -->
 <div class="wrap" id="idea">
   <div class="fig-lead">
-    <span class="kicker" style="margin:0">Watch one lesson get shorter</span>
-  </div>
-  <figure class="fig morph" data-morph>
-    <div class="plate">
-      <div class="morph-head">
-        <span data-morph-lv>L0 &middot; first written</span>
-        <span><span class="n" data-morph-tok>260</span> &nbsp;tokens</span>
-      </div>
-      <div class="morph-bar"><i data-morph-bar style="width:100%"></i></div>
-      <div class="morph-slot">
-        <div class="morph-beat" data-morph-beat>&darr; loaded, used &mdash; and the work succeeded</div>
-        <div class="morph-card" data-morph-card><p data-morph-text></p></div>
-      </div>
-      <div class="morph-foot">
-        <span class="morph-drop" data-morph-drop></span>
-        <div class="tree-steps" role="tablist" aria-label="Compression level" style="margin-left:auto">
-          <button role="tab" data-morph-step aria-selected="true">1</button>
-          <button role="tab" data-morph-step aria-selected="false">2</button>
-          <button role="tab" data-morph-step aria-selected="false">3</button>
-        </div>
-      </div>
-    </div>
-    <figcaption>Nothing was deleted. <b>L0 is still there underneath</b>, and each level records which claims it dropped &mdash; so any of them can be pulled back.</figcaption>
-  </figure>
-
-  <div class="two" style="padding:16px 0 clamp(30px,4vw,48px)">
-    <div><h3>That is the whole idea.</h3></div>
-    <div>
-      <p style="color:var(--muted);margin-top:6px">
-        A lesson only gets shorter after it has been loaded,
-        <i>actually used</i>, and the work succeeded — which is proof it
-        contained slack. The candidate has to reproduce real past work before it
-        is allowed to replace anything.
-      </p>
-      <p style="color:var(--muted)">
-        And nothing is thrown away. L0 stays underneath, and L2 records exactly
-        which claims it dropped, so any of them can be pulled back.
-      </p>
-    </div>
-  </div>
-</div>
-
-<!-- ------------------------------------------------------ what a lesson is -->
-<div class="wrap">
-  <div class="fig-lead">
-    <span class="kicker" style="margin:0">Where a lesson comes from — one session, then the next</span>
+    <span class="kicker" style="margin:0">One problem, three sessions, one shrinking lesson</span>
   </div>
   <figure class="fig term-fig" data-term>
     <div class="plate">
@@ -145,12 +100,18 @@
         </div>
 
         <div class="store">
-          <div class="store-head">
-            <span>RMC store &nbsp;·&nbsp; ~/.rmc</span>
-            <span class="store-note" data-store-note>empty</span>
-          </div>
-          <div class="store-slot" data-store-slot></div>
+        <div class="store-head">
+          <span>RMC store &nbsp;·&nbsp; ~/.rmc</span>
+          <span class="store-note" data-store-note>empty</span>
         </div>
+        <div class="store-tree" data-store-tree>
+          <div class="tier" data-tier="2"><span class="lv">L2</span><div class="tier-cards" data-store-slot></div></div>
+          <div class="tier" data-tier="1"><span class="lv">L1</span><div class="tier-cards" data-store-slot></div></div>
+          <div class="tier" data-tier="0"><span class="lv">L0</span><div class="tier-cards" data-store-slot></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
       </div>
     </div>
     <div class="fig-controls">
@@ -168,6 +129,51 @@
         <b style="color:var(--ink)">conclusion</b>, not the transcript. Next time
         the same problem comes up, the conclusion goes into context and the
         session does not.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ------------------------------------------------------- the same lesson -->
+<div class="wrap">
+  <div class="fig-lead">
+    <span class="kicker" style="margin:0">Watch one lesson get shorter</span>
+  </div>
+  <figure class="fig morph" data-morph>
+    <div class="plate">
+      <div class="morph-head">
+        <span data-morph-lv>L0 &middot; first written</span>
+        <span><span class="n" data-morph-tok>260</span> &nbsp;tokens</span>
+      </div>
+      <div class="morph-bar"><i data-morph-bar style="width:100%"></i></div>
+      <div class="morph-slot">
+        <div class="morph-beat" data-morph-beat>&darr; loaded, used &mdash; and the work succeeded</div>
+        <div class="morph-card" data-morph-card><p data-morph-text></p></div>
+      </div>
+      <div class="morph-foot">
+        <span class="morph-drop" data-morph-drop></span>
+        <div class="tree-steps" role="tablist" aria-label="Compression level" style="margin-left:auto">
+          <button role="tab" data-morph-step aria-selected="true">1</button>
+          <button role="tab" data-morph-step aria-selected="false">2</button>
+          <button role="tab" data-morph-step aria-selected="false">3</button>
+        </div>
+      </div>
+    </div>
+    <figcaption>Nothing was deleted. <b>L0 is still there underneath</b>, and each level records which claims it dropped &mdash; so any of them can be pulled back.</figcaption>
+  </figure>
+
+  <div class="two" style="padding:16px 0 clamp(30px,4vw,48px)">
+    <div><h3>That is the whole idea.</h3></div>
+    <div>
+      <p style="color:var(--muted);margin-top:6px">
+        A lesson only gets shorter after it has been loaded,
+        <i>actually used</i>, and the work succeeded — which is proof it
+        contained slack. The candidate has to reproduce real past work before it
+        is allowed to replace anything.
+      </p>
+      <p style="color:var(--muted)">
+        And nothing is thrown away. L0 stays underneath, and L2 records exactly
+        which claims it dropped, so any of them can be pulled back.
       </p>
     </div>
   </div>
