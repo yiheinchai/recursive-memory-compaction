@@ -2,7 +2,19 @@
 # Zero-install entry point. RMC is stdlib-only, so this works straight from a
 # clone — no venv, no pip, nothing to break when the system Python is
 # externally managed. `pip install -e .` also works and provides the same CLI.
+#
+# Resolve symlinks before locating the package: the natural way to get `rmc`
+# onto PATH is to symlink this file into ~/.local/bin, and BASH_SOURCE then
+# points at the symlink, not at the clone.
 set -euo pipefail
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  src="$(readlink "$src")"
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+here="$(cd -P "$(dirname "$src")/.." && pwd)"
+
 PY="${RMC_PYTHON:-python3}"
 exec env PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" "$PY" -m rmc "$@"
