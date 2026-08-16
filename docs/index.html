@@ -112,23 +112,28 @@
         <div class="cc-title">
           <span class="cc-lights"><i class="r"></i><i class="y"></i><i class="g"></i></span>
           <span class="cc-name">
-            <svg width="15" height="13" viewBox="0 0 16 14" aria-hidden="true">
-              <path d="M1 3.2A1.2 1.2 0 0 1 2.2 2h3.4l1.5 1.7h6.7A1.2 1.2 0 0 1 15 4.9v6.9A1.2 1.2 0 0 1 13.8 13H2.2A1.2 1.2 0 0 1 1 11.8z" fill="#5a9ff0"/>
-            </svg>
-            <span class="who">rmc &nbsp;—</span>
+            <svg class="ico" viewBox="0 0 16 14" aria-hidden="true"><path d="M1 3.2A1.2 1.2 0 0 1 2.2 2h3.4l1.5 1.7h6.7A1.2 1.2 0 0 1 15 4.9v6.9A1.2 1.2 0 0 1 13.8 13H2.2A1.2 1.2 0 0 1 1 11.8z" fill="#5a9ff0"/></svg>
+            <span>rmc &nbsp;—</span>
             <span class="spin" data-term-spin>◐</span>
             <span class="t" data-term-title>Fix the silent S3 retry failure</span>
           </span>
         </div>
         <div class="cc-tabs">
-          <span class="tab">…ode-host</span><span class="sep">…</span>
-          <span class="tab">…--resume</span><span class="sep">…</span>
-          <span class="tab on">…59ed585</span><span class="sep">…</span>
-          <span class="tab">.c — -zsh</span>
+          <span class="tab on" data-tab="0">without RMC</span>
+          <span class="sep">…</span>
+          <span class="tab" data-tab="1">with RMC</span>
           <span class="plus">+</span>
         </div>
-        <div class="cc-body" data-term-body></div>
-        <div class="cc-input"><span>›</span><span class="cc-caret"></span></div>
+        <div class="cc-body">
+          <div class="pane" data-pane="0"><div class="pane-in"></div></div>
+          <div class="pane" data-pane="1"><div class="pane-in"></div></div>
+          <div class="lesson-float" data-lesson></div>
+        </div>
+        <div class="cc-input">
+          <span>›</span>
+          <span class="typed" data-typed></span>
+          <span class="cc-caret"></span>
+        </div>
         <div class="cc-status">
           <span><b>▸▸ bypass permissions on</b> (shift+tab to cycle) · esc to interrupt</span>
           <span class="right" data-term-foot></span>
@@ -136,7 +141,7 @@
       </div>
     </div>
     <div class="fig-controls">
-      <figcaption>A lesson is what is left when you remove the finding-out. <b>It is memory, not a transcript.</b></figcaption>
+      <figcaption>Same problem, twice. <b>The second time, the lesson is already in context.</b></figcaption>
       <button type="button" data-replay>Replay</button>
     </div>
   </figure>

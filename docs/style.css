@@ -145,7 +145,7 @@ figure.fig { margin: 0 0 30px; }
   border: 1px solid var(--rule);
   padding: 30px 28px 26px;
 }
-.fig .plate svg { width: 100%; height: auto; display: block; }
+.fig .plate > svg { width: 100%; height: auto; display: block; }
 .fig figcaption {
   font-family: var(--mono);
   font-size: 11px;
@@ -162,8 +162,8 @@ figure.fig { margin: 0 0 30px; }
 /* ------------------------------------------------------------- terminal */
 
 /* A depiction of the real Claude Code window, so radii and colour here are
-   mimicry rather than styling — they are what makes it recognisable at a
-   glance, which is the entire job this figure does. */
+   mimicry rather than styling — being recognisable at a glance is the whole
+   job this figure does. */
 .term-fig .plate { padding: 0; border: 0; background: none; }
 
 .cc {
@@ -180,16 +180,13 @@ figure.fig { margin: 0 0 30px; }
   overflow: hidden;
   background: var(--cc-body);
   font-family: var(--mono);
-  box-shadow: 0 18px 44px rgba(0, 0, 0, .22), 0 2px 6px rgba(0, 0, 0, .14);
+  box-shadow: 0 18px 44px rgba(0,0,0,.22), 0 2px 6px rgba(0,0,0,.14);
 }
 
-/* --- title bar --- */
 .cc-title {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+  display: flex; align-items: center; gap: 12px;
   background: var(--cc-chrome);
-  padding: 12px 16px;
+  padding: 11px 15px;
 }
 .cc-lights { display: flex; gap: 8px; flex: none; }
 .cc-lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
@@ -197,135 +194,157 @@ figure.fig { margin: 0 0 30px; }
 .cc-lights .y { background: #febc2e; }
 .cc-lights .g { background: #28c840; }
 .cc-name {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  color: #f2f2f4;
-  font-size: 13.5px;
-  font-weight: 500;
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+  color: #f2f2f4; font-size: 13px; font-weight: 500;
 }
-.cc-name svg { flex: none; }
-.cc-name .who { color: #f2f2f4; }
+.cc-name .ico { width: 15px; height: 13px; flex: none; display: block; }
 .cc-name .spin { color: #c9c9d0; }
-.cc-name .t {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.cc-name .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* --- tab strip --- */
 .cc-tabs {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  display: flex; align-items: center; gap: 8px;
   background: var(--cc-tabbar);
-  padding: 8px 12px;
+  padding: 7px 12px;
   font-size: 12.5px;
   color: var(--cc-dim);
 }
-.cc-tabs .tab { padding: 6px 14px; border-radius: 8px; white-space: nowrap; }
+.cc-tabs .tab {
+  padding: 6px 14px; border-radius: 8px; white-space: nowrap;
+  transition: background .35s ease, color .35s ease;
+}
 .cc-tabs .tab.on { background: var(--cc-tab); color: #eaeaef; }
-.cc-tabs .sep { opacity: .6; }
+.cc-tabs .sep { opacity: .55; }
 .cc-tabs .plus {
-  margin-left: auto;
-  width: 26px; height: 26px;
-  border: 1px solid #4a4a54;
-  border-radius: 50%;
-  display: grid; place-items: center;
-  color: #b9b9c2;
-  flex: none;
+  margin-left: auto; width: 24px; height: 24px;
+  border: 1px solid #4a4a54; border-radius: 50%;
+  display: grid; place-items: center; color: #b9b9c2; flex: none;
 }
 
-/* --- transcript --- */
+/* --- transcript: two panes stacked in the same reserved box --- */
 .cc-body {
+  position: relative;
   height: 330px;
-  padding: 16px 18px;
   overflow: hidden;
   font-size: 13px;
   line-height: 1.6;
   color: var(--cc-text);
 }
-.ln { display: none; margin-bottom: 10px; }
-.ln.on { display: block; animation: lnIn .34s cubic-bezier(.2,.7,.3,1) both; }
-.ln.leaving { animation: lnOut .3s ease both; }
-@keyframes lnIn  { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
-@keyframes lnOut { from { opacity: 1; } to { opacity: 0; transform: translateY(-6px); } }
+.pane {
+  position: absolute; inset: 0;
+  padding: 15px 18px;
+  overflow: hidden;
+  transition: opacity .45s ease, transform .45s ease;
+}
+.pane-in { transition: transform .38s cubic-bezier(.4,0,.2,1), opacity .5s ease; }
+.pane.dim .pane-in { opacity: .28; }
+.pane[data-pane="1"] { opacity: 0; pointer-events: none; }
+.cc.on-b .pane[data-pane="1"] { opacity: 1; }
+.pane.gone { opacity: 0; transform: translateY(-10px); }
 
+.ln { display: none; margin-bottom: 9px; }
+.ln.on { display: block; animation: lnIn .3s cubic-bezier(.2,.7,.3,1) both; }
+@keyframes lnIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
 .ln-head, .ln-out { display: flex; gap: 10px; }
 .ln-out { color: var(--cc-dim); padding-left: 22px; }
 .ln .mark { flex: none; width: 12px; color: var(--cc-dim); }
 .ln .txt { min-width: 0; }
+.ln.user .ln-head { background: var(--cc-user); padding: 6px 12px 6px 10px; margin: 0 -6px; }
+.ln.status .ln-head, .ln.status .mark { color: var(--cc-dim); }
+.ln.recall .ln-head, .ln.recall .mark { color: var(--cc-accent); }
 
-.ln.user .ln-head {
-  background: var(--cc-user);
-  padding: 6px 12px 6px 10px;
-  margin: 0 -6px;
+/* --- the grind: volume, not content --- */
+.grind {
+  display: none;
+  position: relative;
+  height: 104px;
+  overflow: hidden;
+  margin-bottom: 9px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 72%, transparent);
+          mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 72%, transparent);
 }
-.ln.status .ln-head { color: var(--cc-dim); }
-.ln.status .mark { color: var(--cc-dim); }
-.ln.recall .ln-head { color: var(--cc-accent); }
-.ln.recall .mark { color: var(--cc-accent); }
-.ln.lesson .ln-head {
-  color: #ffffff;
+.grind.on { display: block; }
+.grind-inner {
+  filter: blur(1.1px);
+  opacity: .45;
+  color: var(--cc-dim);
+  white-space: pre;
+}
+.grind.run .grind-inner {
+  animation: reel 3.4s linear both;
+}
+@keyframes reel {
+  from { transform: translateY(96px); }
+  to   { transform: translateY(-100%); }
+}
+.grind-tag {
+  position: absolute; right: 0; bottom: 6px;
+  background: var(--cc-body);
+  color: var(--cc-accent);
+  padding: 2px 0 2px 12px;
+  font-size: 12px;
+}
+
+/* --- the lesson, lifted out of one tab and dropped into the other --- */
+.lesson-slot { height: 48px; }
+.lesson-float {
+  position: absolute;
+  left: 18px; right: 18px;
+  top: 46px;
+  opacity: 0;
+  color: #fff;
   border-left: 2px solid var(--cc-accent);
-  padding-left: 12px;
-  margin-left: 1px;
+  background: #24242b;
+  padding: 8px 13px;
+  transition: opacity .4s ease,
+              transform .72s cubic-bezier(.4,0,.2,1),
+              box-shadow .45s ease,
+              background .45s ease;
 }
-.ln.lesson .mark { display: none; }
+.lesson-float.on { opacity: 1; }
+.lesson-float.lift {
+  box-shadow: 0 16px 34px rgba(0,0,0,.6), 0 0 0 1px rgba(217,119,87,.5);
+}
+.lesson-float.docked { box-shadow: none; background: transparent; }
+.lesson-gap { height: 0; transition: height .3s ease; }
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(217,119,87,0); }
+  50%      { box-shadow: 0 0 0 3px rgba(217,119,87,.35); }
+}
 
 /* --- input + status --- */
 .cc-input {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  display: flex; align-items: center; gap: 9px;
   border-top: 1px solid var(--cc-rule);
-  padding: 12px 18px;
-  font-size: 13px;
-  color: var(--cc-dim);
+  padding: 11px 18px;
+  font-size: 13px; color: var(--cc-dim);
 }
-.cc-caret {
-  width: 8px; height: 17px;
-  background: #71717b;
-  animation: blink 1.1s steps(1) infinite;
-}
-@keyframes blink { 0%, 55% { opacity: 1; } 56%, 100% { opacity: .15; } }
+.cc-input .typed { color: #e9e9ee; white-space: pre; }
+.cc-caret { width: 8px; height: 16px; background: #71717b; flex: none; animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 0%,55% { opacity: 1; } 56%,100% { opacity: .12; } }
 .cc-status {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 0 18px 13px;
-  font-size: 12px;
-  color: var(--cc-dim);
+  display: flex; justify-content: space-between; gap: 16px;
+  padding: 0 18px 12px;
+  font-size: 12px; color: var(--cc-dim);
 }
 .cc-status b { color: var(--cc-accent); font-weight: 400; }
-.cc-status .right { color: #a9a9b3; text-align: right; }
+.cc-status .right { color: #a9a9b3; text-align: right; white-space: nowrap; }
 
 .fig-controls {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 20px;
-  margin-top: 14px;
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 20px; margin-top: 14px;
 }
 .fig-controls figcaption { margin-top: 0; }
 .fig-controls button {
-  border: 1px solid var(--rule);
-  background: var(--paper);
-  font: 500 10.5px/1 var(--mono);
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  color: var(--muted);
-  padding: 8px 14px;
-  cursor: pointer;
-  flex: none;
+  border: 1px solid var(--rule); background: var(--paper);
+  font: 500 10.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase;
+  color: var(--muted); padding: 8px 14px; cursor: pointer; flex: none;
 }
 .fig-controls button:hover { color: var(--ink); border-color: var(--faint); }
 
 @media (max-width: 620px) {
   .cc-body { height: 400px; font-size: 12px; }
-  .cc-tabs .tab:not(.on) { display: none; }
-  .cc-tabs .sep { display: none; }
+  .cc-tabs { font-size: 11.5px; }
+  .cc-tabs .plus { display: none; }
 }
 
 /* ------------------------------------------- the lesson rewriting itself */
@@ -356,7 +375,7 @@ figure.fig { margin: 0 0 30px; }
 
 /* Fixed slot, shrinking card: the box gets visibly smaller without shoving
    the rest of the page around every few seconds. */
-.morph-slot { min-height: 176px; margin-top: 18px; }
+.morph-slot { min-height: 128px; margin-top: 18px; }
 .morph-card {
   border-left: 2px solid var(--ink);
   padding: 2px 0 2px 18px;
@@ -391,7 +410,7 @@ figure.fig { margin: 0 0 30px; }
 .morph-foot .tree-steps { padding-bottom: 0; }
 
 @media (max-width: 620px) {
-  .morph-slot { min-height: 250px; }
+  .morph-slot { min-height: 196px; }
   .morph-card p { font-size: 15px; }
   .morph-foot { flex-wrap: wrap; gap: 12px; }
 }
