@@ -34,7 +34,12 @@ DEFAULTS: dict[str, Any] = {
     "compaction": {
         "enabled": True,
         "min_successes": 2,  # successful recalls before a compression is attempted
-        "max_ratio": 0.6,  # candidate must be <= 60% of the parent's tokens
+        # Candidate must be <= this fraction of the parent's tokens. Measured
+        # against real compressors, a single step on an already-dense lesson
+        # lands around 0.7; a stricter gate simply rejects everything and leaves
+        # you at 100%. What matters is compounding, not per-step depth —
+        # 0.75 per level is ~32% of the original after four levels.
+        "max_ratio": 0.75,
         "threshold": 1.0,  # required replay pass-rate
         "merge_threshold": 1.0,
         "regression_k": 5,  # episodes replayed per validation

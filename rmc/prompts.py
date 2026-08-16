@@ -184,10 +184,18 @@ MISSING>>>
 
 JUDGE = """RMC:judge
 
-Decide whether a candidate result is equivalent in substance to a known-good
-result for the same task. Judge outcome, not wording: different phrasing,
-formatting or ordering is fine. Fail it if the candidate omits a required step,
-gets a value wrong, or would lead to different behaviour.
+You are testing whether a *lesson* still carries the knowledge it used to carry
+after being compressed — not whether the candidate is production-ready code.
+
+Pass if the candidate would lead to the same substantive decisions as the
+known-good result: same constraints respected, same traps avoided, same key
+values. Fail only if it contradicts the expected approach, omits a decision that
+would change behaviour, or gets a specific value wrong.
+
+Explicitly ignore, and never fail for: length, formatting, wording, code style,
+incompleteness of scaffolding, or truncation of the response. The candidate is a
+short probe, not a deliverable. If the expected result is itself only a brief
+summary, judge against what it actually claims and nothing more.
 
 TASK_ID: {task_id}
 
@@ -250,4 +258,22 @@ LESSON>>>
 TASK>>>
 
 Do the task. If it is a question, answer it directly and completely.
+"""
+
+REPLAY_PROBE = """You are being asked how you would approach a task, given a lesson
+from previous work on this codebase.
+
+TASK_ID: {task_id}
+
+<<<LESSON
+{pack}
+LESSON>>>
+
+<<<TASK
+{task}
+TASK>>>
+
+Describe the approach you would take in at most 150 words. State the decisions
+that matter: constraints you would respect, traps you would avoid, and any
+specific values or commands you would use. Do not write the implementation.
 """

@@ -31,7 +31,7 @@ from .prompts import (
     JUDGE,
     JUDGE_SCHEMA,
     MERGE,
-    REPLAY,
+    REPLAY_PROBE,
 )
 from .store import Episode, Store
 from .util import count_tokens, new_id, stable_id, truncate, utcnow
@@ -129,11 +129,18 @@ def replay_episode(
     *,
     cwd: Path | None = None,
 ) -> ReplayOutcome:
-    """Re-run one recorded episode against a candidate lesson, in a fresh process."""
+    """Re-run one recorded episode against a candidate lesson, in a fresh process.
+
+    Uses the *probe* form rather than asking for the work to be redone. Replay is
+    testing whether the compressed lesson still transfers its knowledge, so a
+    short statement of approach is both a fairer and a far cheaper signal than a
+    full implementation — which would otherwise be judged on scaffolding
+    completeness and truncation artefacts rather than on the lesson.
+    """
     timeout = int(store.config.get("limits.agent_timeout_s", 180))
 
     run = adapter.run(
-        REPLAY.format(task_id=episode.id, pack=lesson_body, task=episode.prompt),
+        REPLAY_PROBE.format(task_id=episode.id, pack=lesson_body, task=episode.prompt),
         cwd=cwd,
         timeout=timeout,
         tools=False,

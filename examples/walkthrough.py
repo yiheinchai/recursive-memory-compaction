@@ -59,9 +59,27 @@ LESSON = """When calling flaky remote services in this codebase, follow these ru
 """
 
 EPISODES = [
-    ("e_http", "add retry to the http client in api/client.py", {"idempotent"}),
-    ("e_db", "make the db writer retry safely on deadlock", {"idempotent", "backoff"}),
-    ("e_queue", "the queue consumer needs backoff between attempts", {"backoff"}),
+    (
+        "e_http",
+        "add retry to the http client in api/client.py",
+        {"idempotent"},
+        "Retried GET/PUT/DELETE only; POST retries are gated behind an "
+        "idempotency key so a retry cannot double-write.",
+    ),
+    (
+        "e_db",
+        "make the db writer retry safely on deadlock",
+        {"idempotent", "backoff"},
+        "Retried on deadlock with jittered exponential backoff, and required a "
+        "dedupe key before retrying any non-idempotent write.",
+    ),
+    (
+        "e_queue",
+        "the queue consumer needs backoff between attempts",
+        {"backoff"},
+        "Used jittered exponential backoff between attempts rather than a fixed "
+        "delay, to avoid consumers synchronising into a thundering herd.",
+    ),
 ]
 
 # The task that exercises the detail compression will drop.
@@ -76,7 +94,7 @@ def main() -> int:
 
     tmp = Path(tempfile.mkdtemp(prefix="rmc-walkthrough-"))
     store = Store.init(tmp)
-    world = MockWorld({eid: facts for eid, _, facts in EPISODES} | {S3_TASK[0]: S3_TASK[2]})
+    world = MockWorld({eid: facts for eid, _, facts, _s in EPISODES} | {S3_TASK[0]: S3_TASK[2]})
     adapter = MockAdapter(world=world) if args.agent == "mock" else get_adapter(args.agent)
 
     print(f"{BOLD}RMC walkthrough{OFF}  {DIM}backend={args.agent}  store={tmp}{OFF}")
@@ -90,7 +108,7 @@ def main() -> int:
 
     # ---------------------------------------------------------------- 2
     head(2, "Record real sessions that used it (the replay corpus)")
-    for eid, prompt, _ in EPISODES:
+    for eid, prompt, _facts, summary in EPISODES:
         store.save_episode(
             Episode(
                 id=eid,
@@ -99,7 +117,7 @@ def main() -> int:
                 outcome="success",
                 confidence=0.9,
                 served=[base.id],
-                accepted_summary="retry implemented correctly",
+                accepted_summary=summary,
             )
         )
         print(f"   {GREEN}✓{OFF} {eid}  {DIM}{prompt}{OFF}")
