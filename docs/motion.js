@@ -297,7 +297,11 @@
       var last = el.getBoundingClientRect();
       var shiftY = paneIdx != null ? (panY[paneIdx] - prevY) : 0;
       if (seeking) return;
-      if (!wasVisible) { el.classList.add("pop"); return; }
+      if (!wasVisible) {
+        el.classList.add("pop");
+        later(400, function () { el.classList.remove("pop"); });
+        return;
+      }
 
       var sr = stage.getBoundingClientRect();
       var ghost = el.cloneNode(true);
@@ -394,26 +398,26 @@
         grind.forEach(function (n) { n.classList.add("on"); });
         panes[0].classList.add("rushing");
         rushTag.classList.add("on");
-        requestAnimationFrame(function () { roll(0, 3200); });
+        requestAnimationFrame(function () { roll(0, 1850); });
       });
-      [1700, 2200, 2700, 3200, 3700, 4200].forEach(function (d, i) {
+      [1500, 1780, 2060, 2340, 2620, 2900].forEach(function (d, i) {
         at(t + d, function () {
           foot.textContent = [1600, 2200, 2700, 3300, 3800, 4200][i].toLocaleString() + " tokens";
         });
       });
-      at(t + 4600, function () {
+      at(t + 3250, function () {
         panes[0].classList.remove("rushing"); rushTag.classList.remove("on");
       });
-      at(t + 4900, function () { show(closeA[0], 0); });
-      at(t + 5500, function () { show(closeA[1], 0); });
-      at(t + 6000, function () { foot.textContent = "4,200 tokens to get here"; });
-      at(t + 6500, function () {
+      at(t + 3550, function () { show(closeA[0], 0); });
+      at(t + 4150, function () { show(closeA[1], 0); });
+      at(t + 4650, function () { foot.textContent = "4,200 tokens to get here"; });
+      at(t + 5150, function () {
         show(reflect[0], 0); title.textContent = "RMC · reflecting on session 14";
       });
-      at(t + 7300, function () { show(reflect[1], 0); });
-      at(t + 7900, function () { work.level(0); travel(work, mountA, "inline", 0); });
-      at(t + 8900, function () { work.el.classList.add("lift"); panes[0].classList.add("dim"); });
-      at(t + 9700, function () {
+      at(t + 5900, function () { show(reflect[1], 0); });
+      at(t + 6550, function () { work.level(0); travel(work, mountA, "inline", 0); });
+      at(t + 7500, function () { work.el.classList.add("lift"); panes[0].classList.add("dim"); });
+      at(t + 8350, function () {
         work.el.classList.remove("lift");
         fileAt(work, 0);
         storeNote.textContent = "1 lesson · apex L0 · 260 tok";
@@ -507,7 +511,7 @@
         return k + 6500;
       }
 
-      var e1 = act(B, 1, PROMPT_B, 0, t + 12000, "Add retry to the payments client",
+      var e1 = act(B, 1, PROMPT_B, 0, t + 10600, "Add retry to the payments client",
                    "260 → 146 tok · 44% cheaper to recall", false);
 
       // Something learned in a different repo lands in the same global store.
