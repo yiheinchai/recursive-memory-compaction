@@ -135,15 +135,16 @@ def on_user_prompt_submit(payload: dict[str, Any]) -> int:
 
 
 def recall_notice(pack) -> str:
-    """One line naming what was injected, and at what cost."""
+    """One short line. It appears on every prompt, so it must not become noise.
+
+    Enough to notice a bad recall and to see the running context cost; anything
+    more belongs in `rmc recall`, which is one command away.
+    """
     count = len(pack.served)
-    names = ", ".join(dict.fromkeys(pack.families)) or "?"
-    parts = [f"RMC · recalled {count} lesson{'s' if count != 1 else ''} ({pack.tokens} tok): {names}"]
-    if pack.patches:
-        parts.append(f"+{len(pack.patches)} patch{'es' if len(pack.patches) != 1 else ''}")
+    note = f"RMC · {count} lesson{'s' if count != 1 else ''} · {pack.tokens} tok"
     if pack.conflicts:
-        parts.append(f"⚠ {len(pack.conflicts)} unresolved conflict")
-    return "  ".join(parts)
+        note += "  ⚠ conflict"
+    return note
 
 
 # --------------------------------------------------------------------------- #

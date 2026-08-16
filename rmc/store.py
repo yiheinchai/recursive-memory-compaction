@@ -231,6 +231,26 @@ class Store:
             return None
         return max(healthy, key=lambda n: (n.level, n.stats.posterior))
 
+    def apexes(self, family: str | None = None) -> list[Node]:
+        """Every servable top-of-tree node, across all families.
+
+        A family is not a single lesson. Consolidation deliberately creates
+        siblings — two lessons about the same subject that cover distinct cases
+        stand alongside each other until a merge-compression generalises them —
+        and every one of them must be reachable. Taking only the best node per
+        family silently orphans the rest: they are stored, counted, and never
+        served again.
+        """
+        out = [
+            n
+            for n in self.nodes()
+            if n.status in ("active", "disputed") and n.is_apex
+            and (family is None or n.family == family)
+        ]
+        # Deepest (most compressed) first, then by how well each has held up.
+        out.sort(key=lambda n: (-n.level, -n.stats.posterior, n.id))
+        return out
+
     def children(self, node: Node) -> list[Node]:
         """Nodes one step *down* — more detail."""
         return [n for n in (self.get(i) for i in node.derived_from) if n is not None]

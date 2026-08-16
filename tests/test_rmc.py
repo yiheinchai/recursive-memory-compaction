@@ -443,6 +443,32 @@ class TestRecall(StoreCase):
         pack = recall_pack(self.store, "what colour should the logo be", router({"picks": []}))
         self.assertFalse(pack)
 
+    def test_sibling_lessons_are_all_reachable(self) -> None:
+        """Consolidation creates siblings on purpose; none may be orphaned.
+
+        Taking only the best node per family silently stranded the rest — they
+        stayed stored, counted in `rmc status`, and were never served again.
+        """
+        self.add_node(id="n_a", family="deploy", body="Use the argo plugin.")
+        self.add_node(id="n_b", family="deploy", body="Staging deploys need approval.")
+        self.add_node(id="n_c", family="tests", body="Set PG_PORT first.")
+
+        reachable = {n.id for n in self.store.apexes()}
+        self.assertEqual(reachable, {"n_a", "n_b", "n_c"})
+
+        pack = recall_pack(self.store, "deploy staging", router({"picks": []}))
+        self.assertEqual(sorted(pack.served), ["n_a", "n_b", "n_c"])
+
+    def test_compressed_nodes_outrank_their_sources(self) -> None:
+        """An apex list must lead with the cheapest useful summary."""
+        base = self.add_node(id="n_v", family="f", body="verbose original", level=0)
+        apex = self.add_node(id="n_s", family="f", body="short", level=1, derived_from=[base.id])
+        base.compressed_into = apex.id
+        self.store.save_node(base)
+        self.store.invalidate()
+        # The source is no longer an apex, so only the compression is served.
+        self.assertEqual([n.id for n in self.store.apexes()], ["n_s"])
+
     def test_empty_store_asks_nothing(self) -> None:
         log: list = []
         recall_pack(self.store, "anything", counting_router({"picks": []}, log))

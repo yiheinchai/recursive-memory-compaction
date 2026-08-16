@@ -152,7 +152,7 @@ def related_lessons(
     in the store, so the whole top level fits in a single question, and we only
     open a line when the model says the summary was too abstract to judge from.
     """
-    roots = [n for n in (store.apex(f) for f in store.families()) if n is not None]
+    roots = store.apexes()
     if not roots:
         return []
 

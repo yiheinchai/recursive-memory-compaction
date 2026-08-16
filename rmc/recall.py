@@ -73,7 +73,7 @@ def select_lessons(
     alone. Cost tracks depth, not the size of the memory.
     """
     limit = limit if limit is not None else int(store.config.get("recall.max_families", 3))
-    roots = [n for n in (store.apex(f) for f in store.families()) if n is not None]
+    roots = store.apexes()
     if not roots:
         # Structural gate, not a judgement: with nothing to recall there is
         # nothing to ask about.
