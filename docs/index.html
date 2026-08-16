@@ -57,8 +57,140 @@
   </div>
 </div>
 
-<!-- --------------------------------------------------------- the tree -->
+<!-- ------------------------------------------------------ what a lesson is -->
 <div class="wrap" id="idea">
+  <figure class="fig">
+    <div class="plate">
+      <svg viewBox="0 0 960 330" fill="none" stroke="#1a1a1a" stroke-width="1.4"
+           role="img" aria-label="A long session of back-and-forth is distilled into one short lesson, which is what gets loaded next time instead of the session">
+        <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" stroke="none" fill="#1a1a1a">
+          <text x="0" y="12" font-size="10.5" opacity=".42" letter-spacing="1.7">MONDAY — ONE SESSION</text>
+          <text x="560" y="12" font-size="10.5" opacity=".42" letter-spacing="1.7">WHAT RMC KEEPS</text>
+        </g>
+
+        <!-- the session -->
+        <rect x="0" y="26" width="404" height="196" stroke="#d8d8d8"/>
+        <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" stroke="none" font-size="11.5">
+          <text x="18" y="54" fill="#1a1a1a" opacity=".45">you</text>
+          <text x="66" y="54" fill="#1a1a1a">the S3 retry keeps silently failing</text>
+          <text x="18" y="80" fill="#1a1a1a" opacity=".45">agent</text>
+          <text x="66" y="80" fill="#1a1a1a" opacity=".5">checks the status code, retries…</text>
+          <text x="18" y="102" fill="#1a1a1a" opacity=".45">agent</text>
+          <text x="66" y="102" fill="#1a1a1a" opacity=".5">still failing. adds more attempts…</text>
+          <text x="18" y="124" fill="#1a1a1a" opacity=".45">agent</text>
+          <text x="66" y="124" fill="#1a1a1a" opacity=".5">still failing. adds logging…</text>
+          <text x="18" y="152" fill="#1a1a1a" opacity=".45">you</text>
+          <text x="66" y="152" fill="#1a1a1a">S3 returns 200 with the error in the body</text>
+          <text x="18" y="178" fill="#1a1a1a" opacity=".45">agent</text>
+          <text x="66" y="178" fill="#1a1a1a" opacity=".5">parses the body. fixed.</text>
+        </g>
+        <path d="M60 40V208" stroke="#e6e6e6"/>
+        <text x="0" y="244" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+              font-size="11.5" fill="#1a1a1a" stroke="none" opacity=".5">4,200 tokens of getting there</text>
+
+        <!-- distil -->
+        <path d="M424 124h84" stroke-width="1.4"/>
+        <path d="M500 118l8 6-8 6" stroke-width="1.4"/>
+        <text x="424" y="112" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+              font-size="10.5" fill="#1a1a1a" stroke="none" opacity=".42" letter-spacing="1.4">DISTIL</text>
+
+        <!-- the lesson -->
+        <rect x="528" y="52" width="432" height="144" stroke-width="1.8"/>
+        <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" stroke="none" fill="#1a1a1a" font-size="12.5">
+          <text x="550" y="84">Retry idempotent remote calls on 5xx and</text>
+          <text x="550" y="106">timeouts. S3 answers 200 with the error in</text>
+          <text x="550" y="128">the body — parse the body, not the status.</text>
+          <text x="550" y="150">3 attempts; backoff 100 / 400 / 1600 ms.</text>
+        </g>
+        <text x="528" y="34" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+              font-size="10.5" fill="#1a1a1a" stroke="none" opacity=".42" letter-spacing="1.7">LESSON · L0</text>
+        <text x="528" y="218" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+              font-size="11.5" fill="#1a1a1a" stroke="none" opacity=".5">260 tokens</text>
+
+        <!-- the payoff -->
+        <path d="M0 268H960" stroke="#e6e6e6"/>
+        <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" stroke="none" fill="#1a1a1a">
+          <text x="0" y="296" font-size="10.5" opacity=".42" letter-spacing="1.7">THURSDAY — A NEW SESSION, SAME PROBLEM</text>
+        </g>
+        <rect x="0" y="308" width="404" height="14" stroke="#d8d8d8" stroke-dasharray="4 4"/>
+        <text x="418" y="319" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+              font-size="11.5" fill="#1a1a1a" stroke="none" opacity=".45">not replayed</text>
+        <rect x="528" y="308" width="27" height="14" fill="#1a1a1a" stroke="none"/>
+        <text x="568" y="319" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+              font-size="11.5" fill="#1a1a1a" stroke="none">the lesson goes in instead — 6% of the tokens, none of the fumbling</text>
+      </svg>
+    </div>
+    <figcaption>A lesson is what is left when you remove the finding-out. <b>It is memory, not a transcript.</b></figcaption>
+  </figure>
+
+  <div class="two" style="padding:16px 0 clamp(30px,4vw,48px)">
+    <div><h3>First: what a lesson is.</h3></div>
+    <div>
+      <p style="color:var(--muted);margin-top:6px">
+        You spend a session getting something right — a wrong turn, a correction,
+        a fix. RMC watches that happen and writes down the <b style="color:var(--ink)">conclusion</b>,
+        not the transcript. Next time the same problem comes up, that conclusion
+        goes into context and the session does not.
+      </p>
+      <p style="color:var(--muted)">
+        That much is just note-taking. What follows is the part that is new.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ------------------------------------------------------- the same lesson -->
+<div class="wrap">
+  <figure class="fig ladder">
+    <div class="plate">
+      <div class="rung">
+        <div class="rung-meta"><span class="lv">L0</span><span class="tok">260 tok</span></div>
+        <div>
+          <div class="rung-bar"><i style="width:100%"></i></div>
+          <p>When a remote call fails with a 5xx or a timeout, retry it — but only if
+          the call is idempotent. S3 answers 200 with the error inside the body, so
+          parse the body rather than the status code. Budget 3 attempts, with backoff
+          at 100&thinsp;ms, 400&thinsp;ms and 1.6&thinsp;s.</p>
+        </div>
+      </div>
+      <div class="rung">
+        <div class="rung-meta"><span class="lv">L1</span><span class="tok">195 tok</span></div>
+        <div>
+          <div class="rung-bar"><i style="width:75%"></i></div>
+          <p>Retry idempotent remote calls on 5xx and timeouts — 3 attempts, backoff
+          100&thinsp;/&thinsp;400&thinsp;/&thinsp;1600&thinsp;ms. S3 hides errors in a 200 body, so parse the body.</p>
+        </div>
+      </div>
+      <div class="rung">
+        <div class="rung-meta"><span class="lv">L2</span><span class="tok">146 tok</span></div>
+        <div>
+          <div class="rung-bar"><i style="width:56%"></i></div>
+          <p>Retry idempotent calls; parse bodies, not status codes.</p>
+        </div>
+      </div>
+    </div>
+    <figcaption>Same lesson, three times. <b>L0 is never deleted</b> — it sits underneath, and the manifest records that L2 dropped the backoff constants.</figcaption>
+  </figure>
+
+  <div class="two" style="padding:16px 0 clamp(30px,4vw,48px)">
+    <div><h3>Then it earns its way shorter.</h3></div>
+    <div>
+      <p style="color:var(--muted);margin-top:6px">
+        Every time that lesson is loaded, <i>actually used</i>, and the work
+        succeeds, it has proved it contained slack — so it earns an attempt at a
+        shorter form. The shorter form has to reproduce real past work before it
+        is allowed to replace anything.
+      </p>
+      <p style="color:var(--muted)">
+        Nothing is thrown away. L0 stays underneath, and L2 records exactly which
+        claims it dropped, so any of them can be pulled back.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- --------------------------------------------------------- the tree -->
+<div class="wrap">
   <figure class="fig tree" data-tree>
     <div class="plate" data-tree-canvas></div>
     <div class="tree-hud">
@@ -78,7 +210,7 @@
   </figure>
 
   <div class="two" style="padding:16px 0 clamp(34px,5vw,56px)">
-    <div><h3>Two numbers, moving apart.</h3></div>
+    <div><h3>Now do that to a whole store.</h3></div>
     <div>
       <p style="color:var(--muted);margin-top:6px">
         <b style="color:var(--ink)">Lessons kept</b> never falls. Nothing is ever
@@ -101,73 +233,70 @@
     <div class="kicker">Why it's different</div>
     <h3 style="max-width:20ch">There were only two options.<br>Both of them rot.</h3>
 
-    <figure class="fig" style="margin-top:32px">
+<figure class="fig" style="margin-top:32px">
       <div class="plate">
-        <svg viewBox="0 0 900 300" fill="none" stroke="#1a1a1a" stroke-width="1.5"
-             role="img" aria-label="Three approaches compared: append grows without bound, summarise stays cheap but loses detail, RMC stays cheap and keeps detail">
-          <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#1a1a1a" stroke="none">
-            <text x="0" y="16" font-size="12" letter-spacing="1.3">APPEND EVERYTHING</text>
-            <text x="310" y="16" font-size="12" letter-spacing="1.3">SUMMARISE EVERYTHING</text>
-            <text x="620" y="16" font-size="12" letter-spacing="1.3">RMC</text>
+        <svg viewBox="0 0 900 330" fill="none" stroke="#1a1a1a" stroke-width="1.4"
+             role="img" aria-label="By session forty: appending overflows the context budget, summarising fits but has lost detail, RMC fits and has kept everything">
+          <g transform="translate(0,0)">
+          <text x="0" y="12" font-size="10.5" letter-spacing="1.6" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">APPEND EVERYTHING</text>
+          <rect x="16" y="8" width="132" height="56" stroke="#1a1a1a" stroke-dasharray="4 3" opacity=".45"/>
+          <rect x="16" y="64" width="132" height="166" fill="#1a1a1a" stroke="none"/>
+          <path d="M0 64H236" stroke="#1a1a1a" stroke-dasharray="5 4" opacity=".5"/>
+          <text x="236" y="58" font-size="9.5" letter-spacing="1.4" text-anchor="end" opacity=".45" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">BUDGET</text>
+          <path d="M0 230H236" stroke="#1a1a1a" opacity=".3"/>
+          <rect x="16" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <rect x="33" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <rect x="50" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <rect x="67" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <rect x="84" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <rect x="101" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <rect x="118" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <rect x="135" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <text x="0" y="288" font-size="11.5" opacity=".5" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">every specific kept</text>
+          <text x="0" y="314" font-size="13.5" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">Overflows.</text>
           </g>
-
-          <!-- unbounded growth -->
-          <g>
-            <path d="M0 200h270" opacity=".35"/>
-            <path d="M0 200V40" opacity=".35"/>
-            <path d="M0 196 L54 178 L108 148 L162 104 L216 66 L262 34" stroke-width="2.6"/>
-            <g fill="#1a1a1a" stroke="none">
-              <circle cx="16" cy="220" r="4"/><circle cx="40" cy="220" r="4"/>
-              <circle cx="64" cy="220" r="4"/><circle cx="88" cy="220" r="4"/>
-              <circle cx="112" cy="220" r="4"/><circle cx="136" cy="220" r="4"/>
-              <circle cx="160" cy="220" r="4"/><circle cx="184" cy="220" r="4"/>
-            </g>
-            <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#1a1a1a" stroke="none">
-              <text x="0" y="252" font-size="12" opacity=".55">detail kept: all of it</text>
-              <text x="0" y="278" font-size="13.5">Unaffordable by session 40.</text>
-            </g>
+          <g transform="translate(332,0)">
+          <text x="0" y="12" font-size="10.5" letter-spacing="1.6" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">SUMMARISE EVERYTHING</text>
+          <rect x="16" y="150" width="132" height="80" fill="#1a1a1a" stroke="none"/>
+          <path d="M0 64H236" stroke="#1a1a1a" stroke-dasharray="5 4" opacity=".5"/>
+          <text x="236" y="58" font-size="9.5" letter-spacing="1.4" text-anchor="end" opacity=".45" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">BUDGET</text>
+          <path d="M0 230H236" stroke="#1a1a1a" opacity=".3"/>
+          <rect x="16" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <rect x="33" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <rect x="50" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <rect x="67" y="252" width="9" height="9" stroke="#1a1a1a" opacity=".28"/>
+          <path d="M67 261l9 -9" stroke="#1a1a1a" opacity=".28"/>
+          <rect x="84" y="252" width="9" height="9" stroke="#1a1a1a" opacity=".28"/>
+          <path d="M84 261l9 -9" stroke="#1a1a1a" opacity=".28"/>
+          <rect x="101" y="252" width="9" height="9" stroke="#1a1a1a" opacity=".28"/>
+          <path d="M101 261l9 -9" stroke="#1a1a1a" opacity=".28"/>
+          <rect x="118" y="252" width="9" height="9" stroke="#1a1a1a" opacity=".28"/>
+          <path d="M118 261l9 -9" stroke="#1a1a1a" opacity=".28"/>
+          <rect x="135" y="252" width="9" height="9" stroke="#1a1a1a" opacity=".28"/>
+          <path d="M135 261l9 -9" stroke="#1a1a1a" opacity=".28"/>
+          <text x="0" y="288" font-size="11.5" opacity=".5" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">five specifics gone</text>
+          <text x="0" y="314" font-size="13.5" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">Fits. Lossy.</text>
           </g>
-
-          <!-- cheap but lossy -->
-          <g transform="translate(310,0)">
-            <path d="M0 200h270" opacity=".35"/>
-            <path d="M0 200V40" opacity=".35"/>
-            <path d="M0 196 L54 150 L108 142 L162 146 L216 141 L262 144" stroke-width="2.6"/>
-            <g fill="#1a1a1a" stroke="none">
-              <circle cx="16" cy="220" r="4"/><circle cx="40" cy="220" r="4"/>
-              <circle cx="64" cy="220" r="4"/>
-            </g>
-            <g stroke="#1a1a1a" opacity=".3">
-              <path d="M84 216l8 8M92 216l-8 8"/><path d="M108 216l8 8M116 216l-8 8"/>
-              <path d="M132 216l8 8M140 216l-8 8"/><path d="M156 216l8 8M164 216l-8 8"/>
-              <path d="M180 216l8 8M188 216l-8 8"/>
-            </g>
-            <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#1a1a1a" stroke="none">
-              <text x="0" y="252" font-size="12" opacity=".55">detail kept: whatever survived</text>
-              <text x="0" y="278" font-size="13.5">You find out when it breaks.</text>
-            </g>
-          </g>
-
-          <!-- falls, keeps everything -->
-          <g transform="translate(620,0)">
-            <path d="M0 200h270" opacity=".35"/>
-            <path d="M0 200V40" opacity=".35"/>
-            <path d="M0 196 L48 158 L96 120 L144 138 L192 158 L262 172" stroke-width="2.6"/>
-            <g fill="#1a1a1a" stroke="none">
-              <circle cx="16" cy="220" r="4"/><circle cx="40" cy="220" r="4"/>
-              <circle cx="64" cy="220" r="4"/><circle cx="88" cy="220" r="4"/>
-              <circle cx="112" cy="220" r="4"/><circle cx="136" cy="220" r="4"/>
-              <circle cx="160" cy="220" r="4"/><circle cx="184" cy="220" r="4"/>
-            </g>
-            <path d="M6 232h188" stroke-dasharray="3 3" opacity=".45"/>
-            <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#1a1a1a" stroke="none">
-              <text x="0" y="252" font-size="12" opacity=".55">detail kept: all of it, one level down</text>
-              <text x="0" y="278" font-size="13.5">Cheap and complete.</text>
-            </g>
+          <g transform="translate(664,0)">
+          <text x="0" y="12" font-size="10.5" letter-spacing="1.6" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">RMC</text>
+          <rect x="16" y="156" width="132" height="74" fill="#1a1a1a" stroke="none"/>
+          <path d="M0 64H236" stroke="#1a1a1a" stroke-dasharray="5 4" opacity=".5"/>
+          <text x="236" y="58" font-size="9.5" letter-spacing="1.4" text-anchor="end" opacity=".45" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">BUDGET</text>
+          <path d="M0 230H236" stroke="#1a1a1a" opacity=".3"/>
+          <rect x="16" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <rect x="33" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <rect x="50" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <rect x="67" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <rect x="84" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <rect x="101" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <rect x="118" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <rect x="135" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
+          <text x="0" y="288" font-size="11.5" opacity=".5" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">every specific kept, one level down</text>
+          <text x="0" y="314" font-size="13.5" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">Fits. Complete.</text>
           </g>
         </svg>
       </div>
-      <figcaption>Vertical axis: <b>tokens loaded per prompt.</b> Dots below the axis: individual specifics — a port, a flag, a constant — still recoverable.</figcaption>
+      <figcaption>Bar height: <b>what enters your context each prompt.</b> Squares below: individual specifics — a port, a flag, a constant — still on hand.</figcaption>
     </figure>
 
     <div class="two" style="margin-top:12px">

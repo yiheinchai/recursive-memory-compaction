@@ -24,20 +24,14 @@
   // Every node the story ever contains. `col` is the visual column it lives in
   // so a lesson stays put as it is compressed.
   var NODES = {
-    A0: { tok: 260, level: 0, cx: 240 },
-    B0: { tok: 220, level: 0, cx: 520 },
-    C0: { tok: 200, level: 0, cx: 762 },
-    A1: { tok: 195, level: 1, cx: 240 },
-    B1: { tok: 165, level: 1, cx: 520 },
-    A2: { tok: 146, level: 2, cx: 240 },
-    M:  { tok: 210, level: 2, cx: 641 }
+    A0: { tok: 260, level: 0, cx: 240, name: "retrying flaky calls" },
+    B0: { tok: 220, level: 0, cx: 520, name: "cache invalidation" },
+    C0: { tok: 200, level: 0, cx: 762, name: "deploy rollback" },
+    A1: { tok: 195, level: 1, cx: 240, name: "retry policy" },
+    B1: { tok: 165, level: 1, cx: 520, name: "cache TTLs" },
+    A2: { tok: 146, level: 2, cx: 240, name: "retries" },
+    M:  { tok: 210, level: 2, cx: 641, name: "cache + rollback" }
   };
-
-  var COLUMNS = [
-    { cx: 240, label: "retrying flaky calls" },
-    { cx: 520, label: "cache invalidation" },
-    { cx: 762, label: "deploy rollback" }
-  ];
 
   // Each state is the entire store at one moment.
   var STATES = [
@@ -151,7 +145,8 @@
     [2, 1, 0].forEach(function (lv) {
       txt(88, ROW[lv] + 21, "L" + lv, 11, 0.32, "end");
     });
-    COLUMNS.forEach(function (c) { txt(c.cx, 350, c.label, 11.5, 0.42, "middle"); });
+    txt(FIELD.x, 352, "EACH BLOCK IS ONE LESSON   ·   WIDTH = WHAT IT COSTS TO LOAD",
+        10.5, 0.42).setAttribute("letter-spacing", "1.7");
     chrome.appendChild(labels);
 
     var gEdges = el("g", {});
@@ -167,13 +162,17 @@
       var g = el("g", {});
       var rect = el("rect", { height: NODE_H, y: 0, x: 0, width: 0 });
       var label = el("text", {
-        "font-size": 12, "text-anchor": "end", stroke: "none",
+        "font-size": 11, "text-anchor": "end", stroke: "none",
+        "font-family": "ui-monospace, SFMono-Regular, Menlo, monospace"
+      });
+      var name = el("text", {
+        "font-size": 11, stroke: "none",
         "font-family": "ui-monospace, SFMono-Regular, Menlo, monospace"
       });
       var badge = el("path", { "stroke-width": 1.7, "stroke-linecap": "round", "stroke-linejoin": "round", opacity: 0 });
-      g.appendChild(rect); g.appendChild(label); g.appendChild(badge);
+      g.appendChild(rect); g.appendChild(name); g.appendChild(label); g.appendChild(badge);
       gNodes.appendChild(g);
-      parts[id] = { g: g, rect: rect, label: label, badge: badge };
+      parts[id] = { g: g, rect: rect, name: name, label: label, badge: badge };
     }
 
     var bandBars = {};
@@ -226,10 +225,17 @@
         p.rect.setAttribute("width", Math.max(0, c.w));
         p.rect.setAttribute("fill", lit ? "#1a1a1a" : "#ffffff");
         p.rect.setAttribute("stroke", lit ? "none" : "#1a1a1a");
-        p.label.setAttribute("x", c.w - 11);
+        var ink = lit ? "#ffffff" : "#1a1a1a";
+        p.label.setAttribute("x", c.w - 10);
         p.label.setAttribute("y", NODE_H / 2 + 4);
-        p.label.setAttribute("fill", lit ? "#ffffff" : "#1a1a1a");
-        p.label.textContent = c.w > 40 ? NODES[id].tok : "";
+        p.label.setAttribute("fill", ink);
+        p.label.textContent = c.w > 44 ? NODES[id].tok : "";
+        p.name.setAttribute("x", 10);
+        p.name.setAttribute("y", NODE_H / 2 + 4);
+        p.name.setAttribute("fill", ink);
+        p.name.setAttribute("opacity", lit ? 0.8 : 0.62);
+        // Only show the name once the box is wide enough to hold it plus the cost.
+        p.name.textContent = c.w > NODES[id].name.length * 6.3 + 52 ? NODES[id].name : "";
         var isUsed = s.used.indexOf(id) >= 0;
         p.badge.setAttribute("opacity", isUsed ? 1 : 0);
         p.badge.setAttribute("stroke", "#1a1a1a");

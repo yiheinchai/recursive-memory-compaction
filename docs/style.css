@@ -157,6 +157,42 @@ figure.fig { margin: 0 0 30px; }
 }
 .fig figcaption b { color: var(--ink); font-weight: 500; }
 
+/* ------------------------------------------------- the compression ladder */
+
+.ladder .plate { padding: 6px 28px; }
+.rung {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 24px;
+  padding: 26px 0;
+  border-top: 1px solid var(--rule);
+}
+.rung:first-child { border-top: 0; }
+.rung-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding-top: 1px;
+}
+.rung-meta .lv { letter-spacing: .12em; }
+.rung-meta .tok { color: var(--faint); }
+.rung-bar { height: 7px; background: #ededed; }
+.rung-bar i { display: block; height: 100%; background: var(--ink); }
+.rung p {
+  margin: 15px 0 0;
+  font-size: 15.5px;
+  line-height: 1.6;
+  max-width: 74ch;
+  color: #2a2a2a;
+}
+
+@media (max-width: 620px) {
+  .rung { grid-template-columns: 1fr; gap: 12px; }
+  .rung-meta { flex-direction: row; gap: 12px; }
+}
+
 /* ---------------------------------------------------------- memory tree */
 
 .tree .plate { padding: 28px 26px 22px; }
