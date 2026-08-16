@@ -9,7 +9,7 @@ How RMC attaches to Claude Code and Codex, and what it writes where.
 ### As a plugin (recommended)
 
 ```
-/plugin marketplace add yiheinchai/recursive-memory-compaction
+/plugin marketplace add yiheinchai/rmc
 /plugin install rmc@rmc
 ```
 

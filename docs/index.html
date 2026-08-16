@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RMC — memory that gets cheaper the more you use it</title>
+<meta name="description" content="Recursive Memory Compaction: a continual-learning harness for Claude Code and Codex. Lessons are learned once, then compressed every time they prove useful.">
+<meta property="og:title" content="RMC — Recursive Memory Compaction">
+<meta property="og:description" content="Agent memory that compresses itself as you use it. Ambient, for Claude Code and Codex.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%230a0a0a'/><rect x='6' y='7' width='20' height='3' fill='white'/><rect x='9' y='14' width='14' height='3' fill='white'/><rect x='12' y='21' width='8' height='3' fill='white'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="wrap nav-in">
+    <a class="logo" href="./">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" fill="#0a0a0a"/>
+        <rect x="6" y="7" width="20" height="3" fill="#fff"/>
+        <rect x="9" y="14" width="14" height="3" fill="#fff"/>
+        <rect x="12" y="21" width="8" height="3" fill="#fff"/>
+      </svg>
+      RMC
+    </a>
+    <div class="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#why">Why compression</a>
+      <a href="docs.html">Docs</a>
+      <a class="btn" href="#install">Install</a>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap">
+  <div class="rail">
+    <span>Recursive&nbsp;Memory&nbsp;Compaction</span>
+    <span><b>Claude&nbsp;Code</b> &nbsp;·&nbsp; <b>Codex</b></span>
+  </div>
+</div>
+
+<!-- ------------------------------------------------------------- hero -->
+<div class="wrap hero">
+  <div>
+    <h1>Agent memory that<br><span class="accent">shrinks as you use it.</span></h1>
+    <p class="lede">
+      Most memory systems get more expensive the longer you use them. RMC gets
+      cheaper. Every time a lesson proves useful, it earns a shorter form — and
+      the short form is what you pay for next time.
+    </p>
+    <div class="hero-cta">
+      <a class="btn" href="#install">Get started</a>
+      <a class="btn btn-ghost" href="https://github.com/yiheinchai/rmc">View on GitHub&nbsp;↗</a>
+    </div>
+
+    <div class="catalog" role="tablist" aria-label="How RMC works">
+      <button class="item" role="tab" data-step="1" aria-selected="true"><span class="n">01</span><span class="t">Recall</span><span class="dot"></span></button>
+      <button class="item" role="tab" data-step="2" aria-selected="false"><span class="n">02</span><span class="t">Reflect</span><span class="dot"></span></button>
+      <button class="item" role="tab" data-step="3" aria-selected="false"><span class="n">03</span><span class="t">Attribute</span><span class="dot"></span></button>
+      <button class="item" role="tab" data-step="4" aria-selected="false"><span class="n">04</span><span class="t">Consolidate</span><span class="dot"></span></button>
+      <button class="item" role="tab" data-step="5" aria-selected="false"><span class="n">05</span><span class="t">Compress</span><span class="dot"></span></button>
+      <button class="item" role="tab" data-step="6" aria-selected="false"><span class="n">06</span><span class="t">Descend</span><span class="dot"></span></button>
+      <button class="item" role="tab" data-step="7" aria-selected="false"><span class="n">07</span><span class="t">Dream</span><span class="dot"></span></button>
+    </div>
+  </div>
+
+  <div class="stage" id="how">
+    <div class="panel">
+      <span class="tick tl"></span><span class="tick tr"></span>
+      <span class="tick bl"></span><span class="tick br"></span>
+
+      <!-- 01 RECALL -->
+      <svg data-fig="1" viewBox="0 0 400 300" fill="none" stroke="#fff" stroke-width="2">
+        <path d="M60 60v180M60 60h34M60 150h34M60 240h34" opacity=".45"/>
+        <rect x="94" y="46" width="70" height="28" opacity=".45"/>
+        <rect x="94" y="136" width="70" height="28" stroke-width="3"/>
+        <rect x="94" y="226" width="70" height="28" opacity=".45"/>
+        <path d="M164 150h60" stroke-width="3"/>
+        <path d="M212 141l14 9-14 9" stroke-width="3"/>
+        <rect x="236" y="76" width="104" height="148"/>
+        <path d="M254 104h68M254 122h50M254 140h68" opacity=".5"/>
+        <rect x="248" y="164" width="80" height="22" stroke-width="3"/>
+        <path d="M254 202h68M254 218h44" opacity=".5"/>
+        <text x="236" y="248" fill="#fff" stroke="none" font-family="monospace" font-size="13" opacity=".75">context</text>
+      </svg>
+
+      <!-- 02 REFLECT -->
+      <svg data-fig="2" viewBox="0 0 400 300" fill="none" stroke="#fff" stroke-width="2" hidden>
+        <path d="M50 210h300" opacity=".45"/>
+        <path d="M74 210v-26M112 210v-44M150 210v-18M188 210v-52M226 210v-30M264 210v-40M302 210v-22" opacity=".45"/>
+        <circle cx="188" cy="112" r="46" stroke-width="3"/>
+        <path d="M221 145l34 34" stroke-width="3" stroke-linecap="round"/>
+        <path d="M168 112l14 15 26-30" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M188 158v52" stroke-width="3" stroke-dasharray="5 6"/>
+        <text x="50" y="246" fill="#fff" stroke="none" font-family="monospace" font-size="13" opacity=".75">a turn worth learning from</text>
+      </svg>
+
+      <!-- 03 ATTRIBUTE -->
+      <svg data-fig="3" viewBox="0 0 400 300" fill="none" stroke="#fff" stroke-width="2" hidden>
+        <rect x="56" y="52" width="150" height="42" opacity=".45"/>
+        <rect x="56" y="126" width="150" height="42" stroke-width="3"/>
+        <rect x="56" y="200" width="150" height="42" opacity=".45"/>
+        <path d="M72 68h58M72 82h84" opacity=".45"/>
+        <path d="M72 142h58M72 156h84"/>
+        <path d="M72 216h58M72 230h84" opacity=".45"/>
+        <path d="M240 62l24 24M264 62l-24 24" opacity=".5" stroke-linecap="round"/>
+        <path d="M238 148l14 14 26-30" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M240 210l24 24M264 210l-24 24" opacity=".5" stroke-linecap="round"/>
+        <path d="M300 147h44" stroke-width="3"/>
+        <path d="M332 138l12 9-12 9" stroke-width="3"/>
+        <text x="292" y="182" fill="#fff" stroke="none" font-family="monospace" font-size="13" opacity=".75">used</text>
+      </svg>
+
+      <!-- 04 CONSOLIDATE -->
+      <svg data-fig="4" viewBox="0 0 400 300" fill="none" stroke="#fff" stroke-width="2" hidden>
+        <rect x="60" y="128" width="66" height="34" stroke-width="3" stroke-dasharray="6 5"/>
+        <path d="M126 145h44" stroke-width="3"/>
+        <path d="M158 136l12 9-12 9" stroke-width="3"/>
+        <circle cx="212" cy="145" r="24"/>
+        <path d="M236 145l40-62M236 145l40-18M236 145h40M236 145l40 24M236 145l40 62" opacity=".55"/>
+        <rect x="276" y="70" width="62" height="24" opacity=".55"/>
+        <rect x="276" y="115" width="62" height="24" opacity=".55"/>
+        <rect x="276" y="133" width="62" height="24" stroke-width="3"/>
+        <rect x="276" y="157" width="62" height="24" opacity=".55"/>
+        <rect x="276" y="196" width="62" height="24" opacity=".55"/>
+        <text x="60" y="196" fill="#fff" stroke="none" font-family="monospace" font-size="13" opacity=".75">new lesson</text>
+        <text x="60" y="216" fill="#fff" stroke="none" font-family="monospace" font-size="13" opacity=".75">→ 5 relations</text>
+      </svg>
+
+      <!-- 05 COMPRESS -->
+      <svg data-fig="5" viewBox="0 0 400 300" fill="none" stroke="#fff" stroke-width="2" hidden>
+        <rect x="56" y="56" width="228" height="36"/>
+        <rect x="56" y="128" width="164" height="36"/>
+        <rect x="56" y="200" width="106" height="36" stroke-width="3"/>
+        <path d="M170 92v36M170 164v36" stroke-dasharray="5 6" opacity=".7"/>
+        <text x="300" y="80" fill="#fff" stroke="none" font-family="monospace" font-size="14">L0</text>
+        <text x="300" y="152" fill="#fff" stroke="none" font-family="monospace" font-size="14">L1</text>
+        <text x="300" y="224" fill="#fff" stroke="none" font-family="monospace" font-size="14">L2</text>
+        <path d="M232 146l44 -14" opacity=".55"/>
+        <rect x="276" y="112" width="14" height="14" opacity=".55"/>
+        <path d="M174 218l44 14" opacity=".55"/>
+        <rect x="218" y="226" width="14" height="14" opacity=".55"/>
+        <text x="56" y="272" fill="#fff" stroke="none" font-family="monospace" font-size="13" opacity=".75">every drop is recorded</text>
+      </svg>
+
+      <!-- 06 DESCEND -->
+      <svg data-fig="6" viewBox="0 0 400 300" fill="none" stroke="#fff" stroke-width="2" hidden>
+        <rect x="152" y="40" width="96" height="30" opacity=".5"/>
+        <path d="M186 46l28 20M214 46l-28 20" opacity=".8" stroke-linecap="round"/>
+        <path d="M200 70v34M200 104h-72v22M200 104h72v22" opacity=".5"/>
+        <rect x="88" y="126" width="80" height="30" opacity=".5"/>
+        <rect x="232" y="126" width="80" height="30" stroke-width="3"/>
+        <path d="M272 156v34M272 190h-40v22M272 190h40v22" stroke-width="3"/>
+        <rect x="192" y="212" width="80" height="30" stroke-width="3"/>
+        <rect x="288" y="212" width="80" height="30" opacity=".5"/>
+        <text x="42" y="234" fill="#fff" stroke="none" font-family="monospace" font-size="13" opacity=".75">abstract fails</text>
+        <text x="42" y="254" fill="#fff" stroke="none" font-family="monospace" font-size="13" opacity=".75">→ pay for detail</text>
+      </svg>
+
+      <!-- 07 DREAM -->
+      <svg data-fig="7" viewBox="0 0 400 300" fill="none" stroke="#fff" stroke-width="2" hidden>
+        <path d="M330 44a30 30 0 1 0 26 44 34 34 0 0 1-26-44z" stroke-width="2" opacity=".7"/>
+        <rect x="140" y="52" width="112" height="32" stroke-width="3" stroke-dasharray="6 5"/>
+        <text x="152" y="74" fill="#fff" stroke="none" font-family="monospace" font-size="13">new parent</text>
+        <path d="M196 84v30M196 114h-84v28M196 114h84v28M196 114v28" stroke-width="3"/>
+        <rect x="66" y="142" width="92" height="30"/>
+        <rect x="150" y="142" width="92" height="30"/>
+        <rect x="234" y="142" width="92" height="30"/>
+        <path d="M112 172v28M196 172v28M280 172v28" opacity=".45"/>
+        <path d="M74 212h76M158 212h76M242 212h76" opacity=".45"/>
+        <text x="66" y="248" fill="#fff" stroke="none" font-family="monospace" font-size="13" opacity=".75">used together, repeatedly</text>
+      </svg>
+    </div>
+
+    <div class="caption">
+      <div class="eyebrow" data-cap-eyebrow>Step 01 / 07</div>
+      <h2 data-cap-title>Recall</h2>
+      <p data-cap-body>
+        You type a prompt. Before the agent sees it, RMC walks its lesson graph
+        from the most abstract node down, asking the model which branches could
+        possibly matter — never keyword matching — and injects the handful that
+        survive. Usually zero extra model calls, because the answer is cached.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- -------------------------------------------------------------- why -->
+<section id="why">
+  <div class="wrap">
+    <div class="kicker">The problem</div>
+    <div class="two">
+      <div>
+        <h3>Memory normally rots in one of two ways.</h3>
+      </div>
+      <div>
+        <p style="color:var(--muted);margin-top:6px">
+          Append-only stores grow until retrieval is guesswork and the context
+          bill dwarfs the task. Aggressive summarisers throw away the exact port
+          number, the one flag that mattered — and you find out when something
+          breaks, not when it was dropped.
+        </p>
+        <p style="color:var(--muted)">
+          RMC's answer is that <b style="color:var(--ink)">use is the only
+          evidence worth compressing on</b>. A lesson that was served but
+          ignored earns nothing. A lesson that was actually used, on work that
+          actually succeeded, has demonstrated slack — so it earns one attempt
+          at a shorter form, and the shorter form has to pass a replay of the
+          real work before it replaces anything.
+        </p>
+      </div>
+    </div>
+
+    <div class="three" style="margin-top:46px">
+      <div class="cell">
+        <div class="n">01</div>
+        <h4>Nothing is deleted</h4>
+        <p>Compression adds a level above; the detailed original stays reachable underneath it.</p>
+      </div>
+      <div class="cell">
+        <div class="n">02</div>
+        <h4>Every drop is recorded</h4>
+        <p>A shorter lesson carries a manifest of what it left out, so descent is a ranking problem, not a search.</p>
+      </div>
+      <div class="cell">
+        <div class="n">03</div>
+        <h4>Compression must be earned</h4>
+        <p>The short form replays past successful work. If it can't reproduce the outcome, it's rejected.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------ rule -->
+<section>
+  <div class="wrap">
+    <div class="kicker">The governing rule</div>
+    <div class="two">
+      <div>
+        <h3>The harness owns structure.<br>The&nbsp;model owns meaning.</h3>
+        <p style="color:var(--muted)">
+          There is no cosine similarity in RMC, no Jaccard index, no keyword
+          bank. Code decides <i>whether to ask</i> — budgets, traversal order,
+          caching, schemas. The model decides <i>every</i> question whose answer
+          is a judgement: is this relevant, does this contradict that, did this
+          survive compression, is this worth keeping.
+        </p>
+      </div>
+      <div>
+        <div class="scroll">
+        <table>
+          <tr><th>Harness</th><th>Model</th></tr>
+          <tr><td>Walk the graph, most abstract first</td><td>Which branches could matter</td></tr>
+          <tr><td>Enforce a token budget</td><td>Whether the short form still works</td></tr>
+          <tr><td>Count that a node was used</td><td>Whether it was used</td></tr>
+          <tr><td>Detect co-use across episodes</td><td>What the shared parent should say</td></tr>
+          <tr><td>Hold the contradiction open</td><td>That two lessons contradict</td></tr>
+        </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- --------------------------------------------------------- install -->
+<section id="install">
+  <div class="wrap">
+    <div class="kicker">Install</div>
+    <div class="two">
+      <div>
+        <h3>You don't drive it.</h3>
+        <p style="color:var(--muted)">
+          Install once, then work normally. RMC runs in hooks: it injects on
+          prompt submit, reflects off-thread when a turn ends, mints and
+          compresses when a session ends, and consolidates once a day. Every
+          expensive step is detached, so nothing blocks your turn.
+        </p>
+        <p style="color:var(--muted)">
+          Python 3.10+, at least one of <code>claude</code> or <code>codex</code>,
+          and zero third-party Python dependencies.
+        </p>
+        <p><a href="docs.html">Read the docs&nbsp;→</a></p>
+      </div>
+      <div>
+        <div class="kicker" style="margin-bottom:10px">As a Claude Code plugin</div>
+<pre><span class="b">/plugin</span> marketplace add yiheinchai/rmc
+<span class="b">/plugin</span> install rmc@rmc</pre>
+        <div class="kicker" style="margin:26px 0 10px">Or from a clone</div>
+<pre>git clone https://github.com/yiheinchai/rmc
+<span class="c">cd</span> rmc &amp;&amp; ./bin/rmc install \
+  --target claude --target codex</pre>
+        <div class="kicker" style="margin:26px 0 10px">Then, whenever you're curious</div>
+<pre>rmc status     <span class="c"># what it knows, what it cost</span>
+rmc tree       <span class="c"># the graph, by level</span>
+rmc recall --prompt <span class="g">"..."</span>  <span class="c"># what it would inject</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap row">
+    <span>RMC — Recursive Memory Compaction</span>
+    <a href="https://github.com/yiheinchai/rmc">GitHub</a>
+    <a href="docs.html">Docs</a>
+    <a href="https://github.com/yiheinchai/rmc/blob/main/DESIGN.md">Design notes</a>
+    <span style="margin-left:auto">MIT</span>
+  </div>
+</footer>
+
+<script>
+const STEPS = {
+  1: ["Recall", "You type a prompt. Before the agent sees it, RMC walks its lesson graph from the most abstract node down, asking the model which branches could possibly matter — never keyword matching — and injects the handful that survive. Usually zero extra model calls, because the answer is cached."],
+  2: ["Reflect", "When a substantial turn ends, a reflector runs off-thread on a digest of what happened — including the agent's own reasoning. It asks one question: was there something here worth learning? Most turns answer no, and cost nothing further."],
+  3: ["Attribute", "Being served is a decision; being used is an outcome. The reflector reads the transcript and names which injected lessons actually changed what the agent did. Only those get credit — and only credited lessons ever earn compression."],
+  4: ["Consolidate", "A new lesson isn't appended blindly. The model places it against what is already known as one of five relations: duplicate, refines, contradicts, specialises, or orthogonal. A contradiction is held open and surfaced to you rather than silently overwritten."],
+  5: ["Compress", "A used lesson earns an attempt at a shorter form. The attempt must replay past successful work and reproduce the outcome, and it must record a manifest of exactly what it dropped. Fail either, and the original stands."],
+  6: ["Descend", "Load the most compressed node first. If it isn't enough, the delta manifest says what each child restores — so choosing where to go next is a ranking over named omissions rather than a blind walk down the tree."],
+  7: ["Dream", "Once a day, if there is new evidence, RMC looks for lessons repeatedly used *together* on successful work and gives them a shared parent. That's generalisation across lessons, as opposed to compression within one — and it's where conflicts get found."]
+};
+const panel = document.querySelector('.panel');
+const capE = document.querySelector('[data-cap-eyebrow]');
+const capT = document.querySelector('[data-cap-title]');
+const capB = document.querySelector('[data-cap-body]');
+document.querySelectorAll('.item').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const s = btn.dataset.step;
+    document.querySelectorAll('.item').forEach(b => b.setAttribute('aria-selected', String(b === btn)));
+    panel.querySelectorAll('svg[data-fig]').forEach(f => { f.hidden = f.dataset.fig !== s; });
+    capE.textContent = `Step 0${s} / 07`;
+    capT.textContent = STEPS[s][0];
+    capB.textContent = STEPS[s][1];
+  });
+});
+</script>
+</body>
+</html>

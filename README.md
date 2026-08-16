@@ -8,6 +8,8 @@ for detail when the abstraction fails.
 
 You do not drive it. You work normally, and it runs in hooks.
 
+**[Read the docs →](https://yiheinchai.com/rmc)**
+
 ---
 
 ## Contents
@@ -527,15 +529,15 @@ dependencies.
 **As a Claude Code plugin** (works in every repo):
 
 ```
-/plugin marketplace add yiheinchai/recursive-memory-compaction
+/plugin marketplace add yiheinchai/rmc
 /plugin install rmc@rmc
 ```
 
 **Or from a clone**, into one repo:
 
 ```bash
-git clone https://github.com/yiheinchai/recursive-memory-compaction
-cd recursive-memory-compaction && ./bin/rmc install --target claude --target codex
+git clone https://github.com/yiheinchai/rmc
+cd rmc && ./bin/rmc install --target claude --target codex
 ```
 
 `./bin/rmc` needs no virtualenv — the package is stdlib-only. Add
