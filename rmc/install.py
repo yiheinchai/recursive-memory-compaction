@@ -267,7 +267,89 @@ def uninstall_codex(scope: str, path: Path) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-def install(*, scope: str, targets: list[str], path: Path, dry_run: bool = False) -> int:
+def shim_path() -> Path | None:
+    """The bin/rmc launcher, when RMC is running from a clone."""
+    candidate = Path(__file__).resolve().parent.parent / "bin" / "rmc"
+    return candidate if candidate.exists() else None
+
+
+def cli_on_path() -> str | None:
+    """Where the shell would find `rmc`, if anywhere."""
+    return shutil.which("rmc")
+
+
+def link_dir() -> Path | None:
+    """A writable bin directory to link into, preferring ones already on PATH.
+
+    Only user-owned locations: an install that needs sudo is not one we should
+    be performing on someone's behalf.
+    """
+    on_path = [Path(p) for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+    preferred = [Path.home() / ".local" / "bin", Path.home() / "bin"]
+    for d in preferred:
+        if d in on_path and os.access(d, os.W_OK):
+            return d
+    for d in preferred:                      # exists and writable, just not on PATH
+        if d.is_dir() and os.access(d, os.W_OK):
+            return d
+    return preferred[0]                      # we will create it, and say so
+
+
+def link_cli(*, dry_run: bool = False) -> list[str]:
+    """Put `rmc` on PATH. Hooks never needed it; humans do.
+
+    Hooks invoke the package by absolute path, so wiring them says nothing
+    about whether the command exists in a shell — which is why an install
+    could report success and still leave `rmc status` failing.
+    """
+    found = cli_on_path()
+    if found:
+        return [f"= cli: already on PATH at {found}"]
+
+    shim = shim_path()
+    if shim is None:
+        return ["! cli: no bin/rmc found (installed as a package?) — try: pip install -e ."]
+
+    target_dir = link_dir()
+    target = target_dir / "rmc"
+    on_path = target_dir in [Path(p) for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+
+    if dry_run:
+        return [f"+ cli: would link {target} -> {shim}"]
+
+    if target.exists() or target.is_symlink():
+        return [f"! cli: {target} already exists and is not on PATH; leaving it alone"]
+
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target.symlink_to(shim)
+    except OSError as exc:
+        return [f"! cli: could not link into {target_dir} ({exc})"]
+
+    notes = [f"+ cli: linked {target} -> {shim}"]
+    if not on_path:
+        notes.append(f'! cli: {target_dir} is not on PATH — add: export PATH="{target_dir}:$PATH"')
+    return notes
+
+
+def cli_advice() -> list[str]:
+    """What to tell someone who did not pass --link."""
+    if cli_on_path():
+        return []
+    shim = shim_path()
+    if shim is None:
+        return ["`rmc` is not on PATH. Install the package to get it:", "    pip install -e ."]
+    target = link_dir() / "rmc"
+    return [
+        "`rmc` is not on PATH, so the commands above will not run in a shell.",
+        "Hooks are unaffected — they call the package directly. To get the CLI:",
+        f"    ln -s {shim} {target}",
+        "or re-run this with --link.",
+    ]
+
+
+def install(*, scope: str, targets: list[str], path: Path, dry_run: bool = False,
+            link: bool = False) -> int:
     from .store import Store
 
     path = path.resolve()
@@ -285,10 +367,24 @@ def install(*, scope: str, targets: list[str], path: Path, dry_run: bool = False
         for note in notes:
             print(f"  {note}")
 
+    if link:
+        print("\n[cli]")
+        for note in link_cli(dry_run=dry_run):
+            print(f"  {note}")
+
     if dry_run:
         print("\n(dry run — nothing written)")
+        return 0
+
+    print("\nRMC is active. Lessons will be recalled and compressed automatically.")
+    # --link already reported precisely what it did and what remains; repeating
+    # the generic advice would tell them to re-run the flag they just used.
+    advice = [] if link else cli_advice()
+    if advice:
+        print()
+        for line in advice:
+            print(line)
     else:
-        print("\nRMC is active. Lessons will be recalled and compressed automatically.")
         print("Check anytime with: rmc status")
     return 0
 
@@ -315,6 +411,14 @@ def status() -> list[str]:
         installed = [e for e in CLAUDE_EVENTS if _has_rmc(hooks.get(e, []) or [])]
         mark = "✓" if installed else "✗"
         out.append(f"{mark} claude/{scope}: {', '.join(installed) or 'not installed'}  ({target})")
+    found = cli_on_path()
+    if found:
+        out.append(f"✓ cli: rmc on PATH  ({found})")
+    else:
+        shim = shim_path()
+        hint = f"ln -s {shim} {link_dir() / 'rmc'}" if shim else "pip install -e ."
+        out.append(f"✗ cli: rmc not on PATH — hooks still work; for a shell, {hint}")
+
     md = agents_md_path(Path(os.getcwd()))
     has_block = md.exists() and "<!-- rmc:start -->" in md.read_text(encoding="utf-8")
     out.append(f"{'✓' if has_block else '✗'} codex/project: AGENTS.md block  ({md})")

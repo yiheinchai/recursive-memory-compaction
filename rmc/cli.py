@@ -907,6 +907,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         targets=args.target or ["claude"],
         path=Path(args.path or os.getcwd()),
         dry_run=args.dry_run,
+        link=args.link,
     )
 
 
@@ -1149,6 +1150,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--scope", choices=["user", "project"], default="project")
     p.add_argument("--path")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--link", action="store_true",
+                   help="also put the rmc command on PATH (hooks do not need it; you do)")
     p.set_defaults(func=cmd_install)
 
     p = sub.add_parser("uninstall", help="remove RMC hooks")

@@ -26,6 +26,10 @@ Wire RMC into the host agent(s).
 | `--scope project\|user` | this repo (default) or globally |
 | `--dry-run` | print what would be written, write nothing |
 
+`--link` also puts the `rmc` command on PATH, by symlinking `bin/rmc` into
+`~/.local/bin`. Hooks never need this — they invoke the package by absolute
+path — so without it RMC works while `rmc status` reports command not found.
+
 ### `rmc uninstall`
 Remove only RMC-tagged hooks. Lessons are left in place.
 

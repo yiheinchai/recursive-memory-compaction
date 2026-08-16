@@ -15,10 +15,13 @@ Nothing here asserts on lexical similarity, because nothing in RMC computes it.
 
 from __future__ import annotations
 
+import os
+import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -1932,3 +1935,69 @@ class TestHooks(StoreCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestCliOnPath(unittest.TestCase):
+    """Wiring hooks does not make `rmc` runnable in a shell.
+
+    Hooks invoke the package by absolute path, so an install could report
+    success while `rmc status` — which the README tells you to run — failed
+    with command not found.
+    """
+
+    def setUp(self) -> None:
+        from rmc import install as inst
+        self.inst = inst
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _env(self, path_value: str, home: str):
+        return mock.patch.dict(os.environ, {"PATH": path_value, "HOME": home}, clear=False)
+
+    def test_shim_is_found_from_the_clone(self) -> None:
+        shim = self.inst.shim_path()
+        self.assertIsNotNone(shim, "bin/rmc should be discoverable from the package")
+        self.assertTrue(os.access(shim, os.X_OK), "and it must be executable")
+
+    def test_link_dir_prefers_a_writable_dir_already_on_path(self) -> None:
+        good = Path(self.tmp) / ".local" / "bin"
+        good.mkdir(parents=True)
+        with mock.patch.object(Path, "home", staticmethod(lambda: Path(self.tmp))), \
+             self._env(str(good), self.tmp):
+            self.assertEqual(self.inst.link_dir(), good)
+
+    def test_link_creates_a_working_command(self) -> None:
+        home = Path(self.tmp)
+        with mock.patch.object(Path, "home", staticmethod(lambda: home)), \
+             self._env("/usr/bin:/bin", self.tmp), \
+             mock.patch.object(self.inst.shutil, "which", return_value=None):
+            notes = self.inst.link_cli()
+        link = home / ".local" / "bin" / "rmc"
+        self.assertTrue(link.is_symlink(), notes)
+        self.assertEqual(link.resolve(), self.inst.shim_path().resolve())
+        self.assertTrue(any("not on PATH" in n for n in notes),
+                        "a link into a dir that is not on PATH must say so")
+
+    def test_advice_is_given_when_the_command_is_missing(self) -> None:
+        with mock.patch.object(self.inst.shutil, "which", return_value=None):
+            advice = self.inst.cli_advice()
+        self.assertTrue(advice)
+        self.assertTrue(any("ln -s" in line for line in advice))
+        self.assertTrue(any("Hooks are unaffected" in line for line in advice),
+                        "must not imply the hooks are broken too")
+
+    def test_no_advice_when_already_on_path(self) -> None:
+        with mock.patch.object(self.inst.shutil, "which", return_value="/somewhere/rmc"):
+            self.assertEqual(self.inst.cli_advice(), [])
+
+    def test_existing_unrelated_file_is_not_clobbered(self) -> None:
+        home = Path(self.tmp)
+        target = home / ".local" / "bin"
+        target.mkdir(parents=True)
+        (target / "rmc").write_text("someone else's script")
+        with mock.patch.object(Path, "home", staticmethod(lambda: home)), \
+             self._env("/usr/bin:/bin", self.tmp), \
+             mock.patch.object(self.inst.shutil, "which", return_value=None):
+            notes = self.inst.link_cli()
+        self.assertEqual((target / "rmc").read_text(), "someone else's script")
+        self.assertTrue(any("already exists" in n for n in notes))

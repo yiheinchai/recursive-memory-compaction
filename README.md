@@ -543,6 +543,18 @@ cd rmc && ./bin/rmc install --target claude --target codex
 `./bin/rmc` needs no virtualenv — the package is stdlib-only. Add
 `--scope user` to install globally. `rmc uninstall` removes only what RMC added.
 
+**Getting the `rmc` command.** Installing wires *hooks*, which invoke the
+package by absolute path and never need your PATH — so RMC runs whether or not
+the command exists in a shell. The CLI below is a separate thing. Add `--link`
+to put it on PATH:
+
+```bash
+./bin/rmc install --link
+```
+
+or do it yourself with `ln -s "$PWD/bin/rmc" ~/.local/bin/rmc`. `rmc doctor`
+reports which of the two you have.
+
 **Codex** gets an `AGENTS.md` block instructing the agent to call `rmc recall`
 itself, since Codex's hook schema is less settled. Codex also works as an
 execution backend for any RMC install (`rmc config agent codex`).
