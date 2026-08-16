@@ -281,10 +281,13 @@
     /* Move a card for real, then fly a ghost along the path it took. The pane
        scroll is applied first and its delta folded into the target, or the
        ghost would land where the transcript used to be. */
-    function travel(card, dest, cls, paneIdx) {
+    function travel(card, dest, cls, paneIdx, originEl) {
       var el = card.el;
-      var first = el.getBoundingClientRect();
-      var wasVisible = first.width > 0 && el.offsetParent !== null && !el.classList.contains("hidden");
+      // An explicit origin lets a copy launch from the node it was copied
+      // from, rather than from wherever the copy happened to be parked.
+      var first = (originEl || el).getBoundingClientRect();
+      var wasVisible = first.width > 0 &&
+        (originEl ? originEl.offsetParent !== null : el.offsetParent !== null);
       var prevY = paneIdx != null ? panY[paneIdx] : 0;
 
       el.className = "lesson-card " + (cls || "");
@@ -355,10 +358,16 @@
       panes[0].classList.remove("dim", "rushing");
       panes.forEach(function (p) { p.classList.remove("gone"); });
       rushTag.classList.remove("on");
-      freshCards();
+      // Every place a card can come to rest must be emptied, or a replay
+      // stacks another copy on top of the last one.
+      Array.prototype.forEach.call(root.querySelectorAll(".lesson-mount"), function (m) {
+        while (m.firstChild) m.removeChild(m.firstChild);
+        m.style.height = "";
+      });
       Array.prototype.forEach.call(tiers, function (sl) {
         while (sl.firstChild) sl.removeChild(sl.firstChild);
       });
+      freshCards();
       Array.prototype.forEach.call(root.querySelectorAll(".tier"), function (t) {
         t.classList.remove("live", "apex");
       });
@@ -429,21 +438,12 @@
           S.txt.textContent = pair
             ? "RMC · 2 lessons · " + total + " tok"
             : "RMC · 1 lesson · L" + level + " · " + TOK[level] + " tok";
+          var nodes = tierFor(level).children;
           ctx.level(level);
-          ctx.el.className = "lesson-card";
-          limbo.appendChild(ctx.el);
-          var src = tierFor(level).firstChild;
-          if (src) {                        // start the copy where the node sits
-            var r = src.getBoundingClientRect(), sr0 = stage.getBoundingClientRect();
-            ctx.el.className = "lesson-card in-store stored";
-            tierFor(level).appendChild(ctx.el);
-          }
-          travel(ctx, S.top, "inline", idx);
+          travel(ctx, S.top, "inline", idx, nodes[0]);
           if (pair) {
             ctxB.level(0);
-            ctxB.el.className = "lesson-card in-store stored";
-            tierFor(level).appendChild(ctxB.el);
-            travel(ctxB, S.top, "inline", idx);
+            travel(ctxB, S.top, "inline", idx, nodes[1] || nodes[0]);
           }
           storeNote.textContent = (pair ? "2 lessons · " : "1 lesson · L" + level + " · ") +
                                   total + " tok · recalled";
