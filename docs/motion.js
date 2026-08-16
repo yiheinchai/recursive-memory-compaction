@@ -1,14 +1,14 @@
 /* Two animations that carry the argument, so the page does not have to.
  *
- * 1. A terminal that plays one session, distils it to a single line, and then
- *    starts a NEW session with that line already in context. Terminal chrome
- *    does the explaining for free: nobody needs to be told it is a CLI session.
+ * 1. A Claude Code window that plays one session, distils it to a single line,
+ *    and then starts a NEW session with that line already in context. The
+ *    chrome is copied from the real thing on purpose: nobody should need to be
+ *    told they are looking at a Claude Code session.
  *
  * 2. One lesson card that rewrites itself shorter, twice.
  *
- * Both use fixed-height slots. A figure that grows while it plays would shove
- * the rest of the page down on every tick, which is worse than the motion is
- * good. The shrinking happens inside a reserved box.
+ * Both use reserved slots. A figure that grows while it plays would shove the
+ * rest of the page down on every tick, which is worse than the motion is good.
  */
 (function () {
   "use strict";
@@ -39,14 +39,10 @@
     }, ms + 50);
   }
 
-  /* A cancellable list of timed steps that can be replayed from zero. */
   function Timeline(steps, loopAt) {
     var handles = [];
     return {
-      stop: function () {
-        handles.forEach(clearTimeout);
-        handles = [];
-      },
+      stop: function () { handles.forEach(clearTimeout); handles = []; },
       play: function () {
         this.stop();
         var self = this;
@@ -61,98 +57,118 @@
   }
 
   // ======================================================================= //
-  // 1. The terminal                                                         //
+  // 1. The Claude Code window                                               //
   // ======================================================================= //
-
-  var ACT1 = [
-    ["you",   "❯", "the S3 retry keeps silently failing"],
-    ["agent", "⏺", "Checking the response status code…"],
-    ["tool",  "└", "Bash  curl -sI $BUCKET/objects/42"],
-    ["agent", "⏺", "Status is 200. Adding two more attempts…"],
-    ["agent", "⏺", "Still failing. Adding logging…"],
-    ["tool",  "└", "Edit  src/storage/s3.ts"],
-    ["you",   "❯", "S3 returns 200 with the error in the body"],
-    ["agent", "⏺", "Parsing the body instead. Fixed."]
-  ];
-
-  var ACT3 = [
-    ["you",   "❯", "add retry to the payments client"],
-    ["agent", "⏺", "Idempotency key set; parsing the response body."],
-    ["tool",  "└", "Edit  src/payments/client.ts"],
-    ["agent", "⏺", "Done — first try."]
-  ];
 
   var LESSON = "Retry idempotent calls; parse bodies, not status codes.";
 
-  function line(kind, mark, text) {
-    var el = h("div", "ln " + kind);
-    el.appendChild(h("span", "who", mark));
-    el.appendChild(h("span", "txt", text));
+  //  kind:  user | status | bullet | recall | lesson
+  //  out:   the ⎿ line underneath a tool call
+  var ACT1 = [
+    { kind: "user",   text: "the S3 retry keeps silently failing" },
+    { kind: "status", text: "Investigating… (3s · ↑ 1.4k tokens · esc to interrupt)" },
+    { kind: "bullet", text: "Bash(curl -sI $BUCKET/objects/42)", out: "HTTP/1.1 200 OK" },
+    { kind: "bullet", text: "Status is 200, so the client reads it as success. Raising the attempt count." },
+    { kind: "bullet", text: "Update(src/storage/s3.ts)", out: "Updated with 6 additions and 2 removals" },
+    { kind: "bullet", text: "Still failing. Adding logging around the response…" },
+    { kind: "user",   text: "S3 returns 200 with the error in the body" },
+    { kind: "bullet", text: "Parsing the body, not the status. Fixed." }
+  ];
+
+  var ACT3 = [
+    { kind: "user",   text: "add retry to the payments client" },
+    { kind: "bullet", text: "Idempotency key set, and I'm parsing the response body." },
+    { kind: "bullet", text: "Update(src/payments/client.ts)", out: "Updated with 4 additions" },
+    { kind: "bullet", text: "Done — first try." }
+  ];
+
+  var MARK = { user: "›", status: "✱", bullet: "⏺", recall: "⋯", lesson: "" };
+
+  function row(spec) {
+    var el = h("div", "ln " + spec.kind);
+    var head = h("div", "ln-head");
+    head.appendChild(h("span", "mark", MARK[spec.kind]));
+    head.appendChild(h("span", "txt", spec.text));
+    el.appendChild(head);
+    if (spec.out) {
+      var o = h("div", "ln-out");
+      o.appendChild(h("span", "mark", "⎿"));
+      o.appendChild(h("span", "txt", spec.out));
+      el.appendChild(o);
+    }
     return el;
   }
 
+  var SPIN = ["◐", "◓", "◑", "◒"];
+
   function terminal(root) {
-    var bar = root.querySelector("[data-term-act]");
     var body = root.querySelector("[data-term-body]");
+    var title = root.querySelector("[data-term-title]");
     var foot = root.querySelector("[data-term-foot]");
+    var spin = root.querySelector("[data-term-spin]");
 
-    var a1 = ACT1.map(function (l) { return line(l[0], l[1], l[2]); });
-    var ctx = h("div", "ln rmc");
-    ctx.appendChild(h("span", "who", "⋯"));
-    ctx.appendChild(h("span", "txt", "RMC · 1 lesson recalled · 146 tok"));
-    var lesson = line("lesson", "", LESSON);
-    var a3 = ACT3.map(function (l) { return line(l[0], l[1], l[2]); });
+    var a1 = ACT1.map(row);
+    var recall = row({ kind: "recall", text: "RMC · 1 lesson recalled · 146 tok" });
+    var lesson = row({ kind: "lesson", text: LESSON });
+    var a3 = ACT3.map(row);
+    a1.concat([recall, lesson], a3).forEach(function (n) { body.appendChild(n); });
 
-    a1.concat([ctx, lesson], a3).forEach(function (n) { body.appendChild(n); });
-
-    function show(n) { n.classList.remove("out"); n.classList.add("on"); }
+    function show(n) { n.classList.remove("leaving"); n.classList.add("on"); }
     function hide(n) {
       if (!n.classList.contains("on")) return;
-      n.classList.add("out");
-      setTimeout(function () { n.classList.remove("on", "out"); }, 320);
+      n.classList.add("leaving");
+      setTimeout(function () { n.classList.remove("on", "leaving"); }, 320);
     }
     function reset() {
-      a1.concat([ctx, lesson], a3).forEach(function (n) {
-        n.classList.remove("on", "out");
+      a1.concat([recall, lesson], a3).forEach(function (n) {
+        n.classList.remove("on", "leaving");
       });
-      bar.textContent = "SESSION · MONDAY";
+      title.textContent = "Fix the silent S3 retry failure";
       foot.textContent = "";
     }
 
     var steps = [];
     ACT1.forEach(function (_, i) {
-      steps.push({ at: 500 + i * 400, run: function () { show(a1[i]); } });
+      steps.push({ at: 600 + i * 480, run: function () { show(a1[i]); } });
     });
-    steps.push({ at: 3900, run: function () { foot.textContent = "4,200 tokens to get there"; } });
-    steps.push({ at: 4900, run: function () { bar.textContent = "RMC · REFLECTING…"; } });
-    steps.push({ at: 5700, run: function () {
-      a1.forEach(hide);
-      setTimeout(function () { show(lesson); }, 260);
-    } });
+    steps.push({ at: 4500, run: function () { foot.textContent = "4,200 tokens to get here"; } });
+    steps.push({ at: 5500, run: function () { title.textContent = "RMC · reflecting on session 14"; } });
     steps.push({ at: 6300, run: function () {
-      bar.textContent = "LESSON · KEPT";
-      foot.textContent = "146 tokens — the finding-out is not kept";
+      a1.forEach(hide);
+      setTimeout(function () { show(lesson); }, 280);
     } });
-    steps.push({ at: 8600, run: function () {
-      bar.textContent = "SESSION · THURSDAY";
+    steps.push({ at: 7000, run: function () {
+      foot.textContent = "146 tokens kept — the finding-out is not";
+    } });
+    steps.push({ at: 9400, run: function () {
+      title.textContent = "Add retry to the payments client";
       foot.textContent = "";
-      show(ctx);
+      show(recall);
     } });
     ACT3.forEach(function (_, i) {
-      steps.push({ at: 9400 + i * 430, run: function () { show(a3[i]); } });
+      steps.push({ at: 10300 + i * 520, run: function () { show(a3[i]); } });
     });
-    steps.push({ at: 11400, run: function () { foot.textContent = "right on the first attempt"; } });
-    steps.push({ at: 14600, run: reset });
+    steps.push({ at: 12600, run: function () { foot.textContent = "right on the first attempt"; } });
+    steps.push({ at: 16200, run: reset });
 
-    var tl = Timeline(steps, 15000);
-    if (REDUCED) { show(ctx); show(lesson); a3.forEach(show); return; }
+    var tl = Timeline(steps, 16600);
+
+    if (REDUCED) {
+      show(recall); show(lesson); a3.forEach(show);
+      title.textContent = "Add retry to the payments client";
+      foot.textContent = "right on the first attempt";
+      return;
+    }
+
+    var frame = 0;
+    setInterval(function () { spin.textContent = SPIN[frame++ % SPIN.length]; }, 260);
 
     var replay = root.querySelector("[data-replay]");
     if (replay) replay.addEventListener("click", function () { reset(); tl.play(); });
 
     new IntersectionObserver(function (e) {
       e[0].isIntersecting ? tl.play() : tl.stop();
-    }, { threshold: 0.3 }).observe(root);
+    }, { threshold: 0.25 }).observe(root);
   }
 
   // ======================================================================= //
@@ -165,7 +181,7 @@
       text: "When a remote call fails with a 5xx or a timeout, retry it — but only " +
             "if the call is idempotent. S3 answers 200 with the error inside the body, " +
             "so parse the body rather than the status code. Budget 3 attempts, with " +
-            "backoff at 100 ms, 400 ms and 1.6 s."
+            "backoff at 100 ms, 400 ms and 1.6 s."
     },
     {
       lv: "L1 · after 2 uses", tok: 195, pct: 75,
@@ -189,16 +205,16 @@
     var drop = root.querySelector("[data-morph-drop]");
     var beat = root.querySelector("[data-morph-beat]");
     var dots = root.querySelectorAll("[data-morph-step]");
-    var i = 0, tweenRaf = null;
+    var i = 0, raf = null;
 
     function count(from, to) {
       if (REDUCED) { tok.textContent = to; return; }
       var t0 = performance.now();
-      cancelAnimationFrame(tweenRaf);
+      cancelAnimationFrame(raf);
       (function tick(now) {
         var k = Math.min(1, (now - t0) / 520);
         tok.textContent = Math.round(from + (to - from) * (1 - Math.pow(1 - k, 3)));
-        if (k < 1) tweenRaf = requestAnimationFrame(tick);
+        if (k < 1) raf = requestAnimationFrame(tick);
       })(t0);
     }
 
