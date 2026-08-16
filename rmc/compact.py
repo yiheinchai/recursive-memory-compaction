@@ -439,13 +439,21 @@ def merge_nodes(
 
     merged = Node(
         id=new_id("n"),
-        family=nodes[0].family,
+        # A merge may span families — that is the point of one. The parent takes
+        # the shared family when there is one, and otherwise becomes a new
+        # cross-cutting family named by the compressor.
+        family=(
+            nodes[0].family
+            if len({n.family for n in nodes}) == 1
+            else _slug(str(run.data.get("family") or run.data.get("title") or "general"))
+        ),
         body=body,
         level=max(n.level for n in nodes) + 1,
         title=str(run.data.get("title") or nodes[0].family),
         derived_from=[n.id for n in nodes],
         covers_tasks=sorted({t for n in nodes for t in n.covers_tasks} | {e.id for e in episodes}),
         tags=sorted({t for n in nodes for t in n.tags}),
+        gist=str(run.data.get("gist") or ""),
         dropped=manifest,
         origin="merge",
     )
@@ -457,6 +465,53 @@ def merge_nodes(
     result.new_node = merged
     store.log("merge", nodes=[n.id for n in nodes], accepted=True, new_node=merged.id)
     return result
+
+
+def co_use_groups(store: Store, *, min_shared: int = 2) -> list[tuple[list[Node], int]]:
+    """Lessons repeatedly served *together* on work that then succeeded.
+
+    This is the evidence that two lessons belong under one abstraction, and it
+    is already being recorded: every episode stores the set of nodes injected
+    into that session. Nothing else RMC knows says as much about which lessons
+    are *used* together, as opposed to which merely *read* alike — and reading
+    alike is the wrong signal, because the pair that matters is often the one
+    with nothing in common on the surface.
+
+    Counting is legitimate here for the same reason the rescue prior is: it is
+    an observed outcome, not a stand-in for a judgement. Whether a group shares
+    a generalisable procedure is still the model's call.
+    """
+    counts: dict[frozenset[str], int] = {}
+    for episode in store.episodes():
+        if episode.outcome != "success":
+            continue
+        served = {n for n in episode.served if store.get(n) is not None}
+        if len(served) < 2:
+            continue
+        # The whole set counts only when it is more than a pair — for two
+        # lessons the set *is* the pair, and counting both makes a single
+        # episode look like corroborating evidence of itself.
+        if len(served) > 2:
+            counts[frozenset(served)] = counts.get(frozenset(served), 0) + 1
+        # Pairs as well: three lessons served together is also evidence about
+        # each of the three pairs, and a pair may recur under different
+        # companions.
+        members = sorted(served)
+        for i, a in enumerate(members):
+            for b in members[i + 1 :]:
+                key = frozenset({a, b})
+                counts[key] = counts.get(key, 0) + 1
+
+    out: list[tuple[list[Node], int]] = []
+    for key, seen in counts.items():
+        if seen < min_shared:
+            continue
+        nodes = [store.get(i) for i in key]
+        nodes = [n for n in nodes if n is not None and n.status == "active"]
+        if len(nodes) > 1:
+            out.append((nodes, seen))
+    out.sort(key=lambda pair: (-pair[1], -len(pair[0])))
+    return out
 
 
 def merge_candidates(
@@ -539,3 +594,116 @@ def run_due(
             repair(store, node)
             results.append(compress_node(store, adapter, node, cwd=cwd, dry_run=dry_run))
     return results
+
+
+def _slug(text: str) -> str:
+    cleaned = "".join(c if c.isalnum() else "-" for c in str(text).strip().lower())
+    while "--" in cleaned:
+        cleaned = cleaned.replace("--", "-")
+    return cleaned.strip("-")[:48] or "general"
+
+
+# --------------------------------------------------------------------------- #
+# dreaming: periodic whole-store consolidation
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class DreamReport:
+    gists_filled: int = 0
+    groups_considered: int = 0
+    merged: list[str] = field(default_factory=list)
+    rejected: list[str] = field(default_factory=list)
+
+    def render(self) -> str:
+        parts = []
+        if self.gists_filled:
+            parts.append(f"{self.gists_filled} gist(s) written")
+        parts.append(f"{self.groups_considered} co-use group(s) considered")
+        if self.merged:
+            parts.append(f"{len(self.merged)} merged")
+        if self.rejected:
+            parts.append(f"{len(self.rejected)} rejected")
+        return ", ".join(parts)
+
+
+def dream(
+    store: Store,
+    adapter: Adapter,
+    *,
+    limit: int = 2,
+    dry_run: bool = False,
+) -> DreamReport:
+    """Consolidate the whole store, independent of any one session.
+
+    Every other path in RMC reacts to the session in front of it. This one steps
+    back and asks what the store as a whole should look like — the offline pass
+    that keeps a long tail from staying flat.
+
+    It builds abstraction from **co-use**: lessons that have repeatedly been
+    served together on work that then succeeded are evidence of a shared idea,
+    and merging them creates a parent that answers for all of them at once. That
+    parent is what makes retrieval scale — one judgement at the top prunes
+    everything beneath it — so the index is not a separate structure that can
+    drift, it is the tree, grown from what actually got used.
+    """
+    report = DreamReport()
+
+    if not dry_run:
+        report.gists_filled = _backfill_gists(store, adapter)
+
+    groups = co_use_groups(store)
+    report.groups_considered = len(groups)
+
+    for nodes, seen in groups[:limit]:
+        # A group already sharing a parent has been consolidated before.
+        if len({n.compressed_into for n in nodes}) == 1 and nodes[0].compressed_into:
+            continue
+        result = merge_nodes(store, adapter, nodes, dry_run=dry_run)
+        label = f"{'+'.join(n.id for n in nodes)} (co-used {seen}x)"
+        if result.accepted:
+            report.merged.append(f"{label} -> {result.new_node.id if result.new_node else 'dry-run'}")
+        else:
+            report.rejected.append(f"{label}: {result.reason[:120]}")
+    store.log("dream", **{k: v for k, v in report.__dict__.items() if not k.startswith("_")})
+    return report
+
+
+GIST = """RMC:gist
+
+Write one line, at most 25 words, that names what this lesson is about and when
+it applies. A future agent reads only this line to decide whether to open the
+lesson at all, so be specific: name the tool, command, service or system it
+concerns rather than its category. Do not summarise the advice, identify the
+situation.
+
+<<<LESSON
+{body}
+LESSON>>>
+"""
+
+GIST_SCHEMA = {
+    "type": "object",
+    "required": ["gist"],
+    "properties": {"gist": {"type": "string"}},
+}
+
+
+def _backfill_gists(store: Store, adapter: Adapter, *, limit: int = 20) -> int:
+    """Give older lessons the one-line form the router reads."""
+    filled = 0
+    for node in store.nodes():
+        if node.gist.strip() or filled >= limit:
+            continue
+        run = adapter.run(
+            GIST.format(body=truncate(node.body, 3000)),
+            schema=GIST_SCHEMA,
+            timeout=int(store.config.get("limits.agent_timeout_s", 180)),
+        )
+        if run.ok and run.data and str(run.data.get("gist") or "").strip():
+            node.gist = str(run.data["gist"]).strip()
+            store.save_node(node)
+            filled += 1
+    if filled:
+        store.invalidate()
+    return filled

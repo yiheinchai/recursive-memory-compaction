@@ -1225,6 +1225,64 @@ class TestConcurrentReflectors(StoreCase):
         self.assertIsNone(self.store.get("n_second"), "the duplicate must not be stored")
 
 
+class TestCoUse(StoreCase):
+    """Abstraction is built from what got used together, not what reads alike.
+
+    A long tail stays flat unless something merges it, and the useful merge is
+    often between lessons with nothing in common on the surface. Co-use is the
+    only signal RMC has that speaks to that, and it was already being recorded.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        for ident, family in (("n_a", "deploy"), ("n_b", "deploy"), ("n_c", "caching")):
+            self.add_node(id=ident, family=family, body=f"lesson {ident}")
+
+    def co_used(self, ident, served, outcome="success") -> None:
+        self.add_episode(ident, "x", "did some work", outcome=outcome, served=served)
+
+    def test_one_co_occurrence_is_not_evidence(self) -> None:
+        from rmc.compact import co_use_groups
+
+        self.co_used("e1", ["n_a", "n_b"])
+        self.assertEqual(co_use_groups(self.store), [])
+
+    def test_repeated_co_use_becomes_a_merge_candidate(self) -> None:
+        from rmc.compact import co_use_groups
+
+        self.co_used("e1", ["n_a", "n_b"])
+        self.co_used("e2", ["n_a", "n_b"])
+        groups = co_use_groups(self.store)
+        self.assertTrue(groups)
+        self.assertEqual({n.id for n in groups[0][0]}, {"n_a", "n_b"})
+
+    def test_co_use_crosses_families(self) -> None:
+        """The cross-cutting index: a pair no family structure would ever group."""
+        from rmc.compact import co_use_groups
+
+        self.co_used("e1", ["n_a", "n_c"])
+        self.co_used("e2", ["n_a", "n_c"])
+        groups = co_use_groups(self.store)
+        families = {n.family for n in groups[0][0]}
+        self.assertEqual(families, {"deploy", "caching"})
+
+    def test_failed_sessions_are_not_evidence_of_belonging(self) -> None:
+        from rmc.compact import co_use_groups
+
+        self.co_used("e1", ["n_a", "n_b"], outcome="failure")
+        self.co_used("e2", ["n_a", "n_b"], outcome="failure")
+        self.assertEqual(co_use_groups(self.store), [])
+
+    def test_a_triple_is_also_evidence_about_each_pair(self) -> None:
+        from rmc.compact import co_use_groups
+
+        self.co_used("e1", ["n_a", "n_b", "n_c"])
+        self.co_used("e2", ["n_a", "n_b", "n_c"])
+        found = {frozenset(n.id for n in nodes) for nodes, _ in co_use_groups(self.store)}
+        self.assertIn(frozenset({"n_a", "n_b", "n_c"}), found)
+        self.assertIn(frozenset({"n_a", "n_c"}), found, "pairs recur under other companions")
+
+
 class TestRoutingCost(StoreCase):
     def test_routing_sends_a_gist_not_the_body(self) -> None:
         """Deciding what to load must not cost more than loading it.

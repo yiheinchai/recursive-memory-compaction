@@ -472,6 +472,36 @@ def cmd_compact(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dream(args: argparse.Namespace) -> int:
+    """Whole-store consolidation, independent of any session."""
+    from .compact import co_use_groups, dream
+
+    store = need_store(args)
+    if store is None:
+        return 1
+
+    if args.list:
+        groups = co_use_groups(store)
+        if not groups:
+            print(dim("no lessons have been used together on successful work yet"))
+            return 0
+        print(bold("lessons repeatedly used together"))
+        for nodes, seen in groups:
+            names = ", ".join(f"{n.id}[{n.family}]" for n in nodes)
+            print(f"  {seen}×  {names}")
+        print(dim("\n  these are the merge candidates — co-use, not similarity"))
+        return 0
+
+    adapter = make_adapter(store, args)
+    report = dream(store, adapter, limit=args.limit, dry_run=args.dry_run)
+    print(report.render())
+    for line in report.merged:
+        print(f"  {green('merged')}   {line}")
+    for line in report.rejected:
+        print(f"  {yellow('rejected')} {line}")
+    return 0
+
+
 def cmd_tree(args: argparse.Namespace) -> int:
     store = need_store(args)
     if store is None:
@@ -810,6 +840,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true")
     add_agent_flags(p)
     p.set_defaults(func=cmd_compact)
+
+    p = sub.add_parser(
+        "dream", help="consolidate the whole store: fill gists, merge co-used lessons"
+    )
+    p.add_argument("--list", action="store_true", help="show merge candidates, change nothing")
+    p.add_argument("--limit", type=int, default=2)
+    p.add_argument("--dry-run", action="store_true")
+    add_agent_flags(p)
+    p.set_defaults(func=cmd_dream)
 
     p = sub.add_parser("tree", help="visualise the lesson tree")
     p.add_argument("--family")
