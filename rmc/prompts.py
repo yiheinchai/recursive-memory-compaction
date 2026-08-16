@@ -220,11 +220,29 @@ REFLECT = """RMC:reflect
 
 Read this session excerpt and decide whether it contains a reusable lesson.
 
+Lessons come from two places, and the second is the more common one:
+
+  1. **The human corrected the agent.** What should it have known?
+  2. **The environment corrected the agent.** A command failed and a different
+     one worked; a test rejected an approach; an API behaved unexpectedly; a
+     long chain of exploration converged on an answer. Nobody had to intervene —
+     the codebase, the test suite or the infrastructure taught it.
+
+Lines marked `[discovered by trial]` are the second kind, already paired as
+failed-attempt → what-worked. They are the highest-value material here: the
+whole point is that the next agent reaches the answer directly instead of
+repeating the detour. When you capture one, write down what to do AND the trap
+that made the detour necessary, or the next agent will simply fall into it again.
+
 Capture ONLY if all of these hold:
   (a) it is a reusable fact or method, not a narrative of what happened;
   (b) an agent that did not know it would take a wrong action or waste a run;
   (c) it is not already obvious from the repository's own code or docs;
   (d) it stays true after this task ends.
+
+A trap that is specific to this codebase or this infrastructure passes (c) even
+if it would be obvious to someone who had already hit it — that is exactly the
+knowledge worth keeping.
 
 `capture: false` is the expected answer for most sessions and needs no
 justification. Never invent a lesson to have something to return — every

@@ -106,12 +106,58 @@ def strip_synthetic(text: str) -> str:
 
 
 @dataclass
+class ToolEvent:
+    """One tool call and what came back.
+
+    Kept in order and paired by id so that error-then-fix sequences can be
+    recovered. That pairing is what lets RMC learn from the environment instead
+    of only from the human.
+    """
+
+    name: str = ""
+    detail: str = ""  # command line, path, or another short digest of the input
+    output: str = ""
+    ok: bool | None = None
+    uid: str = ""
+
+    @property
+    def sig(self) -> set[str]:
+        from .util import signature
+
+        return signature(f"{self.name} {self.detail}")
+
+
+@dataclass
+class Discovery:
+    """Something the agent worked out by trial, with no human involvement.
+
+    A failed attempt followed by a succeeding one on the same tool is the
+    environment teaching the agent. This is the raw material for a lesson that
+    lets a future agent skip the whole detour.
+    """
+
+    tool: str
+    failed: str
+    error: str
+    worked: str
+    attempts: int = 2
+
+    def render(self) -> str:
+        return (
+            f"[{self.tool}] tried `{self.failed[:160]}` -> failed: {self.error[:200]}\n"
+            f"    then `{self.worked[:160]}` -> worked "
+            f"(after {self.attempts} attempts)"
+        )
+
+
+@dataclass
 class SessionFacts:
     """Flattened, backend-agnostic view of a transcript."""
 
     user_messages: list[str] = field(default_factory=list)
     assistant_messages: list[str] = field(default_factory=list)
     tool_outputs: list[str] = field(default_factory=list)
+    tool_events: list[ToolEvent] = field(default_factory=list)
     tool_calls: int = 0
     first_prompt: str = ""
     last_assistant: str = ""
@@ -121,6 +167,10 @@ class SessionFacts:
     def follow_ups(self) -> list[str]:
         """User turns after the first — where corrections live."""
         return self.user_messages[1:]
+
+    @property
+    def failures(self) -> list[ToolEvent]:
+        return [e for e in self.tool_events if e.ok is False]
 
 
 @dataclass
@@ -208,6 +258,7 @@ def _absorb(row: dict[str, Any], facts: SessionFacts) -> None:
             return
         if row.get("toolUseResult") is not None:
             facts.tool_outputs.append(text)
+            _attach_result(facts, content, text, row.get("toolUseResult"))
             return
 
         # Tool results also arrive wearing the user role on hosts that do not
@@ -232,8 +283,16 @@ def _absorb(row: dict[str, Any], facts: SessionFacts) -> None:
     if role == "assistant":
         text = _text_of(content)
         if isinstance(content, list):
-            calls = sum(1 for b in content if isinstance(b, dict) and b.get("type") == "tool_use")
-            facts.tool_calls += calls
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    facts.tool_calls += 1
+                    facts.tool_events.append(
+                        ToolEvent(
+                            name=str(block.get("name") or ""),
+                            detail=_input_digest(block.get("input")),
+                            uid=str(block.get("id") or ""),
+                        )
+                    )
         if text.strip():
             facts.assistant_messages.append(text)
         return
@@ -249,6 +308,96 @@ def _absorb(row: dict[str, Any], facts: SessionFacts) -> None:
 # --------------------------------------------------------------------------- #
 # scoring
 # --------------------------------------------------------------------------- #
+
+
+def _input_digest(payload: Any, limit: int = 220) -> str:
+    """A short, human-readable stand-in for a tool's input."""
+    if not isinstance(payload, dict):
+        return str(payload or "")[:limit]
+    for key in ("command", "file_path", "path", "pattern", "query", "url", "prompt"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return " ".join(value.split())[:limit]
+    try:
+        return json.dumps(payload)[:limit]
+    except Exception:
+        return str(payload)[:limit]
+
+
+def _attach_result(facts: SessionFacts, content: Any, text: str, raw: Any) -> None:
+    """Pair a tool result back to its call, and decide whether it failed."""
+    uid = ""
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("tool_use_id"):
+                uid = str(block["tool_use_id"])
+                break
+    event = None
+    if uid:
+        event = next((e for e in reversed(facts.tool_events) if e.uid == uid), None)
+    if event is None:
+        event = next((e for e in reversed(facts.tool_events) if e.ok is None), None)
+    if event is None:
+        return
+
+    event.output = text[:2000]
+    is_error = False
+    if isinstance(raw, dict):
+        if raw.get("is_error") or raw.get("isError"):
+            is_error = True
+        code = raw.get("exit_code", raw.get("exitCode"))
+        if isinstance(code, int) and code != 0:
+            is_error = True
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("is_error"):
+                is_error = True
+    event.ok = not (is_error or bool(_ERROR_HINT.search(text[:1500])))
+
+
+def discoveries(facts: SessionFacts, *, max_out: int = 4) -> list[Discovery]:
+    """Error-then-fix sequences: what the agent learned from the environment.
+
+    No human involvement required. A tool that failed and then, later in the
+    session, succeeded is the codebase, the test suite or the infrastructure
+    teaching the agent something — and it is exactly the kind of knowledge that
+    should not have to be rediscovered by a long reasoning trace next time.
+    """
+    out: list[Discovery] = []
+    for i, failed in enumerate(facts.tool_events):
+        if failed.ok is not False:
+            continue
+        # Find the next success on the same tool. Requiring the same tool keeps
+        # the pair causally plausible: a failing Bash fixed by a later Bash is a
+        # discovery, a failing Bash followed by an unrelated Read is not.
+        for later in facts.tool_events[i + 1 :]:
+            if later.name != failed.name or later.ok is not True:
+                continue
+            if later.detail.strip() == failed.detail.strip():
+                continue  # identical retry: flakiness, not a discovery
+            attempts = sum(
+                1
+                for e in facts.tool_events[i:]
+                if e.name == failed.name and e.ok is False
+            )
+            out.append(
+                Discovery(
+                    tool=failed.name,
+                    failed=failed.detail,
+                    error=" ".join(failed.output.split())[:300],
+                    worked=later.detail,
+                    attempts=attempts + 1,
+                )
+            )
+            break
+    # Most-worked-for first: a trap that cost five attempts beats one that cost two.
+    out.sort(key=lambda d: -d.attempts)
+    return out[:max_out]
+
+
+def effort(facts: SessionFacts) -> int:
+    """How much work this session took. High effort + success = valuable lesson."""
+    return facts.tool_calls + 3 * len(facts.failures)
 
 
 def _last_pos(pattern: re.Pattern[str], text: str) -> int:
@@ -293,6 +442,17 @@ def classify(facts: SessionFacts, *, min_tool_calls: int = 8) -> Outcome:
     if facts.tool_calls >= min_tool_calls and not corrections:
         score += 0.25
         evidence.append(f"{facts.tool_calls} tool calls, no correction")
+
+    # Self-recovery: the agent hit failures and worked past them without being
+    # told how. The environment verified the fix, which is a stronger and more
+    # available oracle than waiting for a human to say "perfect".
+    found = discoveries(facts)
+    if found and not corrections:
+        score += 0.3
+        evidence.append(
+            f"recovered from {len(found)} failure(s) unaided "
+            f"(e.g. {found[0].tool}: {found[0].error[:60]})"
+        )
 
     if facts.tool_calls < min_tool_calls and not corrections and not approvals:
         evidence.append("session too small to judge")
@@ -360,9 +520,19 @@ def excerpt(facts: SessionFacts, *, limit: int = 7000) -> str:
     for msg in steering[:3]:
         parts.append(f"[user follow-up] {msg[:500]}")
 
-    # Tool output that mentions a failure is where the trap was discovered.
-    errors = [o for o in facts.tool_outputs if _ERROR_HINT.search(o)]
-    for out in errors[-6:]:
+    # Self-discovery: what the environment taught, with no human involved. These
+    # come first among the machine signals because a paired failure-then-success
+    # is far more informative than a raw error log.
+    for found in discoveries(facts):
+        parts.append(f"[discovered by trial] {found.render()}")
+
+    paired = {d.error[:80] for d in discoveries(facts)}
+    errors = [
+        o
+        for o in facts.tool_outputs
+        if _ERROR_HINT.search(o) and " ".join(o.split())[:80] not in paired
+    ]
+    for out in errors[-4:]:
         parts.append(f"[tool output] {out[:600]}")
 
     if facts.last_assistant:
