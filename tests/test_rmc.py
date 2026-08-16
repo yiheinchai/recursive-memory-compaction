@@ -1441,13 +1441,46 @@ class TestReflectionTrigger(StoreCase):
 
     def test_backs_off_when_nudges_keep_yielding_nothing(self) -> None:
         """If the agent captures on its own, stop interrupting it."""
-        from rmc.hooks import _barren_streak
+        from rmc.hooks import _barren_streak, criteria_version
 
+        now = criteria_version()
         for _ in range(4):
-            self.store.log("nudge", session="s")
+            self.store.log("nudge", session="s", criteria=now)
         self.assertGreaterEqual(_barren_streak(self.store), 4)
         self.store.log("capture", node="n_x", prompted=True)
         self.assertEqual(_barren_streak(self.store), 0, "a capture resets the streak")
+
+    def test_changing_the_criteria_releases_the_backoff(self) -> None:
+        """Barren nudges are evidence about the criteria in force at the time.
+
+        Counting across a criteria change is how a fixed reflector stays
+        punished for the broken one it replaced: six fruitless nudges had taken
+        the cooldown from 15 minutes to 4 hours here, and rewriting the prompts
+        that caused them did not release it, so the fix could never run.
+        """
+        from rmc.hooks import _barren_streak
+
+        for _ in range(6):
+            self.store.log("nudge", session="s", criteria="old12345")
+        self.assertEqual(
+            _barren_streak(self.store), 0,
+            "nudges judged under superseded criteria must not throttle the new ones",
+        )
+
+    def test_unversioned_history_is_not_counted(self) -> None:
+        """Events predating versioning say nothing about the current criteria."""
+        from rmc.hooks import _barren_streak
+
+        for _ in range(5):
+            self.store.log("nudge", session="s")
+        self.assertEqual(_barren_streak(self.store), 0)
+
+    def test_the_cooldown_cannot_grow_past_an_hour(self) -> None:
+        """Beyond about an hour a periodic check is off, not throttled — and a
+        long busy session is exactly the one that needs it."""
+        base, threshold = 900, 3
+        worst = base * (2 ** min(2, 1 + 99 - threshold))
+        self.assertLessEqual(worst, 3600, "backoff must stay within an hour")
 
     def test_can_be_switched_off(self) -> None:
         self.store.config.set("learning.nudge_enabled", False)

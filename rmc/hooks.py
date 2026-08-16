@@ -348,10 +348,11 @@ def on_turn_end(payload: dict[str, Any]) -> int:
         if _spawn_fork(
             store, session_id, state.get("cwd") or os.getcwd(), served=state.get("served") or []
         ):
-            store.log("nudge", session=session_id, mode="fork", tools=new_tools)
+            store.log("nudge", session=session_id, mode="fork", tools=new_tools,
+                      criteria=criteria_version())
             return 0
         # Fall through to background rather than silently skipping reflection.
-        store.log("nudge", session=session_id, mode="fork-failed", tools=new_tools)
+        store.log("nudge", session=session_id, mode="fork-failed", tools=new_tools, criteria=criteria_version())
         mode = "background"
 
     if mode == "background":
@@ -367,7 +368,8 @@ def on_turn_end(payload: dict[str, Any]) -> int:
         if state.get("served"):
             args += ["--served", ",".join(state["served"])]
         spawn_background(store, args, cwd=state.get("cwd") or os.getcwd())
-        store.log("nudge", session=session_id, mode="background", tools=new_tools)
+        store.log("nudge", session=session_id, mode="background", tools=new_tools,
+                  criteria=criteria_version())
         return 0
 
     store.log(
@@ -571,13 +573,35 @@ def _too_soon(store: Store, state: dict[str, Any]) -> bool:
     barren = _barren_streak(store)
     threshold = int(store.config.get("learning.nudge_backoff_after", 3))
     if barren >= threshold:
-        cooldown *= 2 ** min(4, 1 + barren - threshold)
+        # Capped at 4x: beyond about an hour the reflector is simply off,
+        # and a session that needs it most is exactly a long busy one.
+        cooldown *= 2 ** min(2, 1 + barren - threshold)
     last = state.get("nudged_at")
     return isinstance(last, (int, float)) and (_now() - last) < cooldown
 
 
+def criteria_version() -> str:
+    """A short fingerprint of what the reflectors are told to look for.
+
+    The backoff below is evidence about the reflector's yield, and that
+    evidence is only about the criteria in force when it was gathered. Change
+    the criteria and the old barren nudges say nothing about the new ones.
+    """
+    import hashlib
+
+    material = (NUDGE + FORK_PROMPT).encode("utf-8")
+    return hashlib.sha256(material).hexdigest()[:8]
+
+
 def _barren_streak(store: Store) -> int:
-    """How many recent nudges in a row were followed by no capture."""
+    """How many nudges in a row, under the CURRENT criteria, found nothing.
+
+    Counting across a criteria change is how a fixed reflector stays punished
+    for the broken one it replaced: six fruitless nudges had pushed the
+    cooldown from 15 minutes to 4 hours, and rewriting the prompts that caused
+    them did not release it — so the fix could not run to prove itself.
+    """
+    version = criteria_version()
     timeline = [
         e for e in store.read_events(limit=400) if e.get("kind") in ("nudge", "capture")
     ]
@@ -585,6 +609,11 @@ def _barren_streak(store: Store) -> int:
     for event in reversed(timeline):
         if event.get("kind") == "capture":
             break
+        # A nudge issued under different criteria is not evidence about these.
+        if event.get("criteria") not in (None, version):
+            break
+        if event.get("criteria") is None:
+            break  # pre-dates versioning; assume nothing about it
         streak += 1
     return streak
 
