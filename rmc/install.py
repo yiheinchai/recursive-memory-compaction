@@ -18,6 +18,7 @@ MARKER = "rmc hook"
 
 CLAUDE_EVENTS = {
     "UserPromptSubmit": ("user-prompt-submit", 30, "Recalling lessons…"),
+    "PreCompact": ("pre-compact", 10, None),
     "Stop": ("stop", 15, "Learning check…"),
     "SessionEnd": ("session-end", 30, "Learning from this session…"),
 }
@@ -108,7 +109,7 @@ def install_claude(scope: str, path: Path, *, dry_run: bool = False) -> list[str
                         "type": "command",
                         "command": rmc_command(subcommand),
                         "timeout": timeout,
-                        "statusMessage": status,
+                        **({"statusMessage": status} if status else {}),
                         "_rmc": True,
                     }
                 ]

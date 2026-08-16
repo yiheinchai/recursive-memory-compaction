@@ -26,6 +26,11 @@ DEFAULTS: dict[str, Any] = {
         # choose between, so recall serves them all without asking. Set this to
         # force relevance filtering even then.
         "always_judge": False,
+        # Turns for which an already-injected lesson counts as still present and
+        # attended to. Inside it, a repeat is skipped; beyond it, the lesson is
+        # refreshed with its one-line gist rather than repeated in full. Context
+        # compaction resets this, since compaction may have removed the text.
+        "stays_fresh_turns": 8,
         # Bound on the routing call, kept below the hook's own deadline so a
         # slow judgement degrades to "inject nothing" instead of being killed.
         "timeout_s": 20,

@@ -40,6 +40,8 @@ class Pack:
     patches: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
     reasons: dict[str, str] = field(default_factory=dict)
+    skipped: list[str] = field(default_factory=list)  # still fresh in context
+    refreshed: list[str] = field(default_factory=list)  # reminded, not repeated
     tokens: int = 0
 
     def __bool__(self) -> bool:
@@ -135,6 +137,8 @@ def recall_pack(
     *,
     budget: int | None = None,
     include_patches: bool = True,
+    already_served: dict[str, int] | None = None,
+    turn: int = 0,
 ) -> Pack:
     """Build the context pack for a prompt.
 
@@ -153,8 +157,34 @@ def recall_pack(
     selection = select_lessons(store, adapter, prompt)
     pack.reasons = {n.id: selection.why(n.id) for n in selection.selected}
 
+    seen = already_served or {}
+    fresh_for = int(store.config.get("recall.stays_fresh_turns", 8))
+
     for node in selection.selected:
         family = node.family
+
+        # A lesson injected a moment ago is still sitting in the context window
+        # verbatim; repeating it buys nothing. But "still present" and "still
+        # attended to" are different things — attention over a long context
+        # decays, and a lesson from forty turns back is buried in the middle
+        # where models attend least. So there are three cases, not two.
+        age = turn - seen[node.id] if node.id in seen else None
+        if age is not None and age < fresh_for:
+            pack.skipped.append(node.id)
+            continue
+        if age is not None:
+            # Present but stale: refresh salience with the one-line form rather
+            # than repaying for the body. If the detail is needed again the
+            # agent can open the lesson file directly.
+            reminder = f"- (recalled earlier) {node.title or node.family}: {node.summary()}"
+            cost = count_tokens(reminder)
+            if used + cost <= budget:
+                chunks.append(reminder)
+                pack.refreshed.append(node.id)
+                pack.served.append(node.id)
+                used += cost
+            continue
+
         rendered = render_node(node)
         cost = count_tokens(rendered)
         if used + cost > budget and chunks:

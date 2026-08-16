@@ -185,6 +185,10 @@ class Store:
         if self.parent:
             self.parent.invalidate()
 
+    def global_layer(self) -> "Store":
+        """The store a cross-project lesson belongs in."""
+        return self.parent or self
+
     def owns(self, node: Node) -> bool:
         """False when this node lives in the global layer, not here."""
         try:

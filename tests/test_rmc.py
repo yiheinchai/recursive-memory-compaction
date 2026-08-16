@@ -1283,6 +1283,51 @@ class TestCoUse(StoreCase):
         self.assertIn(frozenset({"n_a", "n_c"}), found, "pairs recur under other companions")
 
 
+class TestReInjection(StoreCase):
+    """A lesson already in context should not be paid for twice — but "present"
+    and "still attended to" are different, so there are three cases."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.node = self.add_node(
+            id="n_r", family="f", title="Retry", gist="Retry idempotently.", body="Long body. " * 40
+        )
+
+    def pack(self, **kw):
+        return recall_pack(self.store, "do the thing", router({"picks": []}), **kw)
+
+    def test_first_sight_serves_the_full_lesson(self) -> None:
+        pack = self.pack(already_served={}, turn=1)
+        self.assertIn("Long body", pack.text)
+        self.assertEqual(pack.served, ["n_r"])
+
+    def test_a_recent_lesson_is_not_repeated(self) -> None:
+        pack = self.pack(already_served={"n_r": 5}, turn=7)
+        self.assertEqual(pack.skipped, ["n_r"])
+        self.assertNotIn("Long body", pack.text)
+        self.assertEqual(pack.tokens, 0)
+
+    def test_a_distant_lesson_is_refreshed_by_gist_not_repeated(self) -> None:
+        """Cheap salience, not a second full payment."""
+        pack = self.pack(already_served={"n_r": 1}, turn=40)
+        self.assertEqual(pack.refreshed, ["n_r"])
+        self.assertIn("Retry idempotently", pack.text)
+        self.assertNotIn("Long body", pack.text)
+        self.assertLess(pack.tokens, 40)
+
+    def test_compaction_makes_everything_servable_again(self) -> None:
+        """After compaction the lesson text may simply be gone."""
+        import io
+        from contextlib import redirect_stdout
+
+        from rmc.hooks import on_pre_compact
+
+        self.store.write_session("s", {"served_at": {"n_r": 3}, "served": ["n_r"], "turn": 3})
+        with redirect_stdout(io.StringIO()):
+            on_pre_compact({"session_id": "s", "cwd": str(self.base)})
+        self.assertEqual(self.store.read_session("s")["served_at"], {})
+
+
 class TestRoutingCost(StoreCase):
     def test_routing_sends_a_gist_not_the_body(self) -> None:
         """Deciding what to load must not cost more than loading it.

@@ -283,6 +283,23 @@ class Judge:
         return picks
 
 
+    # --------------------------------------------------------------- scope
+    def scope(self, body: str, *, repo: str = "") -> dict[str, Any] | None:
+        """Does this lesson belong to this repository, or everywhere?
+
+        Reachability has to be decided when a lesson is written, because
+        nothing downstream can repair it. A lesson filed in a project store is
+        invisible from every other project — so it can never be retrieved
+        there, never used there, and therefore never co-used into a shared
+        abstraction. Co-use strengthens links between lessons that are already
+        mutually reachable; it cannot create reachability.
+        """
+        return self.ask(
+            SCOPE.format(repo=repo or "(unnamed)", body=truncate(body, 4000)),
+            SCOPE_SCHEMA,
+            cache_key=self.key("scope", body.strip()),
+        )
+
     # ------------------------------------------------------------- sessions
     def assess(self, digest: str) -> dict[str, Any] | None:
         """How did this session go, and what was learned from it?
@@ -370,6 +387,44 @@ class Judge:
                     continue
         return out
 
+
+SCOPE_SCHEMA = {
+    "type": "object",
+    "required": ["scope", "why"],
+    "properties": {
+        "scope": {"type": "string", "enum": ["project", "global"]},
+        "why": {"type": "string"},
+    },
+}
+
+SCOPE = """RMC:scope
+
+Decide where a newly learned lesson should live.
+
+`project` — it depends on *this particular repository*: its code, its layout,
+its conventions, its deployment setup, its test fixtures, its team's decisions.
+Useless or misleading anywhere else.
+
+`global` — it would be true for anyone using these tools, languages, services or
+APIs, on any codebase. Vendor behaviour, protocol quirks, pricing, general
+engineering judgement, or how you should work.
+
+The test is not what the lesson was *discovered* in — almost everything is
+discovered inside some project. Ask instead: if someone opened a completely
+unrelated repository tomorrow and hit this same tool or service, would this
+lesson still be right and still be useful? If yes, it is `global`.
+
+Getting this wrong is asymmetric. A global lesson filed as project-scoped
+becomes invisible everywhere else and can never be found again from the place it
+would have helped most. A project lesson filed as global is merely noise, and
+noise is recoverable.
+
+Repository: {repo}
+
+<<<LESSON
+{body}
+LESSON>>>
+"""
 
 ASSESS_SCHEMA = {
     "type": "object",

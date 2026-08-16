@@ -237,6 +237,7 @@ def cmd_add(args: argparse.Namespace) -> int:
     something, it goes into the tree — reconciled against what is already known
     — and is available to the very next prompt in the same conversation.
     """
+    from .judge import Judge
     from .node import Node
     from .placement import apply, decide
     from .util import new_id
@@ -249,6 +250,24 @@ def cmd_add(args: argparse.Namespace) -> int:
         return die("no lesson text (pass it as an argument or pipe it on stdin)")
 
     adapter = make_adapter(store, args)
+
+    # Where a lesson lands decides whether it can ever be found again. A lesson
+    # about a vendor API filed under one repo is invisible from every other one,
+    # so nothing downstream — not recall, not co-use, not dreaming — can rescue
+    # it. That makes scope a judgement, and it has to happen here.
+    target = store
+    if args.scope == "global" or (args.scope == "auto" and store.parent is not None):
+        if args.scope == "global":
+            target = store.global_layer()
+        else:
+            verdict = Judge(store, adapter).scope(body, repo=Path.cwd().name)
+            if verdict and str(verdict.get("scope")) == "global":
+                target = store.global_layer()
+                print(dim(f"scope: global — {str(verdict.get('why') or '')[:100]}"))
+    elif args.scope == "project":
+        target = store
+    store = target
+
     family = _slugify(args.family or "general")
     node = Node(
         id=new_id("n"),
@@ -811,6 +830,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--title")
     p.add_argument("--tags", help="comma-separated")
     p.add_argument("--no-reconcile", action="store_true", help="skip the consistency check")
+    p.add_argument(
+        "--scope",
+        choices=["auto", "project", "global"],
+        default="auto",
+        help="auto asks whether the lesson is repo-specific or would apply anywhere",
+    )
     add_agent_flags(p)
     p.set_defaults(func=cmd_add)
 

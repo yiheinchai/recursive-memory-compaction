@@ -92,18 +92,37 @@ def on_user_prompt_submit(payload: dict[str, Any]) -> int:
     )
     if not adapter.available():
         return 0
-    pack = recall_pack(store, prompt, adapter)
+    session_id = str(payload.get("session_id") or payload.get("sessionId") or "")
+    state = store.read_session(session_id) if session_id else {}
+    turn = int(state.get("turn") or 0) + 1
+
+    pack = recall_pack(
+        store,
+        prompt,
+        adapter,
+        already_served=dict(state.get("served_at") or {}),
+        turn=turn,
+    )
     if not pack:
+        if session_id:
+            state["turn"] = turn
+            store.write_session(session_id, state)
         return 0
 
-    session_id = str(payload.get("session_id") or payload.get("sessionId") or "")
     if session_id:
-        state = store.read_session(session_id)
         state.setdefault("prompts", []).append(prompt[:2000])
         # A session can serve several packs; union them so the Stop hook scores
         # every node that actually contributed.
         state["served"] = sorted({*state.get("served", []), *pack.served})
         state["families"] = sorted({*state.get("families", []), *pack.families})
+        # When each lesson was last put in front of the model, so a repeat can
+        # be skipped while it is still fresh and merely refreshed once it is not.
+        served_at = dict(state.get("served_at") or {})
+        for node_id in [*pack.served, *pack.skipped]:
+            if node_id not in pack.skipped:
+                served_at[node_id] = turn
+        state["served_at"] = served_at
+        state["turn"] = turn
         state["cwd"] = str(payload.get("cwd") or os.getcwd())
         store.write_session(session_id, state)
 
@@ -131,6 +150,26 @@ def on_user_prompt_submit(payload: dict[str, Any]) -> int:
             }
         )
     )
+    return 0
+
+
+def on_pre_compact(payload: dict[str, Any]) -> int:
+    """Context is about to be rewritten, so nothing can be assumed present.
+
+    Compaction is lossy: a lesson injected earlier may survive only as a phrase
+    in a summary, or not at all. Every record of what the model has already been
+    shown is therefore void, and lessons must be servable in full again.
+    """
+    store = _store_for(payload)
+    session_id = str(payload.get("session_id") or payload.get("sessionId") or "")
+    if store is None or not session_id:
+        return 0
+    state = store.read_session(session_id)
+    if state.get("served_at"):
+        state["served_at"] = {}
+        state["served"] = []
+        store.write_session(session_id, state)
+        store.log("compact-reset", session=session_id)
     return 0
 
 
@@ -508,6 +547,8 @@ _HANDLERS = {
     # Distinct events: Stop fires per turn (the surprise nudge), SessionEnd once
     # at teardown (the sweep). Aliasing them, as an earlier version did, meant
     # the sweep ran on every turn.
+    "pre-compact": on_pre_compact,
+    "precompact": on_pre_compact,
     "stop": on_turn_end,
     "turn-end": on_turn_end,
     "session-end": on_session_end,
