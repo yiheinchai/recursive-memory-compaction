@@ -7,7 +7,8 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/rmc hook user-prompt-submit",
             "timeout": 10,
-            "_rmc": true
+            "_rmc": true,
+            "statusMessage": "Recalling lessons\u2026"
           }
         ]
       }
@@ -19,7 +20,8 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/rmc hook session-end",
             "timeout": 15,
-            "_rmc": true
+            "_rmc": true,
+            "statusMessage": "Learning from this session\u2026"
           }
         ]
       }

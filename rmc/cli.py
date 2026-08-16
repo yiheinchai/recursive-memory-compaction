@@ -388,6 +388,130 @@ def _print_node(store: Store, node, *, prefix: str, args) -> None:
         _print_node(store, child, prefix=prefix + "    ", args=args)
 
 
+def cmd_trace(args: argparse.Namespace) -> int:
+    """Agent's-eye view: every stage of a recall, ending in the literal context.
+
+    RMC edits what the model sees. That should never be something you have to
+    take on trust, so this shows the whole path — what was asked, what came
+    back, what was injected verbatim, and what the user is told about it.
+    """
+    from .hooks import BANNER, PREAMBLE, recall_notice
+    from .recall import recall_pack, select_lessons
+
+    store = need_store(args)
+    if store is None:
+        return 1
+    prompt = args.prompt or sys.stdin.read()
+    if not prompt.strip():
+        return die("no prompt given (pass --prompt or pipe on stdin)")
+
+    adapter = make_adapter(store, args)
+    width = 74
+
+    def stage(n: int, title: str) -> None:
+        print(f"\n{bold(f'{n}. {title}')}")
+        print(dim("─" * width))
+
+    stage(1, "the prompt you typed")
+    print(f"   {prompt.strip()[:600]}")
+
+    roots = [n for n in (store.apex(f) for f in store.families()) if n is not None]
+    stage(2, f"what RMC put in front of the model ({len(roots)} apex lessons)")
+    if not roots:
+        print(dim("   nothing stored yet — no question is asked at all"))
+        return _trace_after(store, adapter, Path(args.after), stage) if args.after else 0
+    for node in roots:
+        depth = f", {len(node.dropped)} detail(s) beneath" if node.dropped else ""
+        print(f"   [{node.id}] {node.title or node.family}  {dim(f'L{node.level}, {node.tokens} tok{depth}')}")
+    print(dim(f"\n   these are the most compressed nodes, which is why they all fit in one question"))
+
+    selection = select_lessons(store, adapter, prompt)
+    stage(3, "what the model decided")
+    if not selection.picks:
+        print(dim("   no verdict returned"))
+    for node_id, pick in selection.picks.items():
+        mark = {"relevant": green("✓ relevant "), "maybe": yellow("~ maybe    ")}.get(
+            pick.verdict, dim("· unrelated")
+        )
+        opened = dim("  → opened for detail") if pick.descend else ""
+        print(f"   {mark} {node_id}  {dim(pick.why[:70])}{opened}")
+    skipped = [p for p in selection.picks.values() if not p.positive]
+    print(
+        dim(
+            f"\n   {len(skipped)} branch(es) judged irrelevant were never walked further — "
+            f"{selection.calls} model call(s) total"
+        )
+    )
+
+    pack = recall_pack(store, prompt, adapter)
+    stage(4, "what is injected into the agent's context, verbatim")
+    if not pack:
+        print(dim("   (nothing — the agent sees your prompt unchanged)"))
+        return _trace_after(store, adapter, Path(args.after), stage) if args.after else 0
+    block = f"{BANNER}\n{PREAMBLE}\n\n{pack.text}"
+    for line in block.splitlines():
+        print(f"   {dim('│')} {line}")
+    print(dim(f"   └─ {pack.tokens} tokens"))
+
+    stage(5, "what you see in Claude Code")
+    print(f"   {dim('⋯')} Recalling lessons…        {dim('(while the hook runs)')}")
+    print(f"   {dim('⋯')} {recall_notice(pack)}")
+
+    stage(6, "so the model's turn begins as")
+    print(dim("   <additional-context>"))
+    print(dim(f"   {BANNER} … {pack.tokens} tokens of prior knowledge …"))
+    print(dim("   </additional-context>"))
+    print(f"   {prompt.strip()[:200]}")
+    print()
+    print(
+        dim(
+            "   The lessons are framed as prior knowledge, not as instructions from you,\n"
+            "   so a stale lesson cannot impersonate a request."
+        )
+    )
+
+    if args.after:
+        return _trace_after(store, adapter, Path(args.after), stage)
+    print(dim("\n   pass --after <transcript.jsonl> to also trace what happens at session end"))
+    return 0
+
+
+def _trace_after(store, adapter, path: Path, stage) -> int:
+    """The other half: what RMC does once the session is over."""
+    from .judge import Judge
+    from .reflect import Outcome
+    from .signals import digest, parse_transcript, worth_assessing
+
+    if not path.exists():
+        return die(f"no such transcript: {path}")
+    facts = parse_transcript(path)
+
+    stage(7, "at session end — the facts RMC parsed out")
+    print(f"   {len(facts.user_messages)} human turn(s), {facts.tool_calls} tool call(s)")
+    for event in facts.tool_events[:6]:
+        print(dim(f"   {event.render()[:150]}"))
+    if not worth_assessing(facts, min_tool_calls=int(store.config.get("learning.min_tool_calls", 8))):
+        print(dim("\n   too small to be worth judging — nothing is asked, nothing is stored"))
+        return 0
+
+    stage(8, "what the model made of it")
+    outcome = Outcome.from_verdict(Judge(store, adapter).assess(digest(facts)))
+    print(f"   outcome    {outcome.label}  (confidence {outcome.confidence:.2f})")
+    print(f"   corrected  {outcome.corrected}")
+    for line in outcome.evidence[:4]:
+        print(dim(f"   · {line}"))
+    if outcome.discoveries:
+        print(bold("\n   worked out by trial:"))
+        print(dim("   " + outcome.render_discoveries().replace("\n", "\n   ")[:700]))
+    print(
+        dim(
+            "\n   A correction counts against the lesson that was served, even when the\n"
+            "   session ended well — those are different questions."
+        )
+    )
+    return 0
+
+
 def cmd_conflicts(args: argparse.Namespace) -> int:
     from .placement import open_conflicts
 
@@ -560,6 +684,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--family")
     p.add_argument("--verbose", "-v", action="store_true")
     p.set_defaults(func=cmd_tree)
+
+    p = sub.add_parser("trace", help="agent's-eye view: every stage of a recall")
+    p.add_argument("--prompt", "-p")
+    p.add_argument("--after", metavar="TRANSCRIPT", help="also trace what happens at session end")
+    add_agent_flags(p)
+    p.set_defaults(func=cmd_trace)
 
     p = sub.add_parser("conflicts", help="lessons that contradict each other")
     p.add_argument("--family")

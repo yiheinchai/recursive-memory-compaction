@@ -116,14 +116,31 @@ def on_user_prompt_submit(payload: dict[str, Any]) -> int:
     print(
         json.dumps(
             {
+                # Shown to the user, so an injection is never invisible. A memory
+                # system that silently edits your prompts is one you cannot trust
+                # or debug; seeing "recalled 2 lessons" is what makes it possible
+                # to notice a bad recall and say so.
+                "systemMessage": recall_notice(pack),
                 "hookSpecificOutput": {
                     "hookEventName": "UserPromptSubmit",
                     "additionalContext": context,
-                }
+                },
             }
         )
     )
     return 0
+
+
+def recall_notice(pack) -> str:
+    """One line naming what was injected, and at what cost."""
+    count = len(pack.served)
+    names = ", ".join(dict.fromkeys(pack.families)) or "?"
+    parts = [f"RMC · recalled {count} lesson{'s' if count != 1 else ''} ({pack.tokens} tok): {names}"]
+    if pack.patches:
+        parts.append(f"+{len(pack.patches)} patch{'es' if len(pack.patches) != 1 else ''}")
+    if pack.conflicts:
+        parts.append(f"⚠ {len(pack.conflicts)} unresolved conflict")
+    return "  ".join(parts)
 
 
 # --------------------------------------------------------------------------- #

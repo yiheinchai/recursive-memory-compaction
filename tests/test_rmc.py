@@ -219,6 +219,29 @@ class TestTranscriptParsing(unittest.TestCase):
         self.assertEqual(facts.tool_events[0].detail, "pytest")
         self.assertIs(facts.tool_events[0].ok, False)
 
+    def test_explicit_is_error_false_records_success(self) -> None:
+        """Presence, not truthiness — `is_error: false` says the call worked."""
+        path = self.write(
+            [
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "tool_use", "id": "a", "name": "Bash", "input": {"command": "ls"}}],
+                    },
+                },
+                {
+                    "type": "user",
+                    "toolUseResult": {"is_error": False},
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "tool_result", "tool_use_id": "a", "content": "fine"}],
+                    },
+                },
+            ]
+        )
+        self.assertIs(parse_transcript(path).tool_events[0].ok, True)
+
     def test_ok_stays_unknown_when_the_host_says_nothing(self) -> None:
         """Better an honest unknown than a regex guessing from output text."""
         path = self.write(

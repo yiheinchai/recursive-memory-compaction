@@ -17,8 +17,8 @@ from typing import Any
 MARKER = "rmc hook"
 
 CLAUDE_EVENTS = {
-    "UserPromptSubmit": ("user-prompt-submit", 10),
-    "SessionEnd": ("session-end", 15),
+    "UserPromptSubmit": ("user-prompt-submit", 10, "Recalling lessons…"),
+    "SessionEnd": ("session-end", 15, "Learning from this session…"),
 }
 
 
@@ -92,7 +92,7 @@ def install_claude(scope: str, path: Path, *, dry_run: bool = False) -> list[str
     hooks = settings.setdefault("hooks", {})
     notes: list[str] = []
 
-    for event, (subcommand, timeout) in CLAUDE_EVENTS.items():
+    for event, (subcommand, timeout, status) in CLAUDE_EVENTS.items():
         entries = hooks.setdefault(event, [])
         if not isinstance(entries, list):
             notes.append(f"! {event}: existing value is not a list, skipped")
@@ -107,6 +107,7 @@ def install_claude(scope: str, path: Path, *, dry_run: bool = False) -> list[str
                         "type": "command",
                         "command": rmc_command(subcommand),
                         "timeout": timeout,
+                        "statusMessage": status,
                         "_rmc": True,
                     }
                 ]

@@ -241,10 +241,15 @@ def _attach_result(facts: SessionFacts, content: Any, text: str, raw: Any) -> No
     event.output = text[:2000]
     # Only the host's own error signal counts. Left as None when absent — an
     # unknown is honest, and the model reads the output anyway.
+    #
+    # Presence matters, not truthiness: `is_error: false` is an explicit
+    # statement that the call succeeded, and treating it as "no signal" throws
+    # away exactly the successes that make an error-then-fix pair legible.
     if isinstance(raw, dict):
-        if raw.get("is_error") or raw.get("isError"):
-            event.ok = False
-            return
+        for key in ("is_error", "isError"):
+            if key in raw and isinstance(raw[key], bool):
+                event.ok = not raw[key]
+                return
         code = raw.get("exit_code", raw.get("exitCode"))
         if isinstance(code, int):
             event.ok = code == 0

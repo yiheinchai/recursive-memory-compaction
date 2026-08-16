@@ -46,6 +46,20 @@ tagged entries — hooks you configured yourself are left alone.
 Injected text is explicitly framed as prior knowledge rather than user
 instruction, so a stale lesson cannot impersonate a request.
 
+### Seeing it happen
+
+An injection is never silent. While the hook runs you see its status line, and
+when it injects, the hook returns a `systemMessage` that Claude Code shows you:
+
+```
+⋯ Recalling lessons…
+⋯ RMC · recalled 2 lessons (312 tok): retry, k8s-deploys   +1 patch
+```
+
+Unresolved contradictions are flagged there too. For the full picture — what was
+offered to the model, what it decided and why, and the exact text injected — run
+`rmc trace --prompt "..."`.
+
 Recall costs a model call on the hot path. That is deliberate — injecting the
 wrong lesson is worse than injecting none, and only a reader can tell the
 difference — but it is a real latency cost, so it is cached by prompt and can be

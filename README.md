@@ -232,6 +232,33 @@ cd recursive-memory-compaction && ./bin/rmc install --target claude --target cod
 Undo with `rmc uninstall` — it removes only what it added and leaves your
 lessons in place.
 
+## Seeing what it does
+
+Recall is never silent. Claude Code shows you a line each time RMC injects:
+
+```
+⋯ RMC · recalled 2 lessons (312 tok): retry, k8s-deploys   +1 patch
+```
+
+For the whole picture — which lessons were offered to the model, what it decided
+about each and why, and the **verbatim** block that lands in the agent's context:
+
+```bash
+rmc trace --prompt "rank memories by cosine similarity, load the top 3"
+```
+
+```
+3. what the model decided
+──────────────────────────────────────────────────────────────────
+   ✓ relevant  n_ea4ce6  The work is exactly the anti-pattern this lesson names…
+   · unrelated n_369d29  About RMC being self-contained, not about retrieval
+
+   1 branch judged irrelevant was never walked further — 1 model call total
+```
+
+Add `--after <transcript.jsonl>` to trace the other half: what RMC parsed out of
+a finished session and what the model made of it.
+
 ## Seeing what it knows
 
 ```bash

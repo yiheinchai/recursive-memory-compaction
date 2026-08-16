@@ -53,6 +53,20 @@ not a score.
 
 Reads stdin if `--prompt` is omitted.
 
+### `rmc trace --prompt "..." [--after TRANSCRIPT]`
+The agent's-eye view. Walks every stage of a recall and prints the result of
+each: the apex lessons put in front of the model, its verdict and reason for
+every one (including the branches it judged irrelevant and therefore never
+opened), the **verbatim** block that lands in the agent's context, what you see
+in Claude Code while it happens, and how the model's turn then begins.
+
+`--after` continues into the other half: the facts parsed out of a finished
+session, and what the model made of them — outcome, whether you had to steer,
+and what was worked out by trial.
+
+Use it when you want to know exactly what RMC is doing to your prompts. It edits
+what the model sees, and that should never be something you take on trust.
+
 ### `rmc conflicts [--family F]`
 Lessons that contradict each other, with the question that would settle each.
 These are also raised inside the recall pack, so you normally meet them while
