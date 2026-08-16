@@ -36,6 +36,9 @@ class Pack:
 
     text: str = ""
     served: list[str] = field(default_factory=list)
+    # Titles alongside ids, so the hook can say *what* was recalled. A count
+    # tells you RMC fired; it does not let you notice that it fired wrongly.
+    titles: list[str] = field(default_factory=list)
     families: list[str] = field(default_factory=list)
     patches: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
@@ -182,6 +185,7 @@ def recall_pack(
                 chunks.append(reminder)
                 pack.refreshed.append(node.id)
                 pack.served.append(node.id)
+                pack.titles.append(node.title or node.family)
                 used += cost
             continue
 
@@ -192,6 +196,7 @@ def recall_pack(
         chunks.append(rendered)
         used += cost
         pack.served.append(node.id)
+        pack.titles.append(node.title or node.family)
         pack.families.append(family)
 
         # Deltas that previously rescued this node get re-attached cheaply,

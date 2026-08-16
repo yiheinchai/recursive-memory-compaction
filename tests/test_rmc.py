@@ -2184,3 +2184,53 @@ class TestRoutingView(unittest.TestCase):
         node = self._node(title="t", gist="g")
         self.assertFalse(self.summary.refresh(self.store, self._adapter({}), node))
         self.assertEqual(self.calls, 0, "a complete node must not cost a model call")
+
+
+class TestRecallNotice(unittest.TestCase):
+    """The line above every prompt. A count proves RMC fired; only the titles
+    let you notice it fired on the wrong lessons."""
+
+    def _pack(self, titles, tokens=100, conflicts=()):
+        from rmc.recall import Pack
+        p = Pack()
+        p.served = [f"n{i}" for i in range(len(titles))]
+        p.titles = list(titles)
+        p.tokens = tokens
+        p.conflicts = list(conflicts)
+        return p
+
+    def test_it_names_what_was_recalled(self) -> None:
+        from rmc.hooks import recall_notice
+        note = recall_notice(self._pack(["Retrying flaky calls"], 298))
+        self.assertIn("Retrying flaky calls", note)
+        self.assertIn("298 tok", note)
+
+    def test_it_stays_on_one_line(self) -> None:
+        from rmc.hooks import recall_notice, NOTICE_WIDTH
+        long = ["A lesson with a deliberately overlong title " + str(i) for i in range(6)]
+        note = recall_notice(self._pack(long, 1200))
+        self.assertLessEqual(len(note), NOTICE_WIDTH + 24, note)
+        self.assertNotIn("\n", note)
+
+    def test_it_says_how_many_it_did_not_name(self) -> None:
+        from rmc.hooks import recall_notice
+        note = recall_notice(self._pack(
+            ["Retry policy", "Cache TTLs", "Deploy rollback",
+             "Idempotency keys everywhere", "Parsing bodies not statuses"], 900))
+        self.assertIn("more", note, "a truncated list must admit what it hid")
+
+    def test_one_very_long_title_is_elided_not_dropped(self) -> None:
+        from rmc.hooks import recall_notice
+        note = recall_notice(self._pack(["x" * 200], 740))
+        self.assertIn("…", note)
+        self.assertIn("xxx", note)
+
+    def test_a_conflict_still_shows(self) -> None:
+        from rmc.hooks import recall_notice
+        self.assertIn("conflict", recall_notice(self._pack(["Retry"], 10, ["n1"])))
+
+    def test_no_titles_degrades_to_the_old_line(self) -> None:
+        from rmc.hooks import recall_notice
+        from rmc.recall import Pack
+        p = Pack(); p.served = ["n1"]; p.tokens = 12
+        self.assertEqual(recall_notice(p), "RMC · 1 lesson · 12 tok")

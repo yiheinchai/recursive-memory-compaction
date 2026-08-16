@@ -173,14 +173,38 @@ def on_pre_compact(payload: dict[str, Any]) -> int:
     return 0
 
 
+NOTICE_WIDTH = 96
+
+
 def recall_notice(pack) -> str:
     """One short line. It appears on every prompt, so it must not become noise.
 
-    Enough to notice a bad recall and to see the running context cost; anything
-    more belongs in `rmc recall`, which is one command away.
+    It names what was recalled, not just how much. A count tells you RMC fired;
+    only the titles let you notice it fired *wrongly* — which is the failure
+    this line exists to make visible, and the one a bare number hides.
     """
     count = len(pack.served)
     note = f"RMC · {count} lesson{'s' if count != 1 else ''} · {pack.tokens} tok"
+
+    titles = [t.strip() for t in getattr(pack, "titles", []) if t and t.strip()]
+    if titles:
+        room = NOTICE_WIDTH - len(note)
+        shown: list[str] = []
+        for i, title in enumerate(titles):
+            remaining = len(titles) - i
+            # Reserve space for the "+N more" that will follow if we stop here.
+            tail = len(f", +{remaining} more") if remaining > 1 else 0
+            if len(", ".join(shown + [title])) + tail > room:
+                break
+            shown.append(title)
+        if shown:
+            note += " — " + ", ".join(shown)
+            left = len(titles) - len(shown)
+            if left:
+                note += f", +{left} more"
+        else:
+            note += f" — {titles[0][: max(12, room - 3)]}…"
+
     if pack.conflicts:
         note += "  ⚠ conflict"
     return note
