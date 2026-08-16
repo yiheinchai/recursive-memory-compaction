@@ -152,6 +152,7 @@ and the loop closes in the background:
 | you submit a prompt | the model is asked which remembered lessons bear on it, walking the tree from the most abstract nodes down | 1 call, cached by prompt |
 | the session ends | the model reads the session and judges how it went, whether you had to steer, and what was worked out by trial | 1 call, detached |
 | a correction happened | the correction *is* the diagnosis; the model picks which dropped detail it was about, and that claim is re-attached next time | 1 call |
+| a turn ends after something failed | the agent is asked whether the failure taught it anything, with the failed commands quoted back | no model call |
 | you teach it something | `rmc add` records it immediately, reconciled, available to your next prompt | 1–2 calls |
 | something reusable happened | a reflection call mints a level-0 lesson from the transcript | 1 call, detached |
 | the new lesson touches known ground | it is reconciled with what is already there — folded in, set alongside, or flagged as a contradiction | 1 call, cached |
@@ -162,6 +163,30 @@ added to the latency of your session. Spawned agents run with `RMC_CHILD=1`,
 which makes RMC's own hooks no-op — otherwise compression would recursively
 trigger compression.
 
+
+### Surprise is the trigger
+
+Reflection is not on a timer and not on every turn. It fires when something
+*went wrong* — the same way you make a mental note when a lesson surprises you
+and none at all when it merely confirms what you knew.
+
+The split follows the rule above. Noticing the occasion is free and structural:
+a tool call the host reported as failed is a fact, not an interpretation. Whether
+that failure taught anything is a judgement, so the agent is asked — and told
+plainly that "no" is the expected answer:
+
+```
+Since the last check, 3 tool calls failed:
+  · `pytest tests/integration` → could not connect to postgres at localhost:5432
+  · `docker compose up -d postgres` → port 5432 already allocated by 'legacy-pg'
+  · `pytest tests/integration --pg-port 5433` → fixture 'pg_port' not found
+
+Did anything there change how you would act next time, in a way that is
+written down nowhere?
+```
+
+A turn where everything worked is silent. So is a turn whose failures were
+already raised.
 
 ### Learning happens live, and does not need you
 

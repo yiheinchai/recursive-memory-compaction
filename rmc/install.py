@@ -18,6 +18,7 @@ MARKER = "rmc hook"
 
 CLAUDE_EVENTS = {
     "UserPromptSubmit": ("user-prompt-submit", 30, "Recalling lessons…"),
+    "Stop": ("stop", 15, "Learning check…"),
     "SessionEnd": ("session-end", 30, "Learning from this session…"),
 }
 

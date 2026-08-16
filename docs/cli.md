@@ -162,6 +162,9 @@ Any key can be overridden per-run by an environment variable:
 | `compaction.regression_k` | `5` | episodes replayed per validation |
 | `compaction.max_level` | `6` | deepest compression level |
 | `learning.min_tool_calls` | `8` | below this a session is ignored |
+| `learning.nudge_on_surprise` | `true` | after a turn where tool calls failed, ask the agent whether it learned anything |
+| `learning.min_surprises` | `2` | failed tool calls needed before asking |
+| `learning.nudge_cooldown_s` | `900` | minimum gap between asks |
 | `placement.consult` | `true` | ask a model how new knowledge relates to old |
 | `placement.judge_calls` | `2` | model calls the relatedness walk may spend |
 | `placement.max_depth` | `2` | how far down the walk may look |
@@ -186,7 +189,8 @@ rmc config recall.strategy delta-patch   # default: apex + matched claims only
 ## Hooks
 
 ### `rmc hook <event>`
-Reads a JSON payload on stdin. Events: `user-prompt-submit`, `session-end`
-(alias `stop`). Always exits 0. No-ops when `RMC_CHILD` or `RMC_DISABLE` is set.
+Reads a JSON payload on stdin. Events: `user-prompt-submit`, `stop` (per turn),
+`session-end` (at teardown). Always exits 0. No-ops when `RMC_CHILD` or
+`RMC_DISABLE` is set.
 
 You should not need to call this yourself.

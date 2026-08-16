@@ -59,6 +59,13 @@ DEFAULTS: dict[str, Any] = {
         "enabled": True,
         "min_tool_calls": 8,  # ignore trivial sessions
         "capture_failures": True,
+        # Surprise is the trigger for reflection, as it is for a person: a turn
+        # where everything worked has nothing to teach. A failed tool call is a
+        # fact the host reports, so noticing costs nothing; deciding whether it
+        # taught anything is left to the agent.
+        "nudge_on_surprise": True,
+        "min_surprises": 2,  # failed tool calls before the agent is asked to reflect
+        "nudge_cooldown_s": 900,
     },
     "placement": {
         "consult": True,  # ask a model how new knowledge relates to old

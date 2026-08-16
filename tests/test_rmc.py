@@ -963,6 +963,86 @@ class TestLayering(unittest.TestCase):
         self.assertEqual(self.project.get("n_same").body, "local version")
 
 
+class TestSurpriseTrigger(StoreCase):
+    """Reflection fires on surprise, the way a person makes a mental note.
+
+    The harness only notices the *occasion* — a tool call the host reported as
+    failed is a fact. Whether it taught anything is left to the agent.
+    """
+
+    def transcript(self, results: list[bool]) -> Path:
+        import json
+
+        rows = [{"type": "user", "message": {"role": "user", "content": "do the thing"}}]
+        for i, ok in enumerate(results):
+            rows.append(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "tool_use", "id": f"t{i}", "name": "Bash", "input": {"command": f"cmd{i}"}}
+                        ],
+                    },
+                }
+            )
+            rows.append(
+                {
+                    "type": "user",
+                    "toolUseResult": {"is_error": not ok},
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "tool_result", "tool_use_id": f"t{i}", "content": "out"}],
+                    },
+                }
+            )
+        path = Path(self.tmp.name) / "t.jsonl"
+        path.write_text("\n".join(json.dumps(r) for r in rows))
+        return path
+
+    def fire(self, path: Path, session: str = "s", **extra):
+        import io
+        import json
+        from contextlib import redirect_stdout
+
+        from rmc.hooks import on_turn_end
+
+        payload = {"session_id": session, "cwd": str(self.base), "transcript_path": str(path), **extra}
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            on_turn_end(payload)
+        out = buf.getvalue().strip()
+        return json.loads(out) if out else None
+
+    def test_silent_when_nothing_went_wrong(self) -> None:
+        self.assertIsNone(self.fire(self.transcript([True, True, True, True])))
+
+    def test_fires_once_enough_has_failed(self) -> None:
+        result = self.fire(self.transcript([True, False, False]))
+        self.assertIsNotNone(result)
+        self.assertEqual(result["decision"], "block")
+        self.assertIn("cmd1", result["reason"])
+        self.assertIn("nothing to capture", result["reason"].lower())
+
+    def test_a_single_failure_is_below_the_bar(self) -> None:
+        self.assertIsNone(self.fire(self.transcript([True, False, True])))
+
+    def test_does_not_re_fire_for_failures_already_raised(self) -> None:
+        path = self.transcript([False, False])
+        self.assertIsNotNone(self.fire(path))
+        self.assertIsNone(self.fire(path), "the same surprises must not nag twice")
+
+    def test_never_loops_on_its_own_continuation(self) -> None:
+        self.assertIsNone(
+            self.fire(self.transcript([False, False]), stop_hook_active=True)
+        )
+
+    def test_can_be_switched_off(self) -> None:
+        self.store.config.set("learning.nudge_on_surprise", False)
+        self.store.config.save(self.store.root / "config.yaml")
+        self.assertIsNone(self.fire(self.transcript([False, False])))
+
+
 class TestHooks(StoreCase):
     def test_recursion_guard(self) -> None:
         import os

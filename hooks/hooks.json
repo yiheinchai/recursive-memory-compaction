@@ -25,6 +25,19 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/rmc hook stop",
+            "timeout": 15,
+            "statusMessage": "Learning check\u2026",
+            "_rmc": true
+          }
+        ]
+      }
     ]
   }
 }

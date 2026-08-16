@@ -13,6 +13,19 @@
         ]
       }
     ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/yihein.chai/Documents/learn/rmc/bin/rmc hook stop",
+            "timeout": 15,
+            "statusMessage": "Learning check\u2026",
+            "_rmc": true
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [
