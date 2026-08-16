@@ -838,6 +838,13 @@ footer a { color: var(--muted); }
 .docs {
   display: grid;
   grid-template-columns: 232px minmax(0, 1fr);
+}
+/* A grid item defaults to `min-width: auto`, which resolves to its min-content
+   size — so a wide table or code block pushes the item past its track however
+   the track is sized. `minmax(0, 1fr)` fixes the track; this fixes the item,
+   and both are needed. */
+.docs > * { min-width: 0; }
+.docs {
   gap: clamp(28px, 5vw, 64px);
   padding: 44px 0 80px;
   align-items: start;
@@ -887,7 +894,41 @@ footer a { color: var(--muted); }
 .note b { color: var(--ink); }
 
 @media (max-width: 900px) {
-  .docs { grid-template-columns: 1fr; }
-  .toc { position: static; border-bottom: 1px solid var(--rule); padding-bottom: 16px; }
+  /* `1fr` is `minmax(auto, 1fr)`, and that `auto` lets a wide child — a code
+     block, a table — force the whole track past the viewport. Every grid track
+     holding arbitrary content needs an explicit zero minimum. */
+  .docs { grid-template-columns: minmax(0, 1fr); gap: 0; padding-top: 20px; }
+  .toc {
+    position: static;
+    border: 1px solid var(--rule);
+    padding: 0;
+    margin-bottom: 26px;
+  }
+  .toc > summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 13px 16px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink);
+    cursor: pointer;
+    list-style: none;
+  }
+  .toc > summary::-webkit-details-marker { display: none; }
+  .toc > summary::after { content: "＋"; color: var(--faint); }
+  .toc[open] > summary::after { content: "－"; }
+  .toc[open] > summary { border-bottom: 1px solid var(--rule); }
+  .toc .grp { padding: 0 16px; margin: 16px 0 6px; }
+  .toc a { padding: 7px 16px; margin-left: 0; border-left: 0; }
+  .toc a:last-child { margin-bottom: 14px; }
   .nav-links a:not(.btn) { display: none; }
+}
+
+/* The disclosure is a mobile affordance; on a wide screen the list is just
+   the sidebar, always visible. */
+@media (min-width: 901px) {
+  .toc > summary { display: none; }
 }

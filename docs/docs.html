@@ -42,14 +42,18 @@
 <div class="wrap docs">
 
   <!-- ------------------------------------------------------------ toc -->
-  <aside class="toc">
-    <div class="grp">Understanding it</div>
-    <a href="#idea">The idea, in one picture</a>
-    <a href="#different">Why this is different</a>
-    <a href="#ideas">The three ideas</a>
-    <a href="#using">Living with it</a>
+  <details class="toc" id="toc" open>
+    <summary>Contents</summary>
+    <div class="grp">Get going</div>
+    <a href="#start">Quickstart</a>
+    <a href="#trouble">When something looks wrong</a>
+    <a href="#tasks">Everyday tasks</a>
 
-    <div class="grp">Technical detail</div>
+    <div class="grp">Reference</div>
+    <a href="#commands">Commands</a>
+    <a href="#config">Configuration</a>
+
+    <div class="grp">How it works</div>
     <a href="#loop">The loop</a>
     <a href="#rule">The governing rule</a>
     <a href="#recall">01 &nbsp;Recall</a>
@@ -59,371 +63,252 @@
     <a href="#compress">05 &nbsp;Compression</a>
     <a href="#descend">06 &nbsp;Descent</a>
     <a href="#dream">07 &nbsp;Dreaming</a>
-
-    <div class="grp">Reference</div>
     <a href="#model">Data model</a>
-    <a href="#cli">CLI</a>
-    <a href="#config">Configuration</a>
     <a href="#eval">Evaluation</a>
-    <a href="#privacy">Privacy</a>
     <a href="#gaps">What it still gets wrong</a>
-  </aside>
+  </details>
 
   <!-- ----------------------------------------------------------- body -->
   <main class="prose">
 
-<h2 id="idea">What a lesson is</h2>
+<h2 id="start">Quickstart</h2>
 <p>
-  You spend a session getting something right — a wrong turn, a correction, a
-  fix. RMC watches that happen and writes down the <b>conclusion</b>, not the
-  transcript. Next time the same problem comes up, the conclusion goes into
-  context and the session does not.
+  Python 3.10+ and either <code>claude</code> or <code>codex</code> on your PATH.
+  No third-party dependencies.
 </p>
-<figure class="fig term-fig" data-term>
-  <div class="plate">
-    <div class="cc-stage">
-      <div class="cc">
-        <div class="cc-title">
-          <span class="cc-lights"><i class="r"></i><i class="y"></i><i class="g"></i></span>
-          <span class="cc-name">
-            <svg class="ico" viewBox="0 0 16 14" aria-hidden="true"><path d="M1 3.2A1.2 1.2 0 0 1 2.2 2h3.4l1.5 1.7h6.7A1.2 1.2 0 0 1 15 4.9v6.9A1.2 1.2 0 0 1 13.8 13H2.2A1.2 1.2 0 0 1 1 11.8z" fill="#5a9ff0"/></svg>
-            <span>rmc &nbsp;—</span>
-            <span class="spin" data-term-spin>◐</span>
-            <span class="t" data-term-title>Fix the silent S3 retry failure</span>
-          </span>
-        </div>
-        <div class="cc-tabs">
-          <span class="tab on" data-tab="0">without RMC</span>
-          <span class="sep">…</span>
-          <span class="tab" data-tab="1">with RMC</span>
-          <span class="sep">…</span>
-          <span class="tab" data-tab="2">20 sessions later</span>
-          <span class="plus">+</span>
-        </div>
-        <div class="cc-body">
-          <div class="pane" data-pane="0"><div class="pane-in"></div></div>
-          <div class="pane" data-pane="1"><div class="pane-in"></div></div>
-          <div class="pane" data-pane="2"><div class="pane-in"></div></div>
-          <div class="rush-tag" data-rush-tag>47 more exchanges…</div>
-        </div>
-        <div class="cc-input">
-          <span>›</span>
-          <span class="typed" data-typed></span>
-          <span class="cc-caret"></span>
-        </div>
-        <div class="cc-status">
-          <span><b>▸▸ bypass permissions on</b> (shift+tab to cycle) · esc to interrupt</span>
-          <span class="right" data-term-foot></span>
-        </div>
-      </div>
-
-      <div class="store">
-        <div class="store-head">
-          <span>RMC store &nbsp;·&nbsp; ~/.rmc</span>
-          <span class="store-note" data-store-note>empty</span>
-        </div>
-        <div class="store-tree" data-store-tree>
-          <div class="tier" data-tier="2"><span class="lv">L2</span><div class="tier-cards" data-store-slot></div></div>
-          <div class="tier" data-tier="1"><span class="lv">L1</span><div class="tier-cards" data-store-slot></div></div>
-          <div class="tier" data-tier="0"><span class="lv">L0</span><div class="tier-cards" data-store-slot></div></div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <div class="term-transport">
-    <button class="pp" type="button" data-playpause aria-label="Pause">&#10074;&#10074;</button>
-    <input class="scrub" type="range" min="0" max="1000" value="0" step="1" data-scrub aria-label="Timeline">
-    <span class="clock" data-clock>0:00 / 0:00</span>
-  </div>
-  <div class="fig-controls">
-    <figcaption>Learned once, then shortened every time it proves itself. <b>Same behaviour, a third of the tokens.</b></figcaption>
-    <button type="button" data-replay>Replay</button>
-  </div>
-</figure>
-<p>
-  That much is note-taking, and plenty of tools do it. The new part is what
-  happens to that lesson afterwards.
-</p>
-
-<h3>It earns its way shorter</h3>
-<p>
-  Every time the lesson is loaded, <i>actually used</i>, and the work succeeds,
-  it has proved it contained slack — so it earns an attempt at a shorter form.
-  The candidate must reproduce real past work before it is allowed to replace
-  anything.
-</p>
-<figure class="fig morph" data-morph>
-  <div class="plate">
-    <div class="morph-head">
-      <span data-morph-lv>L0 &middot; first written</span>
-      <span><span class="n" data-morph-tok>260</span> &nbsp;tokens</span>
-    </div>
-    <div class="morph-bar"><i data-morph-bar style="width:100%"></i></div>
-    <div class="morph-slot">
-      <div class="morph-beat" data-morph-beat>&darr; loaded, used &mdash; and the work succeeded</div>
-      <div class="morph-card" data-morph-card><p data-morph-text></p></div>
-    </div>
-    <div class="morph-foot">
-      <span class="morph-drop" data-morph-drop></span>
-      <div class="tree-steps" role="tablist" aria-label="Compression level" style="margin-left:auto">
-        <button role="tab" data-morph-step aria-selected="true">1</button>
-        <button role="tab" data-morph-step aria-selected="false">2</button>
-        <button role="tab" data-morph-step aria-selected="false">3</button>
-      </div>
-    </div>
-  </div>
-  <figcaption>Nothing was deleted. <b>L0 is still there underneath</b>, and each level records which claims it dropped &mdash; so any of them can be pulled back.</figcaption>
-</figure>
-<h3>Which, across a whole store, pulls two numbers apart</h3>
-<p>
-  Do that to every lesson and the store fills up while the row you actually load
-  gets cheaper.
-</p>
-<figure class="fig tree" data-tree>
-  <div class="plate" data-tree-canvas></div>
-  <div class="tree-hud">
-    <div class="stat"><span class="k">Lessons kept</span><span class="v" data-tree-kept>0</span></div>
-    <div class="stat"><span class="k">Tokens loaded / prompt</span><span class="v" data-tree-tok>0</span></div>
-    <div class="tree-steps" role="tablist" aria-label="Steps">
-      <button role="tab" data-tree-step aria-selected="true">1</button>
-      <button role="tab" data-tree-step aria-selected="false">2</button>
-      <button role="tab" data-tree-step aria-selected="false">3</button>
-      <button role="tab" data-tree-step aria-selected="false">4</button>
-      <button role="tab" data-tree-step aria-selected="false">5</button>
-      <button role="tab" data-tree-step aria-selected="false">6</button>
-      <button role="tab" data-tree-step aria-selected="false">7</button>
-    </div>
-  </div>
-  <p class="tree-cap" data-tree-cap></p>
-</figure>
-<p>
-  Two things happen in that picture, and they are the whole system. The store
-  <b>grows</b> — more lessons, more levels, more detail retained. The band at the
-  top, which is what actually enters your context on every prompt,
-  <b>shrinks</b>. Knowledge up, cost down, at the same time.
-</p>
-<div class="note">
-  Most memory systems tie those two together: more remembered means more loaded.
-  RMC's one structural bet is that they can be pulled apart, because
-  <b>knowing a thing and paying to carry it are different problems</b>.
-</div>
-
-<h2 id="different">Why this is different</h2>
-<p>
-  Agent memory has had two shapes, and both of them decay — just in opposite
-  directions.
-</p>
-
-<figure class="fig">
-  <div class="plate">
-    <svg viewBox="0 0 900 330" fill="none" stroke="#1a1a1a" stroke-width="1.4"
-         role="img" aria-label="By session forty: appending overflows the context budget, summarising fits but has lost detail, RMC fits and has kept everything">
-      <g transform="translate(0,0)">
-      <text x="0" y="12" font-size="10.5" letter-spacing="1.6" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">APPEND EVERYTHING</text>
-      <rect x="16" y="8" width="132" height="56" stroke="#1a1a1a" stroke-dasharray="4 3" opacity=".45"/>
-      <rect x="16" y="64" width="132" height="166" fill="#1a1a1a" stroke="none"/>
-      <path d="M0 64H236" stroke="#1a1a1a" stroke-dasharray="5 4" opacity=".5"/>
-      <text x="236" y="58" font-size="9.5" letter-spacing="1.4" text-anchor="end" opacity=".45" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">BUDGET</text>
-      <path d="M0 230H236" stroke="#1a1a1a" opacity=".3"/>
-      <rect x="16" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <rect x="33" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <rect x="50" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <rect x="67" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <rect x="84" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <rect x="101" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <rect x="118" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <rect x="135" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <text x="0" y="288" font-size="11.5" opacity=".5" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">every specific kept</text>
-      <text x="0" y="314" font-size="13.5" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">Overflows.</text>
-      </g>
-      <g transform="translate(332,0)">
-      <text x="0" y="12" font-size="10.5" letter-spacing="1.6" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">SUMMARISE EVERYTHING</text>
-      <rect x="16" y="150" width="132" height="80" fill="#1a1a1a" stroke="none"/>
-      <path d="M0 64H236" stroke="#1a1a1a" stroke-dasharray="5 4" opacity=".5"/>
-      <text x="236" y="58" font-size="9.5" letter-spacing="1.4" text-anchor="end" opacity=".45" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">BUDGET</text>
-      <path d="M0 230H236" stroke="#1a1a1a" opacity=".3"/>
-      <rect x="16" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <rect x="33" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <rect x="50" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <rect x="67" y="252" width="9" height="9" stroke="#1a1a1a" opacity=".28"/>
-      <path d="M67 261l9 -9" stroke="#1a1a1a" opacity=".28"/>
-      <rect x="84" y="252" width="9" height="9" stroke="#1a1a1a" opacity=".28"/>
-      <path d="M84 261l9 -9" stroke="#1a1a1a" opacity=".28"/>
-      <rect x="101" y="252" width="9" height="9" stroke="#1a1a1a" opacity=".28"/>
-      <path d="M101 261l9 -9" stroke="#1a1a1a" opacity=".28"/>
-      <rect x="118" y="252" width="9" height="9" stroke="#1a1a1a" opacity=".28"/>
-      <path d="M118 261l9 -9" stroke="#1a1a1a" opacity=".28"/>
-      <rect x="135" y="252" width="9" height="9" stroke="#1a1a1a" opacity=".28"/>
-      <path d="M135 261l9 -9" stroke="#1a1a1a" opacity=".28"/>
-      <text x="0" y="288" font-size="11.5" opacity=".5" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">five specifics gone</text>
-      <text x="0" y="314" font-size="13.5" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">Fits. Lossy.</text>
-      </g>
-      <g transform="translate(664,0)">
-      <text x="0" y="12" font-size="10.5" letter-spacing="1.6" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">RMC</text>
-      <rect x="16" y="156" width="132" height="74" fill="#1a1a1a" stroke="none"/>
-      <path d="M0 64H236" stroke="#1a1a1a" stroke-dasharray="5 4" opacity=".5"/>
-      <text x="236" y="58" font-size="9.5" letter-spacing="1.4" text-anchor="end" opacity=".45" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">BUDGET</text>
-      <path d="M0 230H236" stroke="#1a1a1a" opacity=".3"/>
-      <rect x="16" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <rect x="33" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <rect x="50" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <rect x="67" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <rect x="84" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <rect x="101" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <rect x="118" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <rect x="135" y="252" width="9" height="9" fill="#1a1a1a" stroke="none"/>
-      <text x="0" y="288" font-size="11.5" opacity=".5" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">every specific kept, one level down</text>
-      <text x="0" y="314" font-size="13.5" fill="#1a1a1a" stroke="none" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">Fits. Complete.</text>
-      </g>
-    </svg>
-  </div>
-  <figcaption>Bar height: <b>what enters your context each prompt.</b> Squares below: individual specifics — a port, a flag, a constant — still on hand.</figcaption>
-</figure>
-
-<h3>Append-only memory dies of weight</h3>
-<p>
-  Keep every note and the store grows without bound. Retrieval becomes guesswork
-  because there is too much to choose between, and the context bill eventually
-  dwarfs the task the memory was supposed to help with. It is correct and
-  unusable.
-</p>
-
-<h3>Summarising memory dies of forgetting</h3>
-<p>
-  Compress on a schedule or a size cap and you stay cheap, but a summariser
-  drops exact values first — the port, the constant, the one flag. You do not
-  find out at the moment of loss; you find out weeks later when something
-  breaks, and by then the original is gone.
-</p>
-
-<h3>RMC's move: compress on evidence, and keep the original</h3>
-<p>
-  A lesson is only shortened after it has demonstrably worked, and the shorter
-  form has to prove itself against real past work before it replaces anything.
-  The long form is not overwritten — it moves one level down and stays
-  reachable. So the cost falls like a summariser while the completeness holds
-  like an append-only store.
-</p>
-
-<h2 id="ideas">The three ideas</h2>
-<p>Everything else in this document is machinery around these.</p>
-
-<h3>1. Use is the compression signal</h3>
-<p>
-  Not age, not size, not a cron schedule. A lesson earns a compression attempt
-  only when it was loaded into context, <i>actually used</i>, and the work
-  succeeded. That is the one signal that means something: if the agent got the
-  job done with this lesson in hand, the lesson contained slack, and slack is
-  exactly what compression removes.
-</p>
-<p>
-  This is why <a href="#attribute">attribution</a> matters so much. Being served
-  is a retrieval decision; being used is an outcome. Conflating them lets an
-  irrelevant lesson accrue a record of usefulness it never earned.
-</p>
-
-<h3>2. Compression adds a level, it never deletes one</h3>
-<p>
-  A compressed lesson becomes the new <i>parent</i>. Its verbose source stays
-  exactly where it was, one level down, permanently. That makes "load the short
-  version first" a free bet: the worst outcome is that you walk back down and
-  pay what you would have paid anyway.
-</p>
-
-<h3>3. Every loss is recorded, as claims</h3>
-<p>
-  A shorter lesson must declare what it removed — as discrete claims, each
-  naming the node that still holds it. Without that, walking back down is a
-  blind search over a tree; with it, it is a short ranked list. This is what
-  makes the whole scheme safe rather than merely cheap, and it is described in
-  full under <a href="#descend">descent</a>.
-</p>
-
-<h2 id="using">Living with it</h2>
-<p>
-  You do not drive RMC. You install it once and then work normally — it lives in
-  hooks, and every expensive step runs detached so nothing blocks your turn.
-</p>
-<p>
-      Python 3.10+ and at least one of <code>claude</code> or <code>codex</code>.
-      No third-party Python dependencies — <code>./bin/rmc</code> needs no
-      virtualenv because the package is stdlib-only.
-    </p>
-
-    <h3>Install</h3>
 <pre>uv tool install rmc-memory
-rmc install --scope user</pre>
+rmc install --scope user
+rmc doctor</pre>
 <p>
-  That is the whole thing. <code>rmc install</code> wires the hooks and RMC runs
-  in every repo you open. Try it first with <code>uvx rmc-memory doctor</code>;
-  without uv, <code>pipx install rmc-memory</code> works too.
+  That is the whole install. <code>rmc install</code> wires the hooks and RMC
+  runs in every repo you open — you do not drive it, you work normally. Drop
+  <code>--scope user</code> to limit it to one project.
 </p>
 <div class="note">
   The distribution is <code>rmc-memory</code> because <code>rmc</code> was taken
   on PyPI. The command it installs, and the package you import, are both
-  <code>rmc</code>.
+  <code>rmc</code>. No uv? <code>pipx install rmc-memory</code>. Just trying it?
+  <code>uvx rmc-memory doctor</code>.
 </div>
+
+<h3>What you should see</h3>
+<p>Nothing, at first — the store is empty and RMC has nothing to say. Once it
+  has learned something, a line appears above your prompt:</p>
+<pre>⋯ RMC · 2 lessons · 512 tok — Retry policy, Cache TTLs
+⋯ RMC · 1 lesson · 118 tok — Retry policy  · 1 refreshed, 2 already in context</pre>
 <p>
-  Two separable things happen. The <b>hooks</b> are what make RMC run; they
-  invoke the package by absolute path and never touch your PATH. The
-  <b>command</b> is for you, and installing also puts it on PATH — pass
-  <code>--no-link</code> to skip that. Drop <code>--scope user</code> to limit
-  RMC to the project you run it from. <code>rmc doctor</code> reports which of
-  these you have.
+  It names what was loaded, because a count only proves RMC fired — the titles
+  are what let you notice it fired on the <b>wrong</b> lessons. The three states
+  differ: a lesson injected in full, a one-line refresher for one going stale,
+  and one skipped because it is still in your context. Only the first is a
+  lesson arriving.
+</p>
+<p>
+  Expect the first capture within a few sessions of real work. RMC learns from
+  corrections, so a session where nothing went wrong teaches it nothing.
 </p>
 
-<h3>Or as a Claude Code plugin</h3>
+<h3>As a Claude Code plugin instead</h3>
 <pre><span class="b">/plugin</span> marketplace add yiheinchai/rmc
 <span class="b">/plugin</span> install rmc@rmc</pre>
 
-<h3>Codex</h3>
+<h3>Where your data lives</h3>
 <p>
-  Codex gets an <code>AGENTS.md</code> block instructing the agent to call
-  <code>rmc recall</code> itself, since Codex's hook schema is less settled.
-  Codex also works as an execution backend for any RMC install
-  (<code>rmc config agent codex</code>).
+  Plain files: <code>.rmc/</code> in the project, <code>~/.rmc/</code> for
+  lessons that apply everywhere. Nodes and episodes are worth committing;
+  sessions, telemetry and caches are machine-local. Everything passes through
+  <code>redact.py</code> before it touches disk — API keys, tokens, private keys,
+  card numbers — biased toward over-redaction, since a mangled lesson is
+  recoverable and a leaked key is not.
+</p>
+<p>
+  <b>RMC makes no network calls.</b> Model calls go through whichever CLI you
+  already have, under your existing credentials.
 </p>
 
-<h3>Working on RMC itself</h3>
-<pre>git clone https://github.com/yiheinchai/rmc &amp;&amp; <span class="c">cd</span> rmc
-python3 -m unittest discover -s tests
-./bin/rmc install --scope user</pre>
+<h2 id="trouble">When something looks wrong</h2>
+<p>Start with <code>rmc doctor</code>. It reports backends, store, hook wiring,
+  and whether the <code>rmc</code> command is on your PATH.</p>
+
+<div class="scroll">
+<table>
+  <tr><th>Symptom</th><th>Likely cause</th><th>Check / fix</th></tr>
+  <tr>
+    <td><code>rmc: command not found</code></td>
+    <td>The CLI is not on PATH. <b>Hooks are unaffected</b> — they invoke the
+        package by absolute path, so RMC is still running.</td>
+    <td><code>rmc install</code> links it; or symlink <code>bin/rmc</code> into
+        <code>~/.local/bin</code> yourself</td>
+  </tr>
+  <tr>
+    <td>Nothing is ever recalled</td>
+    <td>An empty store, or every match is already fresh in your context</td>
+    <td><code>rmc tree</code> for what exists; <code>rmc recall --prompt "…"</code>
+        for what a given prompt would pull</td>
+  </tr>
+  <tr>
+    <td>Nothing is ever learned</td>
+    <td>No backend, no substantial turns, or the reflection backoff has grown</td>
+    <td><code>rmc status</code> — look at <code>nudges</code> and the miss rate;
+        <code>rmc events --kind nudge</code> for when one last fired</td>
+  </tr>
+  <tr>
+    <td>Hooks never fire</td>
+    <td>Installed at project scope into a repo you do not work in — including
+        RMC's own clone</td>
+    <td><code>rmc doctor</code> shows where they are wired;
+        <code>rmc install --scope user</code> fixes it</td>
+  </tr>
+  <tr>
+    <td>The wrong lessons keep appearing</td>
+    <td>Recall over-serving, the weakest part of the system today</td>
+    <td><code>rmc trace --prompt "…"</code> shows the model's verdict and reason
+        for every candidate</td>
+  </tr>
+  <tr>
+    <td>A lesson is wrong or out of date</td>
+    <td>It was captured from a situation that has since changed</td>
+    <td><code>rmc conflicts</code>, then
+        <code>rmc resolve &lt;id&gt; --drop</code></td>
+  </tr>
+  <tr>
+    <td>A bug in RMC itself</td>
+    <td>—</td>
+    <td><code>rmc report --about "…"</code> writes a redacted report and prints
+        the <code>gh</code> command to file it. It sends nothing.</td>
+  </tr>
+</table>
+</div>
+
+<h2 id="tasks">Everyday tasks</h2>
+<div class="scroll">
+<table>
+  <tr><th>You want to</th><th>Run</th></tr>
+  <tr><td>Teach it something now, without waiting for reflection</td>
+      <td><code>rmc add "…" --family retry</code></td></tr>
+  <tr><td>See what it just learned</td>
+      <td><code>rmc tree --recent</code></td></tr>
+  <tr><td>See everything it knows, by family</td>
+      <td><code>rmc tree</code> &nbsp;·&nbsp; <code>rmc tree -v</code> for bodies</td></tr>
+  <tr><td>See what a prompt would pull in</td>
+      <td><code>rmc recall --prompt "…"</code></td></tr>
+  <tr><td>See <i>why</i> it chose those</td>
+      <td><code>rmc trace --prompt "…"</code></td></tr>
+  <tr><td>Check how it is doing</td>
+      <td><code>rmc status</code></td></tr>
+  <tr><td>Settle a contradiction it flagged</td>
+      <td><code>rmc conflicts</code> then <code>rmc resolve &lt;id&gt;</code></td></tr>
+  <tr><td>Stop it interrupting to reflect</td>
+      <td><code>rmc config learning.nudge_mode off</code></td></tr>
+  <tr><td>Turn recall off but keep learning</td>
+      <td><code>rmc config recall.enabled false</code></td></tr>
+  <tr><td>Remove it entirely</td>
+      <td><code>rmc uninstall</code> — removes only what RMC added</td></tr>
+</table>
+</div>
+
+<h3>Reading <code>rmc status</code></h3>
+<pre>  precision  2/23 served lessons were used  (9%)
+  captures   19  (4 by a reflector, 15 by the session)
+  missed     79%  — the reflector is missing most of them</pre>
 <p>
-  <code>./bin/rmc</code> runs from a clone with no virtualenv, since the package
-  is stdlib-only. Note the scope — without <code>--scope user</code> the hooks
-  land in the clone, and every repo you actually work in gets nothing. RMC warns
-  when you do that.
+  <b>precision</b> is retrieval quality: of the lessons put in front of the
+  model, how many bore on the work. Low precision is a router problem, not a
+  memory problem.
+  <b>missed</b> is capture quality: a lesson the live session had to add by hand
+  is one the reflector saw the evidence for and did not take.
 </p>
 
-<h3>What you actually see</h3>
-<pre>⋯ Recalling lessons…                                     <span class="c">(while the hook runs)</span>
-⋯ RMC · 2 lessons · 512 tok — Retry policy, Cache TTLs
-⋯ RMC · 1 lesson · 118 tok — Retry policy  · 1 refreshed, 2 already in context</pre>
+<h2 id="commands">Commands</h2>
+<div class="scroll">
+<table>
+  <tr><th>Command</th><th>What it does</th></tr>
+  <tr><td><code>rmc install [--scope user] [--no-link]</code></td><td>Wire the hooks; also puts <code>rmc</code> on PATH</td></tr>
+  <tr><td><code>rmc uninstall</code></td><td>Remove only what RMC added</td></tr>
+  <tr><td><code>rmc doctor</code></td><td>Backends, store, hook wiring, PATH</td></tr>
+  <tr><td><code>rmc status</code></td><td>Families, levels, precision, capture miss rate</td></tr>
+  <tr><td><code>rmc tree [--recent] [--family F] [-v]</code></td><td>The graph; <code>--recent</code> is newest-first across families</td></tr>
+  <tr><td><code>rmc recall --prompt "…"</code></td><td>What would be injected, and why</td></tr>
+  <tr><td><code>rmc trace --prompt "…"</code></td><td>Every stage, ending in the verbatim block</td></tr>
+  <tr><td><code>rmc add "…" [--family F]</code></td><td>Teach it now, reconciled against what is known</td></tr>
+  <tr><td><code>rmc conflicts</code> / <code>rmc resolve &lt;id&gt; [--drop]</code></td><td>List and settle contradictions</td></tr>
+  <tr><td><code>rmc compact</code></td><td>Attempt compressions that are due</td></tr>
+  <tr><td><code>rmc dream [--list] [--due] [--log] [--gists]</code></td><td>Whole-store consolidation; <code>--gists</code> fills missing routing views</td></tr>
+  <tr><td><code>rmc eval</code></td><td>Replay held-out work against every level of a lesson</td></tr>
+  <tr><td><code>rmc report --about "…"</code></td><td>A redacted defect report. Sends nothing.</td></tr>
+  <tr><td><code>rmc events --kind K</code></td><td>Raw telemetry</td></tr>
+  <tr><td><code>rmc config [key] [value]</code></td><td>Read or set any setting</td></tr>
+</table>
+</div>
 <p>
-  The line names what was loaded, because a count proves RMC fired while only
-  the titles let you notice it fired on the <i>wrong</i> lessons. It separates
-  three things that are easy to conflate: a lesson injected in full, a one-line
-  refresher for one that is present but going stale, and one skipped entirely
-  because it is still fresh in your context.
-</p>
-<p>
-  Only the first is a lesson arriving. The last matters too — nothing injected
-  is a decision the system made, not a failure to find anything, and those
-  should not look the same.
-</p>
-<p>
-  An injection is never silent. A memory system that edits your prompts without
-  saying so is one you cannot notice going wrong, and
-  <code>rmc trace</code> shows every stage when you want the full picture.
+  Any config key can be overridden per-run by an environment variable:
+  <code>recall.max_pack_tokens</code> → <code>RMC_RECALL_MAX_PACK_TOKENS</code>.
+  Full reference:
+  <a href="https://github.com/yiheinchai/rmc/blob/main/docs/cli.md">docs/cli.md</a>.
 </p>
 
-<h2 id="detail" class="part">Technical detail</h2>
+<h2 id="config">Configuration</h2>
+    <p>
+      <code>rmc config</code> with no arguments dumps everything; one argument
+      reads a dotted key; two set it. Any key can be overridden per-run by an
+      environment variable: <code>recall.max_pack_tokens</code> →
+      <code>RMC_RECALL_MAX_PACK_TOKENS</code>.
+    </p>
+    <div class="scroll">
+    <table>
+      <tr><th>Key</th><th>Default</th><th>Meaning</th></tr>
+      <tr><td><code>agent</code></td><td><code>claude</code></td><td>default backend</td></tr>
+      <tr><td><code>recall.enabled</code></td><td><code>true</code></td><td>inject lessons at all</td></tr>
+      <tr><td><code>recall.strategy</code></td><td><code>delta-patch</code></td><td><code>delta-patch</code>, <code>delta-jump</code>, or <code>stepwise</code></td></tr>
+      <tr><td><code>recall.max_pack_tokens</code></td><td><code>1200</code></td><td>ceiling on injected context</td></tr>
+      <tr><td><code>recall.max_families</code></td><td><code>3</code></td><td>lesson families served per prompt</td></tr>
+      <tr><td><code>recall.always_judge</code></td><td><code>false</code></td><td>filter for relevance even when the whole store fits the budget</td></tr>
+      <tr><td><code>recall.timeout_s</code></td><td><code>20</code></td><td>bound on the routing call, kept under the hook deadline</td></tr>
+      <tr><td><code>recall.judge_calls</code></td><td><code>2</code></td><td>model calls the relevance walk may spend</td></tr>
+      <tr><td><code>recall.max_depth</code></td><td><code>2</code></td><td>how far down the tree the walk may look</td></tr>
+      <tr><td><code>recall.max_expansions</code></td><td><code>3</code></td><td>descents before escalating to L0</td></tr>
+      <tr><td><code>selection.w_judge</code></td><td><code>0.60</code></td><td>weight on the model's usefulness ranking</td></tr>
+      <tr><td><code>selection.w_prior</code></td><td><code>0.28</code></td><td>weight on the observed rescue rate</td></tr>
+      <tr><td><code>selection.w_cost</code></td><td><code>0.12</code></td><td>penalty on token cost</td></tr>
+      <tr><td><code>selection.explore</code></td><td><code>posterior</code></td><td><code>ucb</code> to keep probing rare branches</td></tr>
+      <tr><td><code>compaction.min_successes</code></td><td><code>2</code></td><td>successful recalls before compressing</td></tr>
+      <tr><td><code>compaction.max_ratio</code></td><td><code>0.75</code></td><td>candidate must be ≤75% of the original</td></tr>
+      <tr><td><code>compaction.threshold</code></td><td><code>1.0</code></td><td>required replay pass-rate</td></tr>
+      <tr><td><code>compaction.regression_k</code></td><td><code>5</code></td><td>episodes replayed per validation</td></tr>
+      <tr><td><code>compaction.max_level</code></td><td><code>6</code></td><td>deepest compression level</td></tr>
+      <tr><td><code>learning.min_tool_calls</code></td><td><code>8</code></td><td>below this a session is ignored</td></tr>
+      <tr><td><code>learning.nudge_enabled</code></td><td><code>true</code></td><td>reflect after a substantial turn</td></tr>
+      <tr><td><code>learning.nudge_mode</code></td><td><code>background</code></td><td><code>background</code>, <code>fork</code>, <code>block</code>, <code>off</code></td></tr>
+      <tr><td><code>learning.nudge_after_tool_calls</code></td><td><code>12</code></td><td>activity that makes a turn worth a thought</td></tr>
+      <tr><td><code>learning.nudge_after_turns</code></td><td><code>3</code></td><td>human turns that do the same</td></tr>
+      <tr><td><code>learning.min_surprises</code></td><td><code>2</code></td><td>failed tool calls that also do</td></tr>
+      <tr><td><code>learning.nudge_cooldown_s</code></td><td><code>900</code></td><td>minimum gap between asks</td></tr>
+      <tr><td><code>learning.nudge_backoff_after</code></td><td><code>3</code></td><td>consecutive fruitless nudges before backing off</td></tr>
+      <tr><td><code>dream.enabled</code></td><td><code>true</code></td><td>run whole-store consolidation at all</td></tr>
+      <tr><td><code>dream.interval_s</code></td><td><code>86400</code></td><td>minimum gap between dreams</td></tr>
+      <tr><td><code>dream.min_new_episodes</code></td><td><code>3</code></td><td>new multi-lesson episodes required before dreaming</td></tr>
+      <tr><td><code>dream.limit</code></td><td><code>2</code></td><td>merge groups attempted per pass</td></tr>
+      <tr><td><code>placement.consult</code></td><td><code>true</code></td><td>ask a model how new knowledge relates to old</td></tr>
+      <tr><td><code>placement.surface_conflicts</code></td><td><code>true</code></td><td>raise unresolved contradictions during recall</td></tr>
+      <tr><td><code>privacy.redact</code></td><td><code>true</code></td><td>scrub secrets before writing</td></tr>
+      <tr><td><code>limits.agent_timeout_s</code></td><td><code>180</code></td><td>per spawned agent call</td></tr>
+    </table>
+    </div>
+
+    <h3>Ablations</h3>
+    <p><code>recall.strategy</code> exists so the descent policy can be measured rather than asserted:</p>
+<pre>rmc config recall.strategy stepwise      <span class="c"># baseline: walk children, ignore deltas</span>
+rmc config recall.strategy delta-jump    <span class="c"># replace apex with the holder node</span>
+rmc config recall.strategy delta-patch   <span class="c"># default: apex + matched claims only</span></pre>
+
+    <!-- ======================================================= eval -->
+
+<h2 id="how" class="part">How it works</h2>
 <p style="color:var(--muted)">
-  Everything below is the mechanism. You do not need any of it to use RMC, and
-  it is written for the reader who wants to know exactly what runs and why each
-  choice was made rather than its alternative.
+  Nothing below is needed to use RMC. It is here for deciding whether to trust
+  it, and for anyone changing it. If you have not seen the
+  <a href="./">overview</a>, start there — this assumes it.
 </p>
-
 
 <h2 id="loop">The loop</h2>
     <p>You do not drive RMC. You work normally, and it runs in hooks.</p>
@@ -1022,108 +907,6 @@ accepted_summary: <span class="g">"..."</span>    <span class="c"># what the age
 
     <!-- ======================================================== cli -->
 
-<h2 id="cli">CLI</h2>
-
-    <h3>Inspecting it</h3>
-<pre>rmc status                     <span class="c"># families, levels, precision, capture miss rate</span>
-rmc tree                       <span class="c"># the graph by family, each line with an age</span>
-rmc tree --recent              <span class="c"># newest first — what did it just learn</span>
-rmc recall --prompt <span class="g">"..."</span>      <span class="c"># what would be injected, and the model's reason</span>
-rmc trace  --prompt <span class="g">"..."</span>      <span class="c"># every stage, ending in the verbatim block</span>
-rmc dream --list               <span class="c"># merge candidates from co-use</span>
-rmc conflicts                  <span class="c"># unresolved contradictions</span>
-rmc doctor                     <span class="c"># backends, store, hook wiring, is `rmc` on PATH</span>
-rmc events --kind inject       <span class="c"># raw telemetry</span></pre>
-<p>
-  <code>rmc tree</code> groups by family, which answers "what shape is the
-  store?" but not "what did it just learn?" — a new lesson sorts wherever its
-  family happens to sit. <code>--recent</code> is that second view.
-</p>
-<p>
-  <code>rmc trace</code> is the agent's-eye view: what was offered to the model,
-  its verdict and reason for each candidate, the exact injected text, and what
-  you see in Claude Code.
-</p>
-
-<h3>Driving it</h3>
-<pre>rmc add <span class="g">"lesson body"</span> --family retry   <span class="c"># teach it now, reconciled on the way in</span>
-rmc learn --transcript PATH            <span class="c"># mint lessons from a session</span>
-rmc observe --transcript PATH          <span class="c"># record the outcome and attribution</span>
-rmc compact                            <span class="c"># attempt compressions that are due</span>
-rmc dream                              <span class="c"># whole-store consolidation</span>
-rmc dream --gists                      <span class="c"># only fill missing titles and gists</span>
-rmc resolve &lt;node-id&gt; [--drop]         <span class="c"># settle a contradiction</span>
-rmc report --about <span class="g">"..."</span>            <span class="c"># a redacted defect report — sends nothing</span></pre>
-<p>
-  Every lesson gets a title and a one-line gist when it is written, because the
-  relevance walk reads those and never the body. <code>--gists</code> backfills
-  a store that predates that, without waiting for a dream that may not be due.
-</p>
-<p>
-  <code>rmc report</code> writes a report of an RMC defect to
-  <code>.rmc/reports/</code> and prints the <code>gh issue create</code> command
-  that would file it. <b>It sends nothing.</b> RMC makes no network calls, so the
-  transport is your own <code>gh</code>, run deliberately. It contains counts and
-  settings, never lesson text, prompts, transcripts or paths from your machine.
-</p>
-<p>Full reference: <a href="https://github.com/yiheinchai/rmc/blob/main/docs/cli.md">docs/cli.md</a>.</p>
-
-<h2 id="config">Configuration</h2>
-    <p>
-      <code>rmc config</code> with no arguments dumps everything; one argument
-      reads a dotted key; two set it. Any key can be overridden per-run by an
-      environment variable: <code>recall.max_pack_tokens</code> →
-      <code>RMC_RECALL_MAX_PACK_TOKENS</code>.
-    </p>
-    <div class="scroll">
-    <table>
-      <tr><th>Key</th><th>Default</th><th>Meaning</th></tr>
-      <tr><td><code>agent</code></td><td><code>claude</code></td><td>default backend</td></tr>
-      <tr><td><code>recall.enabled</code></td><td><code>true</code></td><td>inject lessons at all</td></tr>
-      <tr><td><code>recall.strategy</code></td><td><code>delta-patch</code></td><td><code>delta-patch</code>, <code>delta-jump</code>, or <code>stepwise</code></td></tr>
-      <tr><td><code>recall.max_pack_tokens</code></td><td><code>1200</code></td><td>ceiling on injected context</td></tr>
-      <tr><td><code>recall.max_families</code></td><td><code>3</code></td><td>lesson families served per prompt</td></tr>
-      <tr><td><code>recall.always_judge</code></td><td><code>false</code></td><td>filter for relevance even when the whole store fits the budget</td></tr>
-      <tr><td><code>recall.timeout_s</code></td><td><code>20</code></td><td>bound on the routing call, kept under the hook deadline</td></tr>
-      <tr><td><code>recall.judge_calls</code></td><td><code>2</code></td><td>model calls the relevance walk may spend</td></tr>
-      <tr><td><code>recall.max_depth</code></td><td><code>2</code></td><td>how far down the tree the walk may look</td></tr>
-      <tr><td><code>recall.max_expansions</code></td><td><code>3</code></td><td>descents before escalating to L0</td></tr>
-      <tr><td><code>selection.w_judge</code></td><td><code>0.60</code></td><td>weight on the model's usefulness ranking</td></tr>
-      <tr><td><code>selection.w_prior</code></td><td><code>0.28</code></td><td>weight on the observed rescue rate</td></tr>
-      <tr><td><code>selection.w_cost</code></td><td><code>0.12</code></td><td>penalty on token cost</td></tr>
-      <tr><td><code>selection.explore</code></td><td><code>posterior</code></td><td><code>ucb</code> to keep probing rare branches</td></tr>
-      <tr><td><code>compaction.min_successes</code></td><td><code>2</code></td><td>successful recalls before compressing</td></tr>
-      <tr><td><code>compaction.max_ratio</code></td><td><code>0.75</code></td><td>candidate must be ≤75% of the original</td></tr>
-      <tr><td><code>compaction.threshold</code></td><td><code>1.0</code></td><td>required replay pass-rate</td></tr>
-      <tr><td><code>compaction.regression_k</code></td><td><code>5</code></td><td>episodes replayed per validation</td></tr>
-      <tr><td><code>compaction.max_level</code></td><td><code>6</code></td><td>deepest compression level</td></tr>
-      <tr><td><code>learning.min_tool_calls</code></td><td><code>8</code></td><td>below this a session is ignored</td></tr>
-      <tr><td><code>learning.nudge_enabled</code></td><td><code>true</code></td><td>reflect after a substantial turn</td></tr>
-      <tr><td><code>learning.nudge_mode</code></td><td><code>background</code></td><td><code>background</code>, <code>fork</code>, <code>block</code>, <code>off</code></td></tr>
-      <tr><td><code>learning.nudge_after_tool_calls</code></td><td><code>12</code></td><td>activity that makes a turn worth a thought</td></tr>
-      <tr><td><code>learning.nudge_after_turns</code></td><td><code>3</code></td><td>human turns that do the same</td></tr>
-      <tr><td><code>learning.min_surprises</code></td><td><code>2</code></td><td>failed tool calls that also do</td></tr>
-      <tr><td><code>learning.nudge_cooldown_s</code></td><td><code>900</code></td><td>minimum gap between asks</td></tr>
-      <tr><td><code>learning.nudge_backoff_after</code></td><td><code>3</code></td><td>consecutive fruitless nudges before backing off</td></tr>
-      <tr><td><code>dream.enabled</code></td><td><code>true</code></td><td>run whole-store consolidation at all</td></tr>
-      <tr><td><code>dream.interval_s</code></td><td><code>86400</code></td><td>minimum gap between dreams</td></tr>
-      <tr><td><code>dream.min_new_episodes</code></td><td><code>3</code></td><td>new multi-lesson episodes required before dreaming</td></tr>
-      <tr><td><code>dream.limit</code></td><td><code>2</code></td><td>merge groups attempted per pass</td></tr>
-      <tr><td><code>placement.consult</code></td><td><code>true</code></td><td>ask a model how new knowledge relates to old</td></tr>
-      <tr><td><code>placement.surface_conflicts</code></td><td><code>true</code></td><td>raise unresolved contradictions during recall</td></tr>
-      <tr><td><code>privacy.redact</code></td><td><code>true</code></td><td>scrub secrets before writing</td></tr>
-      <tr><td><code>limits.agent_timeout_s</code></td><td><code>180</code></td><td>per spawned agent call</td></tr>
-    </table>
-    </div>
-
-    <h3>Ablations</h3>
-    <p><code>recall.strategy</code> exists so the descent policy can be measured rather than asserted:</p>
-<pre>rmc config recall.strategy stepwise      <span class="c"># baseline: walk children, ignore deltas</span>
-rmc config recall.strategy delta-jump    <span class="c"># replace apex with the holder node</span>
-rmc config recall.strategy delta-patch   <span class="c"># default: apex + matched claims only</span></pre>
-
-    <!-- ======================================================= eval -->
-
 <h2 id="eval">Evaluation</h2>
     <p>
       RMC's claim is falsifiable, so <code>rmc eval</code> tries to falsify it:
@@ -1159,21 +942,6 @@ rmc config recall.strategy delta-patch   <span class="c"># default: apex + match
     </p>
 
     <!-- ==================================================== privacy -->
-
-<h2 id="privacy">Privacy</h2>
-    <p>
-      Everything passes through <code>redact.py</code> before touching disk — API
-      keys, tokens, private keys, card numbers, <code>secret=…</code>
-      assignments. Biased toward over-redaction: a mangled lesson is
-      recoverable, a leaked key is not.
-    </p>
-    <p>
-      RMC never sends anything anywhere. Model calls go through whichever CLI
-      you already have installed, under your existing credentials, and the store
-      is plain files in your repo.
-    </p>
-
-    <!-- ======================================================= gaps -->
 
 <h2 id="gaps">What it still gets wrong</h2>
 <p>
@@ -1226,7 +994,7 @@ rmc config recall.strategy delta-patch   <span class="c"># default: apex + match
   generates.
 </p>
 
-</main>
+  </main>
 </div>
 
 <footer>
@@ -1239,6 +1007,12 @@ rmc config recall.strategy delta-patch   <span class="c"># default: apex + match
   </div>
 </footer>
 
+<script>
+  // Closed by default on a phone: fifteen links ahead of the content is a
+  // scroll past everything you came for.
+  var toc = document.getElementById("toc");
+  if (toc && window.matchMedia("(max-width: 900px)").matches) toc.open = false;
+</script>
 <script src="motion.js"></script>
 <script src="tree.js"></script>
 <script>
