@@ -480,6 +480,47 @@ class TestObserve(StoreCase):
         self.assertTrue(result.rescues, "correction should have matched a dropped claim")
         self.assertIn("jitter", result.rescues[0][1])
 
+    def test_corrected_but_successful_session_counts_against_the_lesson(self) -> None:
+        """A session the human had to steer is a success for the episode but a
+        failure for whichever lesson should have prevented the mistake."""
+        from rmc.reflect import observe
+
+        node = self.add_node(
+            id="n_o4",
+            family="deploy",
+            body="Deploy with kubectl apply.",
+            level=1,
+            dropped=[Delta("use the argo rollouts plugin, not raw kubectl", "procedure-step", None)],
+        )
+        facts = SessionFacts(
+            user_messages=[
+                "deploy staging",
+                "no, don't use raw kubectl, use the argo rollouts plugin",
+                "perfect, that works",
+            ],
+            assistant_messages=["deployed"],
+            tool_outputs=["12 passed"],
+            tool_calls=14,
+        )
+        result = observe(self.store, facts, session_id="s4", served=[node.id])
+
+        self.assertEqual(result.outcome.label, "success")  # session ended well
+        reloaded = self.store.get("n_o4")
+        self.assertEqual(reloaded.stats.failures, 1)  # but the lesson did not hold
+        self.assertEqual(reloaded.stats.successes, 0)
+        self.assertTrue(result.rescues)
+        self.assertEqual(result.episode.outcome, "success")
+
+    def test_exact_threshold_is_not_lost_to_float_error(self) -> None:
+        facts = SessionFacts(
+            user_messages=["do it", "no, that's wrong", "perfect, that works"],
+            assistant_messages=["done"],
+            tool_outputs=["12 passed"],
+            tool_calls=4,
+        )
+        # -0.65 (correction) + 0.6 (approval) + 0.35 (tests) == exactly 0.30
+        self.assertEqual(classify(facts).label, "success")
+
     def test_low_confidence_changes_nothing(self) -> None:
         from rmc.reflect import observe
 

@@ -298,11 +298,25 @@ def classify(facts: SessionFacts, *, min_tool_calls: int = 8) -> Outcome:
         evidence.append("session too small to judge")
         return Outcome("unknown", 0.0, evidence)
 
+    # Round before comparing: the weights are decimal literals, so an exact
+    # boundary case like -0.65 + 0.6 + 0.35 lands at 0.2999999 and silently
+    # misses the threshold it was designed to hit.
+    score = round(score, 6)
     if score >= 0.3:
         return Outcome("success", min(1.0, score), evidence)
     if score <= -0.3:
         return Outcome("failure", min(1.0, abs(score)), evidence)
     return Outcome("unknown", abs(score), evidence)
+
+
+def was_corrected(facts: SessionFacts) -> bool:
+    """Did the human have to steer the agent at any point?
+
+    Distinct from the session outcome. A session can end perfectly *because* the
+    user corrected it — that is a success for the episode but a failure for
+    whichever lesson was supposed to have prevented the mistake.
+    """
+    return any(_CORRECTION.search(m) for m in facts.follow_ups)
 
 
 def summarise_work(facts: SessionFacts, *, limit: int = 1500) -> str:
@@ -318,17 +332,43 @@ def correction_text(facts: SessionFacts) -> str:
     return "\n\n".join(m for m in facts.follow_ups if _CORRECTION.search(m))[:2000]
 
 
-def excerpt(facts: SessionFacts, *, limit: int = 6000) -> str:
-    """A readable slice of the session for the reflector."""
+_ERROR_HINT = re.compile(
+    r"(?i)(error|exception|traceback|failed|not found|denied|refus|invalid|"
+    r"unexpected|cannot|no such|timed out|command not found)"
+)
+
+
+def excerpt(facts: SessionFacts, *, limit: int = 7000) -> str:
+    """A slice of the session chosen for where lessons actually live.
+
+    Sampling the opening of a session gets you the framing, not the knowledge —
+    the reusable part is almost always in the middle, where something failed and
+    was then fixed. So this budget goes to, in priority order: the original
+    intent, every human correction, tool output that mentions an error, and the
+    final outcome.
+    """
     parts: list[str] = []
-    for i, msg in enumerate(facts.user_messages[:6]):
-        parts.append(f"[user] {msg[:900]}")
-        if i < len(facts.assistant_messages):
-            parts.append(f"[assistant] {facts.assistant_messages[i][:900]}")
+
+    if facts.first_prompt:
+        parts.append(f"[intent] {facts.first_prompt[:1200]}")
+
+    corrections = [m for m in facts.follow_ups if _CORRECTION.search(m)]
+    for msg in corrections[:5]:
+        parts.append(f"[user correction] {msg[:700]}")
+
+    steering = [m for m in facts.follow_ups if m not in corrections]
+    for msg in steering[:3]:
+        parts.append(f"[user follow-up] {msg[:500]}")
+
+    # Tool output that mentions a failure is where the trap was discovered.
+    errors = [o for o in facts.tool_outputs if _ERROR_HINT.search(o)]
+    for out in errors[-6:]:
+        parts.append(f"[tool output] {out[:600]}")
+
     if facts.last_assistant:
-        parts.append(f"[assistant final] {facts.last_assistant[:1200]}")
-    out = "\n\n".join(parts)
-    return out[:limit]
+        parts.append(f"[outcome] {facts.last_assistant[:1200]}")
+
+    return "\n\n".join(parts)[:limit]
 
 
 def iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:

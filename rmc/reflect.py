@@ -24,9 +24,17 @@ from .adapters import Adapter
 from .node import Node
 from .prompts import REFLECT, REFLECT_SCHEMA
 from .selection import Diagnosis, rank, build_candidates
-from .signals import Outcome, SessionFacts, classify, correction_text, excerpt, summarise_work
+from .signals import (
+    Outcome,
+    SessionFacts,
+    classify,
+    correction_text,
+    excerpt,
+    summarise_work,
+    was_corrected,
+)
 from .store import Episode, Store
-from .util import new_id, signature, truncate
+from .util import new_id, signature, truncate, utcnow
 
 
 @dataclass
@@ -56,10 +64,22 @@ def observe(
     served = served or []
     nodes = [n for n in (store.get(i) for i in served) if n is not None]
 
-    # Below the confidence floor we deliberately do nothing. A noisy label is
-    # worse than no label: it poisons both the priors and the replay corpus that
-    # every future compression is judged against.
-    if outcome.label == "unknown" or outcome.confidence < min_conf:
+    # The session outcome and the *lesson's* outcome are different questions.
+    # If the human had to correct the agent, the served lesson failed at its job
+    # even when the session went on to end well — and that is precisely the case
+    # RMC most needs to learn from, so it must not be scored as a success.
+    corrected = was_corrected(facts)
+    confident = outcome.label != "unknown" and outcome.confidence >= min_conf
+
+    # Below the confidence floor we deliberately do nothing: a noisy label is
+    # worse than no label, because it poisons both the priors and the replay
+    # corpus that every future compression is judged against.
+    #
+    # An explicit correction is exempt. It is unambiguous evidence *about the
+    # lesson* regardless of how the session ended — and a corrected-then-fixed
+    # session scores near zero precisely because its signals cancel, so the
+    # floor would otherwise discard the most informative sessions there are.
+    if not confident and not corrected:
         store.log(
             "observe",
             session=session_id,
@@ -71,11 +91,11 @@ def observe(
 
     for node in nodes:
         node.stats.attempts += 1
-        if outcome.label == "success":
-            node.stats.successes += 1
-        else:
+        if corrected or outcome.label == "failure":
             node.stats.failures += 1
-        node.stats.last_used = store.config.get("_now") or None
+        elif confident:
+            node.stats.successes += 1
+        node.stats.last_used = utcnow()
         store.save_node(node)
         result.updated.append(node.id)
 
@@ -94,17 +114,25 @@ def observe(
     # Only successful episodes are replayable regression tests; failures are
     # kept for diagnosis but must never become the thing a compression is
     # validated against.
-    if outcome.label == "success" or store.config.get("learning.capture_failures", True):
+    if (confident and outcome.label == "success") or store.config.get(
+        "learning.capture_failures", True
+    ):
         store.save_episode(episode)
         result.episode = episode
 
-    if outcome.label == "success":
+    # Attach as a covering task only when the lesson produced the result on its
+    # own. A corrected session's episode stays in the corpus (it is useful once
+    # the node is repaired) but attaching it now would gate every future
+    # compression behind a test the node cannot currently pass.
+    if confident and outcome.label == "success" and not corrected:
         for node in nodes:
             if episode.id not in node.covers_tasks:
                 node.covers_tasks = sorted({*node.covers_tasks, episode.id})
                 store.save_node(node)
 
-    if outcome.label == "failure" and nodes:
+    # Descend whenever the human had to steer — the correction is the diagnosis,
+    # regardless of how the session eventually ended.
+    if nodes and (corrected or outcome.label == "failure"):
         result.rescues = descend(store, nodes, facts)
 
     store.log(
