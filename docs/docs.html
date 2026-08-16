@@ -66,7 +66,7 @@
     <a href="#config">Configuration</a>
     <a href="#eval">Evaluation</a>
     <a href="#privacy">Privacy</a>
-    <a href="#gaps">Not built yet</a>
+    <a href="#gaps">What it still gets wrong</a>
   </aside>
 
   <!-- ----------------------------------------------------------- body -->
@@ -354,39 +354,67 @@
 <pre>uv tool install rmc-memory
 rmc install --scope user</pre>
 <p>
-  That is the whole thing — <code>rmc install</code> wires the hooks and RMC runs
-  in every repo you open. Try it first with <code>uvx rmc-memory doctor</code>.
+  That is the whole thing. <code>rmc install</code> wires the hooks and RMC runs
+  in every repo you open. Try it first with <code>uvx rmc-memory doctor</code>;
+  without uv, <code>pipx install rmc-memory</code> works too.
+</p>
+<div class="note">
   The distribution is <code>rmc-memory</code> because <code>rmc</code> was taken
-  on PyPI; the command it installs is <code>rmc</code>.
+  on PyPI. The command it installs, and the package you import, are both
+  <code>rmc</code>.
+</div>
+<p>
+  Two separable things happen. The <b>hooks</b> are what make RMC run; they
+  invoke the package by absolute path and never touch your PATH. The
+  <b>command</b> is for you, and installing also puts it on PATH — pass
+  <code>--no-link</code> to skip that. Drop <code>--scope user</code> to limit
+  RMC to the project you run it from. <code>rmc doctor</code> reports which of
+  these you have.
 </p>
 
 <h3>Or as a Claude Code plugin</h3>
 <pre><span class="b">/plugin</span> marketplace add yiheinchai/rmc
 <span class="b">/plugin</span> install rmc@rmc</pre>
 
-    <h3>Working on RMC itself</h3>
-<pre>git clone https://github.com/yiheinchai/rmc
-<span class="c">cd</span> rmc &amp;&amp; ./bin/rmc install --scope user --target claude --target codex</pre>
-    <p>
-      Add <code>--scope user</code> to install globally.
-      <code>rmc uninstall</code> removes only what RMC added.
-      <code>rmc doctor</code> checks backends, store and hook wiring.
-    </p>
+<h3>Codex</h3>
+<p>
+  Codex gets an <code>AGENTS.md</code> block instructing the agent to call
+  <code>rmc recall</code> itself, since Codex's hook schema is less settled.
+  Codex also works as an execution backend for any RMC install
+  (<code>rmc config agent codex</code>).
+</p>
 
-    <h3>Codex</h3>
-    <p>
-      Codex gets an <code>AGENTS.md</code> block instructing the agent to call
-      <code>rmc recall</code> itself, since Codex's hook schema is less settled.
-      Codex also works as an execution backend for any RMC install
-      (<code>rmc config agent codex</code>).
-    </p>
+<h3>Working on RMC itself</h3>
+<pre>git clone https://github.com/yiheinchai/rmc &amp;&amp; <span class="c">cd</span> rmc
+python3 -m unittest discover -s tests
+./bin/rmc install --scope user</pre>
+<p>
+  <code>./bin/rmc</code> runs from a clone with no virtualenv, since the package
+  is stdlib-only. Note the scope — without <code>--scope user</code> the hooks
+  land in the clone, and every repo you actually work in gets nothing. RMC warns
+  when you do that.
+</p>
+
 <h3>What you actually see</h3>
-<pre>⋯ Recalling lessons…              <span class="c">(while the hook runs)</span>
-⋯ RMC · 3 lessons · 961 tok       <span class="c">(after injection)</span></pre>
+<pre>⋯ Recalling lessons…                                     <span class="c">(while the hook runs)</span>
+⋯ RMC · 2 lessons · 512 tok — Retry policy, Cache TTLs
+⋯ RMC · 1 lesson · 118 tok — Retry policy  · 1 refreshed, 2 already in context</pre>
+<p>
+  The line names what was loaded, because a count proves RMC fired while only
+  the titles let you notice it fired on the <i>wrong</i> lessons. It separates
+  three things that are easy to conflate: a lesson injected in full, a one-line
+  refresher for one that is present but going stale, and one skipped entirely
+  because it is still fresh in your context.
+</p>
+<p>
+  Only the first is a lesson arriving. The last matters too — nothing injected
+  is a decision the system made, not a failure to find anything, and those
+  should not look the same.
+</p>
 <p>
   An injection is never silent. A memory system that edits your prompts without
-  saying so is one you cannot notice going wrong. When you want the full picture
-  of what it did to a prompt, <code>rmc trace</code> shows every stage.
+  saying so is one you cannot notice going wrong, and
+  <code>rmc trace</code> shows every stage when you want the full picture.
 </p>
 
 <h2 id="detail" class="part">Technical detail</h2>
@@ -549,7 +577,85 @@ rmc install --scope user</pre>
       development the worst mistake ran green the whole way.
     </div>
 
-    <h3>Where it runs — <code>learning.nudge_mode</code></h3>
+    <h3>What it looks for</h3>
+<p>
+  Not "were you wrong about anything?" — that is a judgement the reflector has
+  to reach for, and it reliably answered <i>no</i> on sessions full of
+  corrections. The question is <b>where did the user have to steer you</b>,
+  which is evidence sitting in the transcript. It is the same split the rest of
+  RMC applies: count the observed outcome, judge only what needs judging.
+</p>
+<p>
+  A correction, a rejection, a "no, like this", a restated requirement, a
+  complaint about quality, a preference you did not know they held. Each is a
+  round of the user's time a better-informed agent would not have cost them.
+  For each, the reflector asks what it would have needed to know at the start,
+  and the answer is usually one of:
+</p>
+<div class="scroll">
+<table>
+  <tr><th>#</th><th>Kind</th><th>Why it leads</th></tr>
+  <tr><td>1</td><td>A standard or preference this user holds</td>
+      <td rowspan="3">The three most often missed, and the three that remove the
+      most future steering. They are not mistaken beliefs, so a taxonomy asking
+      only about wrongness cannot see them at all.</td></tr>
+  <tr><td>2</td><td>A method they expect applied</td></tr>
+  <tr><td>3</td><td>A quality bar</td></tr>
+  <tr><td>4</td><td>A false belief about a tool, language or platform</td>
+      <td>Counts <i>even though it surfaced as a bug</i>. The test is whether a
+      belief was wrong, not whether it arrived with an error message.</td></tr>
+  <tr><td>5</td><td>A false belief about this project</td><td>—</td></tr>
+  <tr><td>6</td><td>A modelling error</td><td>You represented something in a way
+      that is not true of it.</td></tr>
+</table>
+</div>
+<p>Then it filters on usefulness rather than worthiness:</p>
+<ul>
+  <li>would knowing this at the start have removed at least one round of steering?</li>
+  <li>does it apply to some task other than this exact file?</li>
+  <li>is it still true tomorrow?</li>
+</ul>
+
+<h3>Three things it does instead of capturing</h3>
+<ul>
+  <li><b>Already served, still ignored.</b> If the user had to say something that
+    was already in a lesson the agent was shown, that is not a gap in what is
+    known — it is a lesson that is not landing. The reflector names the node id
+    and captures nothing.</li>
+  <li><b>A capture it should have made.</b> If the conversation shows the agent
+    running <code>rmc add</code> itself, or the user asking why something was not
+    learned, an earlier pass missed it. The reflector works out what about these
+    criteria let it through and captures <i>that</i>, in the
+    <code>reflection</code> family.</li>
+  <li><b>A defect in RMC.</b> If what it found is a bug in the harness rather
+    than a lesson for the store, it runs <code>rmc report</code> and asks whether
+    you want it filed. It never files anything itself.</li>
+</ul>
+
+<div class="note">
+  Calibration is against the steering, not a general prior. A session where the
+  user never redirected the agent almost certainly teaches nothing. A session
+  where they redirected it repeatedly almost certainly does, and
+  <b>returning nothing from one of those is the check failing.</b>
+</div>
+
+<h3>The backoff, and why it is versioned</h3>
+<p>
+  Nudges that keep producing nothing lengthen the cooldown, up to a cap of one
+  hour. But "found nothing" and "there was nothing to find" are different
+  states, and a backoff that cannot tell them apart throttles hardest exactly
+  when the reflector is broken.
+</p>
+<p>
+  That happened here. Bad criteria produced six barren nudges, the cooldown grew
+  from 15 minutes to four hours, and rewriting the criteria did not release it —
+  so the fix could not run to prove itself. The criteria are now fingerprinted
+  and every nudge records the fingerprint it was issued under; a streak only
+  counts events sharing the current one, so changing a prompt resets it by
+  construction.
+</p>
+
+<h3>Where it runs — <code>learning.nudge_mode</code></h3>
     <div class="scroll">
     <table>
       <tr><th>Mode</th><th>Reflector sees</th><th>Cost</th><th>Interrupts you</th></tr>
@@ -619,6 +725,23 @@ rmc install --scope user</pre>
     <p><code>rmc status</code> reports <code>precision</code> (used ÷ served).</p>
 
     <!-- ============================================= 04 consolidate -->
+
+<h3>And whether the reflector is catching anything at all</h3>
+<p>
+  A reflector capturing a lesson is the system working. The <i>live session</i>
+  capturing one means the evidence was sitting there and the reflector walked
+  past it, so a person had to notice. <code>RMC_CHILD</code> is set in every
+  spawned reflector, so this is observed rather than inferred: captures record
+  <code>by=reflector</code> or <code>by=session</code>, and
+  <code>rmc status</code> reports the miss rate.
+</p>
+<div class="note">
+  The metric this replaced counted captures that followed no nudge, and read a
+  high share as <i>the agent has outgrown the scaffolding</i>. A session where
+  the user asks "why did you not learn that?" and the agent then adds the lesson
+  by hand scored <b>perfectly</b> on it — the worst outcome the system can
+  produce, reported as its best.
+</div>
 
 <h2 id="consolidate">04 &nbsp;Consolidation</h2>
     <p>New knowledge is reconciled with old before it is stored, never appended blindly.</p>
@@ -902,31 +1025,48 @@ accepted_summary: <span class="g">"..."</span>    <span class="c"># what the age
 <h2 id="cli">CLI</h2>
 
     <h3>Inspecting it</h3>
-<pre>rmc status                     <span class="c"># families, levels, precision, capture stats</span>
-rmc tree --family retry        <span class="c"># the graph, with delta manifests</span>
+<pre>rmc status                     <span class="c"># families, levels, precision, capture miss rate</span>
+rmc tree                       <span class="c"># the graph by family, each line with an age</span>
+rmc tree --recent              <span class="c"># newest first — what did it just learn</span>
 rmc recall --prompt <span class="g">"..."</span>      <span class="c"># what would be injected, and the model's reason</span>
 rmc trace  --prompt <span class="g">"..."</span>      <span class="c"># every stage, ending in the verbatim block</span>
 rmc dream --list               <span class="c"># merge candidates from co-use</span>
 rmc conflicts                  <span class="c"># unresolved contradictions</span>
-rmc doctor                     <span class="c"># backends, store, hook wiring</span>
+rmc doctor                     <span class="c"># backends, store, hook wiring, is `rmc` on PATH</span>
 rmc events --kind inject       <span class="c"># raw telemetry</span></pre>
-    <p>
-      <code>rmc trace</code> is the agent's-eye view: what was offered to the
-      model, its verdict and reason for each candidate, the exact injected text,
-      and what you see in Claude Code. Use it when you want to know precisely
-      what RMC is doing to your prompts.
-    </p>
+<p>
+  <code>rmc tree</code> groups by family, which answers "what shape is the
+  store?" but not "what did it just learn?" — a new lesson sorts wherever its
+  family happens to sit. <code>--recent</code> is that second view.
+</p>
+<p>
+  <code>rmc trace</code> is the agent's-eye view: what was offered to the model,
+  its verdict and reason for each candidate, the exact injected text, and what
+  you see in Claude Code.
+</p>
 
-    <h3>Driving it</h3>
-<pre>rmc add <span class="g">"lesson body"</span> --family retry   <span class="c"># teach it something, reconciled on the way in</span>
+<h3>Driving it</h3>
+<pre>rmc add <span class="g">"lesson body"</span> --family retry   <span class="c"># teach it now, reconciled on the way in</span>
 rmc learn --transcript PATH            <span class="c"># mint lessons from a session</span>
 rmc observe --transcript PATH          <span class="c"># record the outcome and attribution</span>
 rmc compact                            <span class="c"># attempt compressions that are due</span>
 rmc dream                              <span class="c"># whole-store consolidation</span>
-rmc resolve &lt;node-id&gt; [--drop]         <span class="c"># settle a contradiction</span></pre>
-    <p>Full reference: <a href="https://github.com/yiheinchai/rmc/blob/main/docs/cli.md">docs/cli.md</a>.</p>
-
-    <!-- ===================================================== config -->
+rmc dream --gists                      <span class="c"># only fill missing titles and gists</span>
+rmc resolve &lt;node-id&gt; [--drop]         <span class="c"># settle a contradiction</span>
+rmc report --about <span class="g">"..."</span>            <span class="c"># a redacted defect report — sends nothing</span></pre>
+<p>
+  Every lesson gets a title and a one-line gist when it is written, because the
+  relevance walk reads those and never the body. <code>--gists</code> backfills
+  a store that predates that, without waiting for a dream that may not be due.
+</p>
+<p>
+  <code>rmc report</code> writes a report of an RMC defect to
+  <code>.rmc/reports/</code> and prints the <code>gh issue create</code> command
+  that would file it. <b>It sends nothing.</b> RMC makes no network calls, so the
+  transport is your own <code>gh</code>, run deliberately. It contains counts and
+  settings, never lesson text, prompts, transcripts or paths from your machine.
+</p>
+<p>Full reference: <a href="https://github.com/yiheinchai/rmc/blob/main/docs/cli.md">docs/cli.md</a>.</p>
 
 <h2 id="config">Configuration</h2>
     <p>
@@ -1035,19 +1175,58 @@ rmc config recall.strategy delta-patch   <span class="c"># default: apex + match
 
     <!-- ======================================================= gaps -->
 
-<h2 id="gaps">Not built yet</h2>
-    <ul>
-      <li><b>Progressive disclosure.</b> Recall is one pass; there is no second
-        retrieval mid-turn when the agent discovers it needs more.</li>
-      <li><b>Agent-initiated search.</b> The agent cannot grep the store itself;
-        it sees only what recall chose to inject.</li>
-      <li><b>Staleness over time.</b> No case tests a lesson going out of date,
-        because that needs a store with history rather than a fixture.</li>
-      <li><b>Eval scale.</b> The held-out harness is built, but a real result
-        needs many more recorded episodes than a single project generates.</li>
-    </ul>
+<h2 id="gaps">What it still gets wrong</h2>
+<p>
+  Stated plainly, because a system that only reports its wins is not credible
+  about the ones it has. Every number below comes from <code>rmc status</code>
+  on a real store rather than an estimate.
+</p>
 
-  </main>
+<h3>Recall over-serves</h3>
+<p>
+  Precision — lessons used divided by lessons served — is the weakest number in
+  the system. It injects things that turn out not to bear on the work. That is a
+  retrieval problem, not a memory problem: the store is fine and the router is
+  too eager. It is measured rather than hidden, and it is the number to watch.
+</p>
+
+<h3>Capture misses things a person would catch</h3>
+<p>
+  The reflector's criteria were rewritten once already, after seven consecutive
+  passes over a session containing eighteen rounds of correction returned
+  nothing. The new criteria are better founded — they trigger on observed
+  steering rather than judged wrongness — but they are a prompt, and a prompt is
+  a hypothesis. When the reflector misses something, that is a defect to file
+  with <code>rmc report</code>, not a fact of life.
+</p>
+
+<h3>Capture has no eval</h3>
+<p>
+  Recall, compression and descent all have ground truth in the loop: used
+  against served, replay pass-rate against a threshold, rescues against
+  attempts. <code>rmc eval</code> measures transfer, retention, retrieval and
+  cost — and every one of those takes the store as given. There is no axis for
+  <i>given this session, did the reflector find what was in it?</i>, so the
+  capture criteria are the one part of the pipeline that cannot regress
+  visibly.
+</p>
+
+<h3>Progressive disclosure</h3>
+<p>
+  Recall is one pass. There is no second retrieval mid-turn when the agent
+  discovers it needs more, and it cannot search the store itself — it sees only
+  what recall chose to inject.
+</p>
+
+<h3>Staleness over time</h3>
+<p>
+  Nothing tests a lesson going out of date. That needs a store with history
+  rather than a fixture, and the eval corpus is not yet large enough for a
+  result: a real one needs many more recorded episodes than one project
+  generates.
+</p>
+
+</main>
 </div>
 
 <footer>
