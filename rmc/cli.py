@@ -329,6 +329,16 @@ def cmd_add(args: argparse.Namespace) -> int:
         )
         result = apply(store, decision, node)
 
+        # The routing view has to describe the body that now exists. A fold
+        # rewrites the body and keeps the survivor's title, so without this a
+        # lesson keeps advertising what it used to be about — and the relevance
+        # walk reads only title and gist, never the body.
+        if result.node is not None:
+            from .summary import refresh
+
+            refresh(store, adapter, result.node,
+                    force=decision.action in ("fold-into", "refines"))
+
     verb = {
         "new-family": "new lesson",
         "attach-sibling": "added alongside",
@@ -641,6 +651,17 @@ def cmd_dream(args: argparse.Namespace) -> int:
     store = need_store(args)
     if store is None:
         return 1
+
+    # Routing views are written at capture time now, but a store that predates
+    # that has lessons the relevance walk cannot see properly. Waiting for a
+    # dream is not a fix: dream is gated on elapsed time AND new episodes, so
+    # for a quiet store it may never come.
+    if args.gists:
+        from .summary import backfill
+
+        n = backfill(store, make_adapter(store, args), limit=args.limit or 50)
+        print(f"wrote {n} routing view(s)" if n else "every lesson already has one")
+        return 0
 
     if args.log:
         from .compact import dream_logs
@@ -1203,6 +1224,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="read the last dream's report; 'all' lists every recorded dream",
     )
     p.add_argument("--due", action="store_true", help="say whether a dream is due, and why")
+    p.add_argument(
+        "--gists",
+        action="store_true",
+        help="only fill missing titles and gists, ignoring the dream gate",
+    )
     p.add_argument("--limit", type=int, default=2)
     p.add_argument("--dry-run", action="store_true")
     add_agent_flags(p)

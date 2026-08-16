@@ -877,20 +877,11 @@ GIST_SCHEMA = {
 
 
 def _backfill_gists(store: Store, adapter: Adapter, *, limit: int = 20) -> int:
-    """Give older lessons the one-line form the router reads."""
-    filled = 0
-    for node in store.nodes():
-        if node.gist.strip() or filled >= limit:
-            continue
-        run = adapter.run(
-            GIST.format(body=truncate(node.body, 3000)),
-            schema=GIST_SCHEMA,
-            timeout=int(store.config.get("limits.agent_timeout_s", 180)),
-        )
-        if run.ok and run.data and str(run.data.get("gist") or "").strip():
-            node.gist = str(run.data["gist"]).strip()
-            store.save_node(node)
-            filled += 1
-    if filled:
-        store.invalidate()
-    return filled
+    """Give older lessons the routing view they were written without.
+
+    One implementation, in summary.py, shared with the add and fold paths — a
+    second copy here would drift from whatever those write.
+    """
+    from .summary import backfill
+
+    return backfill(store, adapter, limit=limit)

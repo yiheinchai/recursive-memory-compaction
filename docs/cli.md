@@ -142,7 +142,7 @@ Ask a model whether the session contained a reusable lesson, and mint a level-0
 node if so. Deliberately conservative — "nothing captured" is the common and
 correct outcome.
 
-### `rmc dream`
+### `rmc dream [--gists]`
 Whole-store consolidation: backfill gists, then merge lessons that keep being
 used together. Runs automatically from `absorb` at most once per
 `dream.interval_s` and only with `dream.min_new_episodes` of new evidence.
@@ -158,6 +158,11 @@ used together. Runs automatically from `absorb` at most once per
 Every pass writes a report to `.rmc/dreams/<timestamp>.md` recording what was
 examined, what merged, what was refused and why, and the before/after of nodes,
 apexes and tokens served at apex.
+
+`--gists` runs only the routing-view backfill, ignoring the dream gate. New
+lessons get a title and gist at capture time, but a store that predates that has
+lessons the relevance walk cannot see properly — and waiting for a dream is not
+a fix, since it is gated on elapsed time *and* new episodes.
 
 ### `rmc compact`
 Compress lessons and regression-test the result.

@@ -2120,3 +2120,67 @@ class TestTreeRecency(unittest.TestCase):
         self.assertIn("d ago", _age(fmt(timedelta(days=3))))
         self.assertEqual(_age(""), "", "a missing stamp must not raise")
         self.assertEqual(_age("not a date"), "", "nor must a malformed one")
+
+
+class TestRoutingView(unittest.TestCase):
+    """Title and gist are what the relevance walk reads — never the body. That
+    makes them load-bearing for retrieval, so they have to describe the body
+    that currently exists, not the one that existed when the node was named."""
+
+    def setUp(self) -> None:
+        from rmc import summary
+        from rmc.store import Store
+        self.summary = summary
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        Store.init(Path(self.tmp))
+        self.store = Store.discover(Path(self.tmp))
+        self.calls = 0
+
+    def _adapter(self, payload):
+        from rmc.adapters.mock import MockAdapter
+
+        def route(prompt, schema):
+            self.calls += 1
+            return payload
+        return MockAdapter(router=route)
+
+    def _node(self, **kw):
+        from rmc.node import Node
+        base = dict(id="n_t", family="f", body="a lesson about ports", title="", gist="")
+        base.update(kw)
+        return Node(**base)
+
+    def test_a_missing_gist_is_filled(self) -> None:
+        node = self._node()
+        adapter = self._adapter({"gist": "when a port is refused", "title": "Ports"})
+        self.assertTrue(self.summary.refresh(self.store, adapter, node))
+        self.assertEqual(node.gist, "when a port is refused")
+        self.assertEqual(node.title, "Ports")
+
+    def test_an_existing_title_is_not_overwritten(self) -> None:
+        node = self._node(title="Written by a human")
+        adapter = self._adapter({"gist": "g", "title": "Model's title"})
+        self.summary.refresh(self.store, adapter, node)
+        self.assertEqual(node.title, "Written by a human")
+        self.assertEqual(node.gist, "g", "but a missing gist is still filled")
+
+    def test_force_refreshes_both_after_a_fold(self) -> None:
+        """A fold rewrites the body and keeps the survivor's name, so the label
+        has to be reissued or the node advertises what it used to be about."""
+        node = self._node(title="Stale", gist="stale")
+        adapter = self._adapter({"gist": "new gist", "title": "New title"})
+        self.assertTrue(self.summary.refresh(self.store, adapter, node, force=True))
+        self.assertEqual((node.title, node.gist), ("New title", "new gist"))
+
+    def test_nothing_is_written_when_the_model_is_unavailable(self) -> None:
+        """A stale gist still routes; an invented one poisons retrieval."""
+        node = self._node(title="Kept", gist="kept")
+        adapter = self._adapter(None)          # model returns nothing usable
+        self.assertFalse(self.summary.refresh(self.store, adapter, node, force=True))
+        self.assertEqual((node.title, node.gist), ("Kept", "kept"))
+
+    def test_complete_nodes_cost_nothing(self) -> None:
+        node = self._node(title="t", gist="g")
+        self.assertFalse(self.summary.refresh(self.store, self._adapter({}), node))
+        self.assertEqual(self.calls, 0, "a complete node must not cost a model call")
