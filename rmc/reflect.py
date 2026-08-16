@@ -112,6 +112,7 @@ def observe(
     *,
     adapter: Adapter | None = None,
     attributed: dict[str, bool] | None = None,
+    banked: dict[str, int] | None = None,
     session_id: str = "",
     served: list[str] | None = None,
     family_hint: str = "",
@@ -170,6 +171,11 @@ def observe(
     used_nodes = (
         [n for n in nodes if n.id in outcome.used] if outcome.attributed else nodes
     )
+    # Anything the in-session reflector already credited per use must not be
+    # credited again here. Its count is the more accurate one — it counted uses,
+    # this would add one more for the session as a whole.
+    if banked:
+        used_nodes = [n for n in used_nodes if n.id not in banked]
     unused = [n for n in nodes if n not in used_nodes]
 
     for node in used_nodes:

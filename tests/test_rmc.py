@@ -1619,6 +1619,92 @@ class TestDreamSchedule(StoreCase):
         self.assertIn("refused", dream_logs(self.store)[0].read_text())
 
 
+class TestPerUseCredit(StoreCase):
+    """Usage happens per turn, so it must be counted per turn.
+
+    Crediting once per session means a lesson leaned on six times scores one,
+    and a lesson used all day in a session that never ends scores nothing —
+    which is not "the more a memory is used, the cheaper it becomes".
+    """
+
+    def run_used(self, **kw):
+        import argparse
+
+        from rmc.cli import cmd_used
+
+        args = argparse.Namespace(
+            session="s1", used=None, unused=None, task=None, outcome=None, cwd=str(self.base)
+        )
+        for k, v in kw.items():
+            setattr(args, k, v)
+        import io
+        from contextlib import redirect_stdout
+
+        with redirect_stdout(io.StringIO()):
+            cmd_used(args)
+        self.store.invalidate()
+
+    def test_each_use_is_credited_immediately(self) -> None:
+        node = self.add_node(id="n_u", family="f", body="a lesson")
+        for _ in range(3):
+            self.run_used(used="n_u")
+        reloaded = self.store.get("n_u")
+        self.assertEqual(reloaded.stats.successes, 3)
+        self.assertEqual(reloaded.stats.attempts, 3)
+
+    def test_a_use_records_a_replayable_episode_from_the_real_task(self) -> None:
+        """Session-end episodes used the session's *opening* prompt, so nothing a
+        lesson was actually applied to was ever recorded."""
+        node = self.add_node(id="n_e", family="f", body="a lesson")
+        self.run_used(
+            used="n_e",
+            task="the user asked four distinct questions in one message",
+            outcome="answered with a table mapping each question to its answer",
+        )
+        episodes = self.store.episodes()
+        self.assertEqual(len(episodes), 1)
+        self.assertIn("four distinct questions", episodes[0].prompt)
+        self.assertEqual(episodes[0].used, ["n_e"])
+        # And that episode is what makes the lesson compressible at all.
+        self.assertEqual(len(self.store.regression_set(self.store.get("n_e"))), 1)
+
+    def test_without_a_task_no_episode_is_invented(self) -> None:
+        self.add_node(id="n_n", family="f", body="a lesson")
+        self.run_used(used="n_n")
+        self.assertEqual(self.store.episodes(), [])
+
+    def test_repeated_use_makes_a_lesson_due_for_compression(self) -> None:
+        """The whole point: usage should drive compression."""
+        from rmc.compact import due_nodes
+
+        self.add_node(id="n_d", family="f", body="a lesson worth compressing " * 8)
+        self.assertEqual(due_nodes(self.store), [])
+        for i in range(2):
+            self.run_used(used="n_d", task=f"task {i}", outcome="done right")
+        self.assertEqual([n.id for n in due_nodes(self.store)], ["n_d"])
+
+    def test_session_end_does_not_credit_again_what_was_banked(self) -> None:
+        node = self.add_node(id="n_b", family="f", body="a lesson")
+        self.run_used(used="n_b")
+        self.assertEqual(self.store.get("n_b").stats.successes, 1)
+
+        observe(
+            self.store,
+            SessionFacts(
+                user_messages=["do it"], assistant_messages=["done"], tool_calls=14,
+                first_prompt="do it", last_assistant="done",
+            ),
+            adapter=router({"outcome": "success", "confidence": 0.9, "corrected": False,
+                            "lessons_used": [{"id": "n_b", "used": True}]}),
+            attributed={"n_b": True},
+            banked={"n_b": 1},
+            served=["n_b"],
+        )
+        self.assertEqual(
+            self.store.get("n_b").stats.successes, 1, "per-use count must not be topped up"
+        )
+
+
 class TestRoutingCost(StoreCase):
     def test_routing_sends_a_gist_not_the_body(self) -> None:
         """Deciding what to load must not cost more than loading it.

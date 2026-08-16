@@ -240,7 +240,7 @@ def compress_node(
     result.after_tokens = count_tokens(body)
     result.dropped = dropped
 
-    ok, why = _validate_manifest(node, body, dropped)
+    ok, why = _validate_manifest(node, body, dropped, bool(run.data.get("lossless")))
     if not ok:
         result.reason = why
         store.log("compaction", node=node.id, accepted=False, reason=why)
@@ -287,19 +287,31 @@ def compress_node(
     return result
 
 
-def _validate_manifest(node: Node, body: str, dropped: list[Delta]) -> tuple[bool, str]:
+def _validate_manifest(
+    node: Node, body: str, dropped: list[Delta], lossless: bool = False
+) -> tuple[bool, str]:
     """Reject compressions that hid what they removed.
 
     A manifest-free compression is worse than no compression: it cannot be
-    descended, so the lost detail is simply gone. We require the compressor to
-    account for a material reduction with at least one declared claim.
+    descended, so the lost detail is simply gone.
+
+    But shrinking is not the same as dropping. A compressor that tightens
+    wording and cuts repetition legitimately has nothing to declare, and an
+    earlier version rejected exactly those — refusing the safest compressions
+    for being honest. Silence and a genuine no-loss claim look identical from
+    outside, so the compressor is made to say which it is. Replay still gates
+    the claim; asserting `lossless` falsely fails there instead, where the
+    dishonesty is at least legible.
     """
     before, after = node.tokens, count_tokens(body)
     if after >= before:
         return False, "candidate is not smaller than the original"
     shrink = (before - after) / max(1, before)
-    if shrink >= 0.15 and not dropped:
-        return False, f"manifest under-reported: dropped {shrink:.0%} of tokens, declared nothing"
+    if shrink >= 0.15 and not dropped and not lossless:
+        return False, (
+            f"manifest under-reported: dropped {shrink:.0%} of tokens, declared nothing "
+            f"and did not claim losslessness"
+        )
     return True, ""
 
 

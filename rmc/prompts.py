@@ -42,6 +42,15 @@ COMPRESS_SCHEMA = {
             },
         },
         "rationale": {"type": "string"},
+        "lossless": {
+            "type": "boolean",
+            "description": (
+                "True only if the shorter body preserves every claim in the original — "
+                "you tightened prose, removed repetition or hedging, and cut nothing a "
+                "reader could act on. If you removed any content, this is false and it "
+                "must appear in `dropped`."
+            ),
+        },
         "title": {"type": "string"},
         "gist": {
             "type": "string",
@@ -129,7 +138,11 @@ Rules:
    self-contained claim, written so it can be re-injected verbatim later as a
    patch. An unreported drop is the worst possible failure here: it makes the
    compression impossible to reverse when it turns out to be wrong.
-4. Never invent content that was not in the original.
+4. If you genuinely removed nothing — you tightened wording, cut repetition or
+   hedging, but every actionable claim survives — set `lossless: true` and leave
+   `dropped` empty. Say it explicitly; silence is read as an unreported drop,
+   because from the outside those look identical.
+5. Never invent content that was not in the original.
 
 Target: at most {target_tokens} tokens ({ratio:.0%} of the original).
 

@@ -396,6 +396,7 @@ def _absorb(store, adapter, facts, served, args) -> int:
         facts,
         adapter=adapter,
         attributed=dict(state.get("attributed") or {}),
+        banked=dict(state.get("banked") or {}),
         session_id=args.session or "",
         served=served,
         family_hint=args.family or "",
@@ -430,14 +431,30 @@ def _absorb(store, adapter, facts, served, args) -> int:
 
 
 def cmd_used(args: argparse.Namespace) -> int:
-    """Record which recalled lessons actually bore on the work.
+    """Record that lessons bore on a piece of work — crediting them now.
 
-    Called by the in-session reflector, which is the best-placed judge there is:
-    it holds the real context rather than a digest, so it can see a principle
-    being applied and not merely a command being run. The verdict is parked on
-    the session and preferred over the digest-based one when the episode is
-    finally written.
+    Called per turn by the in-session reflector, which is the best-placed judge
+    in the system: it holds the real conversation, so it can see a principle
+    being applied and not merely a command being run.
+
+    Two things happen here that used to wait for session end, and waiting was
+    wrong for both.
+
+    **Credit is applied immediately.** Usage happens per turn; crediting it once
+    per session means a lesson leaned on six times in a long session scores one,
+    and a lesson used all day in a session that never ends scores nothing at all.
+    "The more a memory is used, the cheaper it becomes" has to count uses.
+
+    **The episode is written from the actual task.** Session-end episodes took
+    the session's *opening* prompt as their task, so a nine-hour session
+    produced episodes that all described its first message. Nothing a lesson was
+    genuinely applied to was ever recorded, which is why lessons accumulated no
+    replayable evidence and could never be compressed. The reflector knows what
+    the lesson was actually for, so it says so.
     """
+    from .store import Episode
+    from .util import new_id, utcnow
+
     store = need_store(args)
     if store is None:
         return 1
@@ -446,16 +463,63 @@ def cmd_used(args: argparse.Namespace) -> int:
 
     state = store.read_session(args.session)
     verdicts = dict(state.get("attributed") or {})
-    for ident in [i for i in (args.used or "").split(",") if i.strip()]:
-        verdicts[ident.strip()] = True
-    for ident in [i for i in (args.unused or "").split(",") if i.strip()]:
-        verdicts[ident.strip()] = False
+    used = [i.strip() for i in (args.used or "").split(",") if i.strip()]
+    unused = [i.strip() for i in (args.unused or "").split(",") if i.strip()]
+    for ident in used:
+        verdicts[ident] = True
+    for ident in unused:
+        verdicts[ident] = False
     state["attributed"] = verdicts
-    store.write_session(args.session, state)
-    store.log("attributed", session=args.session, verdicts=verdicts, source="in-session")
 
-    hits = [k for k, v in verdicts.items() if v]
-    print(f"recorded: {len(hits)} used, {len(verdicts) - len(hits)} not used")
+    banked = dict(state.get("banked") or {})
+    credited = []
+    for ident in used:
+        node = store.get(ident)
+        if node is None:
+            continue
+        node.stats.attempts += 1
+        node.stats.successes += 1
+        node.stats.last_used = utcnow()
+        store.save_node(node)
+        banked[ident] = banked.get(ident, 0) + 1
+        credited.append(ident)
+    state["banked"] = banked
+
+    episode = None
+    if used and args.task:
+        # A per-use replay test: this task, these lessons, this outcome.
+        episode = Episode(
+            id=new_id("e"),
+            family=(store.get(used[0]).family if store.get(used[0]) else "default"),
+            prompt=args.task,
+            outcome="success",
+            confidence=0.8,
+            served=sorted(verdicts),
+            used=used,
+            accepted_summary=args.outcome or "",
+            session_id=args.session,
+        )
+        store.save_episode(episode)
+        for ident in used:
+            node = store.get(ident)
+            if node and episode.id not in node.covers_tasks:
+                node.covers_tasks = sorted({*node.covers_tasks, episode.id})
+                store.save_node(node)
+
+    store.write_session(args.session, state)
+    store.log(
+        "attributed",
+        session=args.session,
+        verdicts=verdicts,
+        credited=credited,
+        episode=episode.id if episode else None,
+        source="in-session",
+    )
+
+    print(
+        f"credited {len(credited)} lesson(s), {len(unused)} not used"
+        + (f"; episode {episode.id}" if episode else "; no episode (pass --task)")
+    )
     return 0
 
 
@@ -939,6 +1003,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--session", required=True)
     p.add_argument("--used", help="comma-separated node ids that changed what was done")
     p.add_argument("--unused", help="comma-separated node ids that did not")
+    p.add_argument("--task", help="the specific work the lessons bore on — makes it replayable")
+    p.add_argument("--outcome", help="what doing it correctly looked like")
     p.set_defaults(func=cmd_used)
 
     p = sub.add_parser("observe", help="judge a transcript and update stats")

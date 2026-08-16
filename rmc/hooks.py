@@ -403,9 +403,18 @@ not used.
 
 You are better placed to answer this than anything else in the system: you hold
 the actual context, so you can see a principle being applied and not merely a
-command being run. Record it with:
+command being run.
 
-    rmc used --session {session} --used <ids> --unused <ids>
+For the ones that were used, also say **what specific work they bore on** and
+**what doing it correctly looked like**. That pair turns the use into a
+replayable test: a fresh agent given that task and that lesson can be checked
+against that outcome, which is the only evidence that ever lets a lesson be
+compressed. Describe the actual task — not the session's opening request, which
+by now has little to do with what just happened.
+
+    rmc used --session {session} --used <ids> --unused <ids> \
+      --task "<the specific work, one sentence>" \
+      --outcome "<what doing it right looked like, one sentence>"
 
 """
 
