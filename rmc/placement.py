@@ -18,9 +18,15 @@ true. Instead the contradiction is recorded on the node and surfaced **at recall
 time**, when the user is already thinking about that topic — the same reason a
 student raises a confusion during the lesson it belongs to rather than at random.
 
-Cheap first: a lexical shortlist decides whether there is anything to reconcile
-at all, and only then is a model asked. Most new lessons in an empty or
-unrelated part of the tree cost nothing.
+Both judgements here are the model's: which remembered lessons cover the same
+subject, and how the new one relates to them. Neither is a similarity score —
+two lessons about the same service can share no vocabulary, and two that share
+their most distinctive word can be about unrelated systems.
+
+Efficiency comes from the tree, not from cheap approximations. Apexes are the
+most compressed nodes in the store, so the whole top level fits in one question;
+only lines the model cannot judge from a summary are opened further; every
+candidate is reconciled in a single call; and verdicts are cached.
 """
 
 from __future__ import annotations
@@ -34,7 +40,8 @@ from typing import Any
 from .adapters import Adapter
 from .node import Node
 from .store import Store
-from .util import jaccard, signature, truncate
+from .judge import Budget, Judge
+from .util import truncate
 
 RECONCILE_SCHEMA = {
     "type": "object",
@@ -91,7 +98,6 @@ legacy-pg was running?"
 For `refines`, return `merged_body`: the matched lesson rewritten to carry the
 new detail. Keep every load-bearing claim from both. Do not pad it.
 
-{hints}
 <<<EXISTING
 {existing}
 EXISTING>>>
@@ -101,12 +107,6 @@ EXISTING>>>
 NEW>>>
 """
 
-HINT_HEADER = """The following identifiers are given DIFFERENT values by the new lesson and an
-existing one. That usually means a contradiction, but not always — check whether
-one supersedes the other or whether they apply in different situations:
-
-{lines}
-"""
 
 
 @dataclass
@@ -118,7 +118,6 @@ class Placement:
     rationale: str = ""
     question: str = ""
     merged_body: str = ""
-    similarity: float = 0.0
     consulted: bool = False  # whether a model call was needed
 
     def describe(self) -> str:
@@ -133,75 +132,52 @@ class PlacementResult:
     patched: list[str] = field(default_factory=list)
 
 
-# --------------------------------------------------------------------------- #
-# free contradiction pre-filter
-# --------------------------------------------------------------------------- #
-
-# `KEY=value`, `KEY: value`, `--flag value` and `--flag=value`.
-_ASSIGN_RE = re.compile(
-    r"(?:^|[\s`'\"(])(--?[A-Za-z][\w-]{2,}|[A-Z][A-Z0-9_]{3,}|[a-z][\w.]{3,})"
-    r"\s*[:=]\s*[`'\"]?([\w./:-]{1,40})"
-)
-
-# Values that carry no meaning on their own and would produce noise.
-_TRIVIAL = frozenset({"true", "false", "none", "null", "yes", "no", "0", "1", "the", "a"})
-
-
-def assignments(text: str) -> dict[str, set[str]]:
-    """Identifier -> values it is given in this text."""
-    out: dict[str, set[str]] = {}
-    for key, value in _ASSIGN_RE.findall(text or ""):
-        value = value.strip("`'\".,;)")
-        if not value or value.lower() in _TRIVIAL:
-            continue
-        out.setdefault(key, set()).add(value)
-    return out
-
-
-def contradiction_hints(a: str, b: str, *, limit: int = 6) -> list[str]:
-    """Identifiers both texts assign, but to different values.
-
-    A free, purely lexical signal. It cannot decide a contradiction on its own —
-    two lessons may legitimately use different ports in different environments —
-    but it is a strong enough smell to be worth (a) forcing a reconciliation
-    call that similarity alone would have skipped, and (b) telling the
-    reconciler exactly where to look, which measurably improves its verdicts.
-    """
-    left, right = assignments(a), assignments(b)
-    hints: list[str] = []
-    for key in sorted(set(left) & set(right)):
-        if left[key] != right[key] and not (left[key] & right[key]):
-            hints.append(
-                f"- `{key}`: existing says {sorted(left[key])}, new says {sorted(right[key])}"
-            )
-        if len(hints) >= limit:
-            break
-    return hints
-
-
 def _cache_key(new_body: str, node_ids: list[str]) -> str:
     digest = hashlib.sha256(new_body.encode("utf-8")).hexdigest()[:12]
     return f"{digest}:{','.join(sorted(node_ids))}"
 
 
-def shortlist(store: Store, body: str, family_hint: str = "", *, top: int = 3) -> list[tuple[Node, float]]:
-    """Existing apex nodes that might be about the same thing."""
-    sig = signature(body)
-    if not sig:
+def related_lessons(
+    store: Store, judge: Judge, body: str, *, budget: Budget | None = None
+) -> list[Node]:
+    """Existing lessons that might be about the same thing, found by tree walk.
+
+    Walking abstract → concrete and asking the model at each level is what
+    replaces a similarity score here. Two lessons about the same service can
+    share no vocabulary, and two lessons sharing their most distinctive word can
+    be about unrelated systems — neither case is visible to token overlap, and
+    both are obvious to a reader.
+
+    The tree is what keeps this affordable: apexes are the most compressed nodes
+    in the store, so the whole top level fits in a single question, and we only
+    open a line when the model says the summary was too abstract to judge from.
+    """
+    roots = [n for n in (store.apex(f) for f in store.families()) if n is not None]
+    if not roots:
         return []
-    scored: list[tuple[Node, float]] = []
-    for family in store.families():
-        apex = store.apex(family)
-        if apex is None:
-            continue
-        score = jaccard(sig, apex.sig)
-        if family_hint and family == family_hint:
-            # The reflector already proposed a family; trust it enough to always
-            # consider, but not enough to skip the reconciliation check.
-            score = max(score, 0.5)
-        scored.append((apex, score))
-    scored.sort(key=lambda kv: -kv[1])
-    return scored[:top]
+
+    budget = budget or Budget(max_calls=int(store.config.get("placement.judge_calls", 2)))
+    frontier, out, seen = roots, [], set()
+
+    for _ in range(int(store.config.get("placement.max_depth", 2))):
+        level = [n for n in frontier if n.id not in seen][:12]
+        if not level or not budget.take():
+            break
+        seen.update(n.id for n in level)
+        picks = judge.related(body, level)
+        by_id = {n.id: n for n in level}
+        nxt: list[Node] = []
+        for pick in picks:
+            node = by_id.get(pick.id)
+            if node is None or not pick.positive:
+                continue
+            children = store.children(node) if pick.descend else []
+            if children:
+                nxt.extend(children)
+            else:
+                out.append(node)
+        frontier = nxt
+    return out + [n for n in frontier if n.id not in {o.id for o in out}]
 
 
 def decide(
@@ -212,61 +188,48 @@ def decide(
     family_hint: str = "",
     consult: bool = True,
 ) -> Placement:
-    """Choose where a new lesson belongs."""
-    floor = float(store.config.get("placement.min_similarity", 0.15))
-    top_k = int(store.config.get("placement.candidates", 3))
-    candidates = shortlist(store, body, family_hint, top=top_k)
+    """Choose where a new lesson belongs.
 
-    # Free pre-filter. Two lessons that give the same identifier different values
-    # deserve a look even when they share little vocabulary — that is precisely
-    # the case a similarity floor misses, and precisely the case that matters.
-    flagged: list[tuple[Node, float]] = []
-    all_hints: list[str] = []
-    for node, score in candidates:
-        hints = contradiction_hints(node.body, body)
-        if hints:
-            all_hints.extend(hints)
-            flagged.append((node, max(score, floor)))
+    Two judgements, both the model's: *which* remembered lessons are about the
+    same thing (found by walking the tree), and *how* the new one relates to
+    them. The harness contributes the walk, the budget and the cache.
+    """
+    judge = Judge(store, adapter)
+    candidates = related_lessons(store, judge, body)
 
-    considered = flagged or [c for c in candidates if c[1] >= floor]
-
-    if not considered:
-        # Nothing close enough to reconcile with — a genuinely new leaf. The
-        # common case early on, and it costs no model call at all.
+    if not candidates:
+        # The model found nothing on the same subject — a genuinely new leaf.
         return Placement(
             action="new-family",
             family=family_hint or "general",
             relation="orthogonal",
-            rationale="no existing lesson is close enough to reconcile with",
-            similarity=candidates[0][1] if candidates else 0.0,
+            rationale="nothing already remembered covers this subject",
         )
 
-    best, score = considered[0]
+    best = candidates[0]
     if not consult:
         return Placement(
             action="attach-sibling",
             family=best.family,
             relation="specialises",
             target=best,
-            rationale="similar to an existing lesson; reconciliation skipped",
-            similarity=score,
+            rationale="related to an existing lesson; reconciliation skipped",
         )
 
-    # One call for all candidates rather than one per candidate: reconciliation
-    # cost stays constant as the tree grows, while coverage improves — a
-    # contradiction with the second-best match is no longer invisible.
+    # One reconciliation call for every candidate the walk surfaced, so cost is
+    # flat in the size of the tree and a contradiction with the second-best
+    # match is still visible.
     cache = _load_cache(store)
-    key = _cache_key(body, [n.id for n, _ in considered])
+    key = _cache_key(body, [n.id for n in candidates])
     data = cache.get(key)
     consulted = False
     if data is None:
         rendered = "\n\n".join(
             f"[id: {node.id}] {node.title or node.family}\n{truncate(node.body, 1500)}"
-            for node, _ in considered
+            for node in candidates
         )
-        hint_block = HINT_HEADER.format(lines="\n".join(all_hints)) if all_hints else ""
         run = adapter.run(
-            RECONCILE.format(existing=rendered, new=truncate(body, 4000), hints=hint_block),
+            RECONCILE.format(existing=rendered, new=truncate(body, 4000)),
             schema=RECONCILE_SCHEMA,
             timeout=int(store.config.get("limits.agent_timeout_s", 180)),
         )
@@ -280,14 +243,13 @@ def decide(
                 relation="specialises",
                 target=best,
                 rationale=f"reconciler unavailable ({run.error[:120]}); attached alongside",
-                similarity=score,
             )
         data = run.data
         consulted = True
         _save_cache(store, key, data)
 
     matched_id = str(data.get("match") or "").strip()
-    target = next((n for n, _ in considered if n.id == matched_id), None) or best
+    target = next((n for n in candidates if n.id == matched_id), None) or best
     relation = str(data.get("relation") or "orthogonal")
     if not matched_id:
         relation = "orthogonal"
@@ -308,7 +270,6 @@ def decide(
         rationale=str(data.get("rationale") or ""),
         question=str(data.get("question") or ""),
         merged_body=str(data.get("merged_body") or ""),
-        similarity=score,
         consulted=consulted,
     )
 
@@ -385,7 +346,6 @@ def apply(store: Store, placement: Placement, node: Node) -> PlacementResult:
             node=node.id,
             family=node.family,
             relation=placement.relation,
-            similarity=round(placement.similarity, 3),
         )
 
     store.invalidate()
@@ -452,5 +412,3 @@ def resolve(store: Store, node_id: str, *, keep: bool = True) -> Node | None:
     return node
 
 
-def config_defaults() -> dict[str, Any]:
-    return {"min_similarity": 0.15, "consult": True}

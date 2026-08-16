@@ -22,7 +22,7 @@ from typing import Any, Iterable, Iterator
 from .config import Config
 from .node import Node
 from .redact import redact_obj
-from .util import new_id, signature, utcnow
+from .util import new_id, utcnow
 
 STORE_DIRNAME = ".rmc"
 
@@ -66,10 +66,6 @@ class Episode:
         self.check = self.check or {}
         self.created = self.created or utcnow()
 
-    @property
-    def sig(self) -> set[str]:
-        return signature(f"{self.prompt}\n{self.accepted_summary}")
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -103,8 +99,21 @@ class Episode:
 
 
 class Store:
-    def __init__(self, root: Path) -> None:
+    """A lesson store, optionally layered over a global one.
+
+    Knowledge comes at two scopes and both matter. "This repo's integration
+    tests need PAYMENTS_PG_PORT" belongs to the project; "always prefer the
+    model's judgement over a similarity score" follows you everywhere. A single
+    scope forces one of them to be in the wrong place.
+
+    So a project store reads through to ``~/.rmc`` as its parent: lessons from
+    both are recalled, and writes always land locally unless the store *is* the
+    global one. A local node with the same id shadows the global one.
+    """
+
+    def __init__(self, root: Path, parent: "Store | None" = None) -> None:
         self.root = Path(root)
+        self.parent = parent
         self.config = Config.load(self.root / "config.yaml")
         self._nodes: dict[str, Node] | None = None
 
@@ -127,9 +136,16 @@ class Store:
         return store
 
     @classmethod
-    def discover(cls, start: Path | None = None) -> "Store | None":
+    def discover(cls, start: Path | None = None, *, layered: bool = True) -> "Store | None":
         root = find_store_root(start)
-        return cls(root) if root else None
+        if root is None:
+            return None
+        if not layered:
+            return cls(root)
+        global_root = Path.home() / STORE_DIRNAME
+        if global_root.is_dir() and global_root.resolve() != root.resolve():
+            return cls(root, parent=cls(global_root))
+        return cls(root)
 
     # ----------------------------------------------------------------- paths
     @property
@@ -148,7 +164,8 @@ class Store:
     def _load_nodes(self) -> dict[str, Node]:
         if self._nodes is not None:
             return self._nodes
-        nodes: dict[str, Node] = {}
+        # Start from the global layer so a local node of the same id shadows it.
+        nodes: dict[str, Node] = dict(self.parent._load_nodes()) if self.parent else {}
         if self.nodes_dir.is_dir():
             for path in sorted(self.nodes_dir.rglob("*.md")):
                 try:
@@ -162,6 +179,15 @@ class Store:
 
     def invalidate(self) -> None:
         self._nodes = None
+        if self.parent:
+            self.parent.invalidate()
+
+    def owns(self, node: Node) -> bool:
+        """False when this node lives in the global layer, not here."""
+        try:
+            return node.path is not None and self.root in node.path.parents
+        except Exception:
+            return True
 
     def nodes(self) -> list[Node]:
         return list(self._load_nodes().values())
@@ -239,6 +265,11 @@ class Store:
         return max(zeros, key=lambda n: n.stats.posterior)
 
     def save_node(self, node: Node) -> Path:
+        """Write a node. Edits to a global-layer node are written back to it,
+        so updating a cross-project lesson from inside a repo does not silently
+        fork a local copy that then drifts."""
+        if self.parent is not None and node.path is not None and not self.owns(node):
+            return self.parent.save_node(node)
         node.touch()
         directory = self.nodes_dir / node.family
         directory.mkdir(parents=True, exist_ok=True)
@@ -259,9 +290,9 @@ class Store:
 
     # -------------------------------------------------------------- episodes
     def episodes(self, family: str | None = None) -> list[Episode]:
-        out: list[Episode] = []
+        out: list[Episode] = list(self.parent.episodes() if self.parent else [])
         if not self.episodes_dir.is_dir():
-            return out
+            return [e for e in out if not family or e.family == family]
         for path in sorted(self.episodes_dir.glob("*.json")):
             try:
                 out.append(Episode.from_dict(json.loads(path.read_text(encoding="utf-8"))))
@@ -327,9 +358,10 @@ class Store:
 
     def read_events(self, kind: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
         path = self.root / "events.jsonl"
+        inherited = self.parent.read_events(kind, limit) if self.parent else []
         if not path.exists():
-            return []
-        rows: list[dict[str, Any]] = []
+            return inherited
+        rows: list[dict[str, Any]] = list(inherited)
         for line in path.read_text(encoding="utf-8").splitlines():
             try:
                 row = json.loads(line)

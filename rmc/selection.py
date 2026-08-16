@@ -4,20 +4,27 @@ The reason this question is hard is that compression normally destroys the
 information you would need to invert it, so descent degenerates into trying
 children at random and paying full price for the wrong one.
 
-RMC's answer is to make compression record its own losses. Every compressed
-node carries a delta manifest: the discrete claims that were removed, each
-tagged with a `kind` from a closed vocabulary and attributed to a descendant
-that still holds it. The failure diagnosis uses that same closed vocabulary for
-its `category`, which gives us a join key. Descent then stops being a search
-problem and becomes ranked retrieval over the manifest.
+RMC's answer is to make compression record its losses. Every compressed node
+carries a delta manifest: the discrete claims that were removed, each attributed
+to a descendant that still holds it. Descent is then a ranking problem over that
+manifest rather than a search over the tree.
 
-Scoring, per candidate:
+**The ranking itself is a model judgement**, not a similarity score. Whether a
+particular omitted claim explains a particular failure is a question about
+meaning: "parse the body, not the status code" is the fix for "treated HTTP 200
+as success" while sharing almost no vocabulary with it. A lexical matcher gets
+that exactly backwards, and a categorical `kind == category` join is a coarse
+proxy for the same thing.
 
-    score = w_d·delta_match + w_t·task_affinity + w_p·prior − w_c·cost
+Two terms stay in code, because they are *evidence* rather than proxies for
+judgement:
 
-`prior` is a Laplace-smoothed success rate, which makes descent a contextual
-bandit over the tree: branches that repeatedly rescue failures rise, branches
-that never help sink, with no hand-tuning.
+- ``prior`` — the Laplace-smoothed rate at which this node has actually rescued
+  failures before. That is an observed outcome, not an inference about meaning,
+  and it makes descent a contextual bandit over the tree.
+- ``cost`` — token count. A measured fact.
+
+    score = w_j · model_usefulness + w_p · prior − w_c · cost
 """
 
 from __future__ import annotations
@@ -27,8 +34,9 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from .config import Config
+from .judge import Judge
 from .node import Delta, Node
-from .util import count_tokens, jaccard, overlap_coeff, signature
+from .util import count_tokens
 
 
 @dataclass
@@ -39,10 +47,6 @@ class Diagnosis:
     missing: list[str] = field(default_factory=list)
     wrong_step: str = ""
     confidence: float = 0.0
-
-    @property
-    def sig(self) -> set[str]:
-        return signature(" ".join(self.missing) + " " + self.wrong_step)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> "Diagnosis":
@@ -65,6 +69,18 @@ class Diagnosis:
             "confidence": self.confidence,
         }
 
+    def render(self) -> str:
+        """The failure, as prose for the model to reason about."""
+        parts = []
+        if self.wrong_step:
+            parts.append(f"What went wrong: {self.wrong_step}")
+        if self.missing:
+            parts.append("Information the lesson appears to lack:")
+            parts.extend(f"  - {m}" for m in self.missing)
+        if self.category:
+            parts.append(f"Kind of gap: {self.category}")
+        return "\n".join(parts) or "The lesson did not lead to the right result."
+
 
 @dataclass
 class Candidate:
@@ -77,6 +93,7 @@ class Candidate:
     node: Node | None = None
     score: float = 0.0
     parts: dict[str, float] = field(default_factory=dict)
+    why: str = ""
 
     @property
     def text(self) -> str:
@@ -90,25 +107,8 @@ class Candidate:
 
 
 # --------------------------------------------------------------------------- #
-# component scores
+# evidence terms (arithmetic over observed outcomes, not semantic guesses)
 # --------------------------------------------------------------------------- #
-
-
-def delta_match(candidate_sig: set[str], candidate_kind: str, diag: Diagnosis) -> float:
-    """How well a candidate addresses the diagnosed gap.
-
-    Half the signal is the categorical join (did we drop the *kind* of thing
-    that is now missing), half is lexical overlap between the dropped claim and
-    the named missing facts. The overlap coefficient rather than Jaccard,
-    because a three-word diagnosis should still be able to match a long claim.
-    """
-    kind_hit = 1.0 if candidate_kind and candidate_kind == diag.category else 0.0
-    lexical = overlap_coeff(candidate_sig, diag.sig)
-    return 0.5 * kind_hit + 0.5 * lexical
-
-
-def task_affinity(candidate_sig: set[str], task_sig: set[str]) -> float:
-    return jaccard(candidate_sig, task_sig)
 
 
 def prior(node: Node | None, *, explore: str = "posterior", c: float = 0.7, total: int = 1) -> float:
@@ -198,36 +198,38 @@ def rank(
     candidates: list[Candidate],
     *,
     diag: Diagnosis,
-    task_sig: set[str],
+    judge: Judge | None,
     config: Config,
+    task: str = "",
 ) -> list[Candidate]:
-    w_d = float(config.get("selection.w_delta", 0.45))
-    w_t = float(config.get("selection.w_affinity", 0.25))
-    w_p = float(config.get("selection.w_prior", 0.20))
-    w_c = float(config.get("selection.w_cost", 0.10))
+    """Score candidates. The relevance term is the model's; the rest is evidence.
+
+    With no judge available the relevance term is simply absent, and ranking
+    falls back to prior and cost — i.e. "try what has worked before, cheapest
+    first". That degrades gracefully rather than silently substituting a
+    similarity metric that would look like a judgement without being one.
+    """
+    w_j = float(config.get("selection.w_judge", 0.60))
+    w_p = float(config.get("selection.w_prior", 0.28))
+    w_c = float(config.get("selection.w_cost", 0.12))
     explore = str(config.get("selection.explore", "posterior"))
     ucb_c = float(config.get("selection.ucb_c", 0.7))
     budget = int(config.get("recall.max_pack_tokens", 1200))
     total_attempts = sum((c.node.stats.attempts if c.node else 0) for c in candidates) or 1
 
-    for cand in candidates:
-        if cand.kind == "delta" and cand.delta is not None:
-            csig, ckind = cand.delta.sig, cand.delta.kind
-        else:
-            node = cand.node
-            csig = node.sig if node else set()
-            # A node inherits the best kind-match among the deltas it holds.
-            ckind = ""
-            if node is not None and node.dropped:
-                kinds = {d.kind for d in node.dropped}
-                ckind = diag.category if diag.category in kinds else ""
-            if cand.delta is not None:
-                ckind = cand.delta.kind
-                csig = csig | cand.delta.sig
+    usefulness: dict[str, float] = {}
+    if judge is not None and candidates:
+        failure = diag.render()
+        if task:
+            failure = f"Task: {task.strip()[:600]}\n\n{failure}"
+        usefulness = judge.rank_repairs(
+            failure,
+            [(c.label, (c.delta.kind if c.delta else "lesson"), c.text) for c in candidates],
+        )
 
+    for cand in candidates:
         parts = {
-            "delta": w_d * delta_match(csig, ckind, diag),
-            "affinity": w_t * task_affinity(csig, task_sig),
+            "judge": w_j * usefulness.get(cand.label, 0.0),
             "prior": w_p * prior(cand.node, explore=explore, c=ucb_c, total=total_attempts),
             "cost": -w_c * cost(cand.tokens, budget),
         }
@@ -251,10 +253,11 @@ def select(
     *,
     resolve: Any,
     diag: Diagnosis,
-    task_sig: set[str],
+    judge: Judge | None,
     config: Config,
+    task: str = "",
     exclude: set[str] | None = None,
 ) -> list[Candidate]:
     strategy = str(config.get("recall.strategy", "delta-patch"))
     cands = build_candidates(node, resolve=resolve, strategy=strategy, exclude=exclude)
-    return rank(cands, diag=diag, task_sig=task_sig, config=config)
+    return rank(cands, diag=diag, judge=judge, config=config, task=task)

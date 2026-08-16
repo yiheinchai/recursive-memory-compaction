@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from . import yamlish
-from .util import count_tokens, signature, utcnow
+from .util import count_tokens, utcnow
 
 # Closed vocabulary shared by ``dropped[].kind`` and the diagnoser's
 # ``category``. Keeping it closed is what lets descent match a failure to a
@@ -63,10 +63,6 @@ class Delta:
             kind=kind,
             holder=raw.get("holder") or None,
         )
-
-    @property
-    def sig(self) -> set[str]:
-        return signature(self.claim)
 
 
 @dataclass
@@ -134,10 +130,6 @@ class Node:
     @property
     def tokens(self) -> int:
         return count_tokens(self.body)
-
-    @property
-    def sig(self) -> set[str]:
-        return signature(f"{self.title}\n{self.body}\n{' '.join(self.tags)}")
 
     @property
     def is_apex(self) -> bool:

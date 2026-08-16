@@ -1,14 +1,18 @@
-"""Retrieval: pick the lesson families a prompt needs, and build a context pack.
+"""Retrieval: pick the lessons a prompt needs, and build a context pack.
 
 Two entry points:
 
-``recall_pack``  — ambient path. Runs inside a hook on every real prompt, must
-                   be fast and must never call a model. Serves the apex (most
-                   compressed) node of each matching family.
+``recall_pack``  — ambient path, run from the prompt hook. Asks the model which
+                   remembered lessons bear on this work, walking the tree from
+                   the most abstract nodes downward.
 
-``solve_with_descent`` — controlled path. Used by replay/eval and ``rmc solve``,
-                   where RMC owns the loop and can therefore observe failure,
-                   diagnose it, and descend the tree mid-task.
+``solve_with_descent`` — controlled path, used by replay and evaluation, where
+                   RMC owns the loop and can observe a failure, diagnose it, and
+                   descend the tree mid-task.
+
+Relevance and repair are both judgements about meaning and are made by the
+model (see ``judge.py``). What lives here is the shape of the search and the
+budget it may spend.
 """
 
 from __future__ import annotations
@@ -18,11 +22,12 @@ from typing import Any, Callable
 
 from .adapters import Adapter, AgentResult
 from .config import Config
+from .judge import Budget, Judge, Pick, WalkResult, walk
 from .node import Node
 from .prompts import DIAGNOSE, DIAGNOSE_SCHEMA, REPLAY
 from .selection import Candidate, Diagnosis, select
 from .store import Store
-from .util import count_tokens, jaccard, signature, truncate
+from .util import count_tokens, truncate
 
 
 @dataclass
@@ -34,6 +39,7 @@ class Pack:
     families: list[str] = field(default_factory=list)
     patches: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
+    reasons: dict[str, str] = field(default_factory=dict)
     tokens: int = 0
 
     def __bool__(self) -> bool:
@@ -45,48 +51,50 @@ class Pack:
 # --------------------------------------------------------------------------- #
 
 
-def match_families(
-    store: Store, prompt: str, *, limit: int | None = None, min_match: float | None = None
-) -> list[tuple[str, float]]:
-    """Rank lesson families by lexical similarity to the prompt.
+def select_lessons(
+    store: Store,
+    adapter: Adapter,
+    prompt: str,
+    *,
+    limit: int | None = None,
+    budget: Budget | None = None,
+) -> WalkResult:
+    """Ask the model which lessons bear on this prompt, walking abstract → concrete.
 
-    Deliberately model-free: this runs on every keystroke-to-submit in a real
-    session, so it has to cost nothing. Cheap matching plus an apex that is only
-    ~100 tokens means a false positive is nearly free, while a false negative
-    costs a whole learned lesson.
+    Relevance is a judgement about meaning, so the model makes it. Token overlap
+    cannot tell that "retry the failed CI job" and a lesson about retrying HTTP
+    calls are unrelated despite sharing their most distinctive word, nor that
+    "the deploy is stuck" and a lesson about Argo Rollouts are the same subject
+    despite sharing none.
+
+    What the harness contributes is the search *shape*: apexes are the most
+    compressed nodes, so the whole top level fits in one question, and we
+    descend only into lines the model says it cannot judge from the summary
+    alone. Cost tracks depth, not the size of the memory.
     """
     limit = limit if limit is not None else int(store.config.get("recall.max_families", 3))
-    floor = min_match if min_match is not None else float(store.config.get("recall.min_match", 0.12))
+    roots = [n for n in (store.apex(f) for f in store.families()) if n is not None]
+    if not roots:
+        # Structural gate, not a judgement: with nothing to recall there is
+        # nothing to ask about.
+        return WalkResult()
 
-    psig = signature(prompt)
-    if not psig:
-        return []
+    budget = budget or Budget(max_calls=int(store.config.get("recall.judge_calls", 2)))
+    judge = Judge(store, adapter)
+    result = walk(
+        judge,
+        prompt,
+        roots,
+        expand=store.children,
+        budget=budget,
+        max_depth=int(store.config.get("recall.max_depth", 2)),
+    )
 
-    scored: list[tuple[str, float]] = []
-    for family in store.families():
-        apex = store.apex(family)
-        if apex is None:
-            continue
-        fam_sig = apex.sig | signature(family.replace("-", " ")) | set(apex.tags)
-        for child in store.descendants(apex)[:6]:
-            fam_sig |= set(child.tags)
-        score = max(
-            jaccard(psig, fam_sig),
-            0.85 * _tag_hit(psig, set(apex.tags) | {family}),
-        )
-        if score >= floor:
-            scored.append((family, score))
-
-    scored.sort(key=lambda kv: -kv[1])
-    return scored[:limit]
-
-
-def _tag_hit(psig: set[str], tags: set[str]) -> float:
-    tags = {t.lower().replace("-", " ") for t in tags if t}
-    if not tags:
-        return 0.0
-    hits = sum(1 for t in tags if any(part in psig for part in t.split()))
-    return min(1.0, hits / max(1, len(tags)))
+    # Prefer confident hits; fall back to the maybes only if there is room.
+    confident = [n for n in result.selected if result.picks.get(n.id, Pick(n.id)).verdict == "relevant"]
+    maybes = [n for n in result.selected if n not in confident]
+    result.selected = (confident + maybes)[:limit]
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -102,11 +110,17 @@ def render_node(node: Node) -> str:
 def recall_pack(
     store: Store,
     prompt: str,
+    adapter: Adapter,
     *,
     budget: int | None = None,
     include_patches: bool = True,
 ) -> Pack:
-    """Build the ambient context pack for a prompt. No model calls."""
+    """Build the context pack for a prompt.
+
+    Costs one or two model calls, cached by prompt. That is a deliberate trade:
+    injecting the wrong lesson is worse than injecting none, and only the model
+    can tell the difference.
+    """
     pack = Pack()
     if not store.config.get("recall.enabled", True):
         return pack
@@ -115,10 +129,11 @@ def recall_pack(
     chunks: list[str] = []
     used = 0
 
-    for family, _score in match_families(store, prompt):
-        node = store.apex(family)
-        if node is None:
-            continue
+    selection = select_lessons(store, adapter, prompt)
+    pack.reasons = {n.id: selection.why(n.id) for n in selection.selected}
+
+    for node in selection.selected:
+        family = node.family
         rendered = render_node(node)
         cost = count_tokens(rendered)
         if used + cost > budget and chunks:
@@ -231,7 +246,7 @@ def solve_with_descent(
     if node is None:
         return DescentResult(ok=False, escalated=True)
 
-    task_sig = signature(task)
+    judge = Judge(store, adapter)
     result = DescentResult(ok=False)
     pack_parts = [render_node(node)]
     tried: set[str] = set()
@@ -271,8 +286,9 @@ def solve_with_descent(
             node,
             resolve=store.get,
             diag=diag,
-            task_sig=task_sig,
+            judge=judge,
             config=config,
+            task=task,
             exclude=tried,
         )
         candidates = [c for c in candidates if c.label not in tried]

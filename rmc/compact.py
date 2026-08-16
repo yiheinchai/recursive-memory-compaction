@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from .adapters import Adapter
+from .judge import Judge
 from .node import Delta, Node
 from .prompts import (
     COMPRESS,
@@ -454,25 +455,34 @@ def merge_nodes(
     return result
 
 
-def merge_candidates(store: Store, family: str, *, min_similarity: float = 0.25) -> list[list[Node]]:
-    """Sibling apexes at the same level that look like the same procedure."""
-    from .util import jaccard
+def merge_candidates(
+    store: Store, family: str, adapter: Adapter | None = None
+) -> list[list[Node]]:
+    """Sibling apexes that describe the same underlying procedure.
 
+    Whether two lessons are the same procedure is a judgement, not a similarity
+    score — "retry the HTTP call" and "re-enqueue the failed job" are one
+    procedure with different vocabulary, while two lessons that both talk about
+    timeouts may share nothing but the word. So the model decides; the harness
+    only supplies the peer set and the same-level constraint.
+    """
     peers = [n for n in store.family_nodes(family) if n.status == "active" and n.is_apex]
+    if len(peers) < 2 or adapter is None:
+        return []
+
+    judge = Judge(store, adapter)
     groups: list[list[Node]] = []
     used: set[str] = set()
-    for i, a in enumerate(peers):
-        if a.id in used:
+    for i, anchor in enumerate(peers):
+        if anchor.id in used:
             continue
-        group = [a]
-        for b in peers[i + 1 :]:
-            if b.id in used or b.level != a.level:
-                continue
-            if jaccard(a.sig, b.sig) >= min_similarity:
-                group.append(b)
-                used.add(b.id)
+        others = [b for b in peers[i + 1 :] if b.id not in used and b.level == anchor.level]
+        if not others:
+            continue
+        picks = {p.id: p for p in judge.related(anchor.body, others)}
+        group = [anchor] + [b for b in others if picks.get(b.id, None) and picks[b.id].verdict == "relevant"]
         if len(group) > 1:
-            used.add(a.id)
+            used.update(n.id for n in group)
             groups.append(group)
     return groups
 

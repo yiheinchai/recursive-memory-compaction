@@ -127,7 +127,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def cmd_recall(args: argparse.Namespace) -> int:
-    from .recall import match_families, recall_pack
+    from .recall import recall_pack, select_lessons
 
     store = need_store(args)
     if store is None:
@@ -136,13 +136,15 @@ def cmd_recall(args: argparse.Namespace) -> int:
     if not prompt.strip():
         return die("no prompt given (pass --prompt or pipe on stdin)")
 
-    matches = match_families(store, prompt)
-    pack = recall_pack(store, prompt)
+    adapter = make_adapter(store, args)
+    selection = select_lessons(store, adapter, prompt)
+    pack = recall_pack(store, prompt, adapter)
+    matches = [(n.family, selection.why(n.id)) for n in selection.selected]
     if args.json:
         print(
             json.dumps(
                 {
-                    "matches": [{"family": f, "score": round(s, 4)} for f, s in matches],
+                    "matches": [{"family": f, "why": w} for f, w in matches],
                     "served": pack.served,
                     "tokens": pack.tokens,
                     "text": pack.text,
@@ -154,8 +156,8 @@ def cmd_recall(args: argparse.Namespace) -> int:
     if not matches:
         print(dim("no matching lessons"))
         return 0
-    for family, score in matches:
-        print(f"{green('match')} {family} {dim(f'{score:.3f}')}")
+    for family, why in matches:
+        print(f"{green('match')} {family}  {dim(why[:88])}")
     print()
     print(pack.text or dim("(empty pack)"))
     print()
@@ -164,7 +166,7 @@ def cmd_recall(args: argparse.Namespace) -> int:
 
 
 def cmd_learn(args: argparse.Namespace) -> int:
-    from .reflect import mint
+    from .reflect import Outcome, mint
     from .signals import parse_transcript
 
     store = need_store(args)
@@ -178,7 +180,13 @@ def cmd_learn(args: argparse.Namespace) -> int:
 
     facts = parse_transcript(path)
     adapter = make_adapter(store, args)
-    result = mint(store, adapter, facts, session_id=args.session or "")
+    from .judge import Judge
+    from .signals import digest, worth_assessing
+
+    outcome = None
+    if worth_assessing(facts, min_tool_calls=int(store.config.get("learning.min_tool_calls", 8))):
+        outcome = Outcome.from_verdict(Judge(store, adapter).assess(digest(facts)))
+    result = mint(store, adapter, facts, outcome=outcome, session_id=args.session or "")
     if result.created is None:
         print(dim(f"nothing captured: {result.reason}"))
         return 0
@@ -186,6 +194,73 @@ def cmd_learn(args: argparse.Namespace) -> int:
           f"[{result.created.family}] {result.created.tokens} tokens")
     print(dim(f"  {result.created.path}"))
     return 0
+
+
+def cmd_add(args: argparse.Namespace) -> int:
+    """Teach RMC something right now, mid-session.
+
+    The transcript sweep at session end is a safety net for what nobody noticed
+    in the moment. This is the live path: the instant the user explains
+    something, it goes into the tree — reconciled against what is already known
+    — and is available to the very next prompt in the same conversation.
+    """
+    from .node import Node
+    from .placement import apply, decide
+    from .util import new_id
+
+    store = need_store(args)
+    if store is None:
+        return 1
+    body = (args.body or sys.stdin.read()).strip()
+    if not body:
+        return die("no lesson text (pass it as an argument or pipe it on stdin)")
+
+    adapter = make_adapter(store, args)
+    family = _slugify(args.family or "general")
+    node = Node(
+        id=new_id("n"),
+        family=family,
+        body=body,
+        level=0,
+        title=args.title or "",
+        tags=[_slugify(t) for t in (args.tags or "").split(",") if t.strip()],
+        origin="manual",
+    )
+
+    decision = decide(
+        store,
+        adapter,
+        body=body,
+        family_hint=family,
+        consult=not args.no_reconcile,
+    )
+    result = apply(store, decision, node)
+
+    verb = {
+        "new-family": "new lesson",
+        "attach-sibling": "added alongside",
+        "fold-into": "folded into an existing lesson",
+        "duplicate": "already known",
+        "conflict": "CONFLICTS with what is remembered",
+    }.get(decision.action, decision.action)
+
+    colour = red if decision.action == "conflict" else green
+    print(f"{colour(verb)}  {dim(decision.rationale[:110])}")
+    if result.node:
+        print(f"  {result.node.id} [{result.node.family}] {result.node.tokens} tokens")
+    if result.patched:
+        print(dim(f"  patched {len(result.patched)} compressed ancestor(s): {', '.join(result.patched)}"))
+    if decision.action == "conflict" and decision.question:
+        print(f"\n  {yellow('needs your answer:')} {decision.question}")
+        print(dim("  settle it with: rmc resolve <node-id> [--drop]"))
+    return 0
+
+
+def _slugify(text: str) -> str:
+    cleaned = "".join(c if c.isalnum() else "-" for c in str(text).strip().lower())
+    while "--" in cleaned:
+        cleaned = cleaned.replace("--", "-")
+    return cleaned.strip("-")[:48] or "general"
 
 
 def cmd_observe(args: argparse.Namespace) -> int:
@@ -200,7 +275,16 @@ def cmd_observe(args: argparse.Namespace) -> int:
         return die(f"no such transcript: {path}")
     facts = parse_transcript(path)
     served = args.served.split(",") if args.served else []
-    result = observe(store, facts, session_id=args.session or "", served=[s for s in served if s])
+    result = observe(
+        store,
+        facts,
+        adapter=make_adapter(store, args),
+        session_id=args.session or "",
+        served=[s for s in served if s],
+    )
+    if result.skipped:
+        print(dim(f"skipped: {result.skipped}"))
+        return 0
     colour = {"success": green, "failure": red}.get(result.outcome.label, yellow)
     print(f"{colour(result.outcome.label)} confidence={result.outcome.confidence:.2f}")
     for line in result.outcome.evidence:
@@ -226,7 +310,7 @@ def cmd_compact(args: argparse.Namespace) -> int:
             return die(f"no such node: {args.node}")
         results = [compress_node(store, adapter, node, dry_run=args.dry_run)]
     elif args.merge:
-        groups = merge_candidates(store, args.merge)
+        groups = merge_candidates(store, args.merge, adapter)
         if not groups:
             print(dim(f"no merge candidates in family {args.merge}"))
             return 0
@@ -437,6 +521,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("recall", help="show the context pack a prompt would get")
     p.add_argument("--prompt", "-p")
     p.add_argument("--json", action="store_true")
+    add_agent_flags(p)
     p.set_defaults(func=cmd_recall)
 
     p = sub.add_parser("learn", help="mint a level-0 lesson from a transcript")
@@ -445,10 +530,20 @@ def build_parser() -> argparse.ArgumentParser:
     add_agent_flags(p)
     p.set_defaults(func=cmd_learn)
 
-    p = sub.add_parser("observe", help="score a transcript and update stats")
+    p = sub.add_parser("add", help="teach RMC something now, without waiting for session end")
+    p.add_argument("body", nargs="?", help="the lesson, as instruction to a future agent")
+    p.add_argument("--family", help="short slug for the recurring situation it applies to")
+    p.add_argument("--title")
+    p.add_argument("--tags", help="comma-separated")
+    p.add_argument("--no-reconcile", action="store_true", help="skip the consistency check")
+    add_agent_flags(p)
+    p.set_defaults(func=cmd_add)
+
+    p = sub.add_parser("observe", help="judge a transcript and update stats")
     p.add_argument("--transcript", required=True)
     p.add_argument("--session")
     p.add_argument("--served", help="comma-separated node ids that were injected")
+    add_agent_flags(p)
     p.set_defaults(func=cmd_observe)
 
     p = sub.add_parser("compact", help="compress lessons and regression-test the result")

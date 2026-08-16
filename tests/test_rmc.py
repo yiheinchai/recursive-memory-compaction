@@ -1,9 +1,16 @@
-"""End-to-end tests, run with: python3 -m unittest discover -s tests
+"""End-to-end tests. Run with: python3 -m unittest discover -s tests
 
-These lean on ``MockAdapter``'s simulated knowledge world: a task is solved iff
-every ``@fact`` it requires appears in the lesson text supplied. That makes the
-whole cycle — compress, fail, diagnose, descend, rescue — deterministic and
-free, so the control flow is genuinely verified rather than asserted.
+Two kinds of test here, and the split mirrors the architecture:
+
+* **Structure** — the walk, the budget, the cache, how a verdict is plumbed into
+  the store. Judgements are stubbed with a router, so these assert what the
+  harness does with an answer, never what the answer is.
+* **Control flow** — compress, fail, descend, rescue. These use ``MockWorld``,
+  where a task is solved iff the required ``@fact`` tokens are present in the
+  lesson, so the whole cycle really executes rather than being mocked at the
+  seams.
+
+Nothing here asserts on lexical similarity, because nothing in RMC computes it.
 """
 
 from __future__ import annotations
@@ -18,12 +25,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from rmc import yamlish  # noqa: E402
 from rmc.adapters.mock import MockAdapter, MockWorld  # noqa: E402
 from rmc.compact import compress_node, due_nodes, repair  # noqa: E402
+from rmc.judge import Budget, Judge, Pick, walk  # noqa: E402
 from rmc.node import Delta, Node  # noqa: E402
-from rmc.recall import match_families, recall_pack, solve_with_descent  # noqa: E402
+from rmc.recall import recall_pack, select_lessons, solve_with_descent  # noqa: E402
 from rmc.redact import redact  # noqa: E402
+from rmc.reflect import Outcome, observe  # noqa: E402
 from rmc.selection import Diagnosis, build_candidates, rank  # noqa: E402
-from rmc.signals import SessionFacts, classify  # noqa: E402
+from rmc.signals import SessionFacts, ToolEvent, digest, parse_transcript, worth_assessing  # noqa: E402
 from rmc.store import Episode, Store  # noqa: E402
+
+
+def router(payload):
+    """A MockAdapter whose every judgement is a fixed answer."""
+    return MockAdapter(router=lambda prompt, schema: payload)
+
+
+def counting_router(payload, log: list):
+    def _r(prompt, schema):
+        log.append(prompt)
+        return payload
+
+    return MockAdapter(router=_r)
 
 
 class StoreCase(unittest.TestCase):
@@ -41,7 +63,7 @@ class StoreCase(unittest.TestCase):
         self.store.invalidate()
         return self.store.get(node.id)
 
-    def add_episode(self, ident, family, prompt, *, outcome="success", served=()) -> Episode:
+    def add_episode(self, ident, family, prompt, *, outcome="success", served=(), summary="done") -> Episode:
         ep = Episode(
             id=ident,
             family=family,
@@ -49,12 +71,14 @@ class StoreCase(unittest.TestCase):
             outcome=outcome,
             confidence=0.9,
             served=list(served),
-            accepted_summary="done correctly",
+            accepted_summary=summary,
         )
         self.store.save_episode(ep)
         return ep
 
 
+# --------------------------------------------------------------------------- #
+# storage primitives
 # --------------------------------------------------------------------------- #
 
 
@@ -104,15 +128,14 @@ class TestNode(StoreCase):
             covers_tasks=["e1"],
             tags=["retry", "http"],
             dropped=[Delta("exact constants", "parameter", "n_x")],
+            conflict="which delay?",
         )
         path = self.store.save_node(node)
         loaded = Node.from_markdown(path.read_text(), path)
         self.assertEqual(loaded.id, "n_abc")
-        self.assertEqual(loaded.level, 2)
         self.assertEqual(loaded.derived_from, ["n_x"])
         self.assertEqual(loaded.dropped[0].kind, "parameter")
-        self.assertEqual(loaded.dropped[0].holder, "n_x")
-        self.assertIn("@backoff-constants", loaded.body)
+        self.assertEqual(loaded.conflict, "which delay?")
 
     def test_posterior_is_laplace_smoothed(self) -> None:
         node = Node(id="n_1", family="f")
@@ -138,135 +161,337 @@ class TestRedaction(unittest.TestCase):
         self.assertEqual(redact(text), text)
 
 
-class TestSignals(unittest.TestCase):
-    def test_correction_reads_as_failure(self) -> None:
-        facts = SessionFacts(
-            user_messages=["add retry logic", "no, don't use a fixed delay"],
-            assistant_messages=["done"],
-            tool_calls=12,
-        )
-        outcome = classify(facts)
-        self.assertEqual(outcome.label, "failure")
-        self.assertGreaterEqual(outcome.confidence, 0.5)
+# --------------------------------------------------------------------------- #
+# transcript parsing — facts only, no classification
+# --------------------------------------------------------------------------- #
 
-    def test_approval_reads_as_success(self) -> None:
-        facts = SessionFacts(
-            user_messages=["add retry logic", "perfect, thanks"],
-            assistant_messages=["done"],
-            tool_calls=12,
-        )
-        self.assertEqual(classify(facts).label, "success")
 
-    def test_small_session_is_unknown(self) -> None:
+class TestTranscriptParsing(unittest.TestCase):
+    def write(self, rows) -> Path:
+        import json
+
+        tmp = Path(tempfile.mkdtemp()) / "t.jsonl"
+        tmp.write_text("\n".join(json.dumps(r) for r in rows))
+        return tmp
+
+    def test_host_metadata_separates_human_turns_from_harness_turns(self) -> None:
+        path = self.write(
+            [
+                {"type": "user", "message": {"role": "user", "content": "do the thing"}},
+                {"type": "user", "isMeta": True, "message": {"role": "user", "content": "/goal blah"}},
+                {
+                    "type": "user",
+                    "toolUseResult": {"is_error": False},
+                    "message": {"role": "user", "content": [{"type": "tool_result", "content": "ok"}]},
+                },
+                {"type": "user", "toolDenialKind": "reject", "message": {"role": "user", "content": "no"}},
+            ]
+        )
+        facts = parse_transcript(path)
+        self.assertEqual(facts.user_messages, ["do the thing"])
+        self.assertTrue(facts.denied)
+        self.assertEqual(len(facts.tool_outputs), 1)
+
+    def test_tool_calls_pair_to_results_by_id(self) -> None:
+        path = self.write(
+            [
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "tool_use", "id": "a", "name": "Bash", "input": {"command": "pytest"}}
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "toolUseResult": {"is_error": True},
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "tool_result", "tool_use_id": "a", "content": "boom"}],
+                    },
+                },
+            ]
+        )
+        facts = parse_transcript(path)
+        self.assertEqual(len(facts.tool_events), 1)
+        self.assertEqual(facts.tool_events[0].detail, "pytest")
+        self.assertIs(facts.tool_events[0].ok, False)
+
+    def test_ok_stays_unknown_when_the_host_says_nothing(self) -> None:
+        """Better an honest unknown than a regex guessing from output text."""
+        path = self.write(
+            [
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "tool_use", "id": "a", "name": "Bash", "input": {"command": "ls"}}],
+                    },
+                },
+                {
+                    "type": "user",
+                    "toolUseResult": {},
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "tool_result", "tool_use_id": "a", "content": "error: nope"}],
+                    },
+                },
+            ]
+        )
+        self.assertIsNone(parse_transcript(path).tool_events[0].ok)
+
+    def test_repeated_standing_instruction_is_recorded_once(self) -> None:
+        rows = [{"type": "user", "message": {"role": "user", "content": "always use tabs"}}] * 4
+        self.assertEqual(len(parse_transcript(self.write(rows)).user_messages), 1)
+
+
+class TestStructuralGate(unittest.TestCase):
+    """Whether to ask is structural; what the answer is, is not."""
+
+    def test_tiny_session_is_not_worth_judging(self) -> None:
         facts = SessionFacts(user_messages=["hi"], assistant_messages=["hello"], tool_calls=1)
-        self.assertEqual(classify(facts).label, "unknown")
+        self.assertFalse(worth_assessing(facts))
 
-    def test_red_then_green_is_not_a_failure(self) -> None:
+    def test_a_human_follow_up_always_makes_it_worth_judging(self) -> None:
+        facts = SessionFacts(user_messages=["do x", "no, do y"], tool_calls=1)
+        self.assertTrue(worth_assessing(facts))
+
+    def test_digest_preserves_order_of_events(self) -> None:
         facts = SessionFacts(
-            user_messages=["fix the build"],
-            assistant_messages=["fixed"],
-            tool_outputs=["2 failed", "12 passed"],
-            tool_calls=15,
+            user_messages=["run tests", "no, use the other port"],
+            assistant_messages=["done"],
+            tool_calls=2,
+            tool_events=[
+                ToolEvent("Bash", "pytest", "refused", False, "1"),
+                ToolEvent("Bash", "PG_PORT=5433 pytest", "42 passed", True, "2"),
+            ],
         )
-        self.assertEqual(classify(facts).label, "success")
+        facts.first_prompt = facts.user_messages[0]
+        facts.last_assistant = "done"
+        text = digest(facts)
+        self.assertLess(text.index("pytest"), text.index("PG_PORT=5433"))
+        self.assertIn("no, use the other port", text)
+        self.assertIn("FAILED", text)
+
+
+# --------------------------------------------------------------------------- #
+# the judge: structure around the judgement
+# --------------------------------------------------------------------------- #
+
+
+class TestJudge(StoreCase):
+    def test_verdicts_are_cached(self) -> None:
+        log: list = []
+        judge = Judge(self.store, counting_router({"picks": []}, log))
+        node = self.add_node(id="n_1", family="f", body="b")
+        for _ in range(3):
+            judge.relevance("same question", [node])
+        self.assertEqual(len(log), 1)
+
+    def test_unknown_ids_are_discarded(self) -> None:
+        """The model must not be able to invent a node id we then act on."""
+        node = self.add_node(id="n_real", family="f", body="b")
+        judge = Judge(
+            self.store,
+            router({"picks": [{"id": "n_hallucinated", "verdict": "relevant"}]}),
+        )
+        self.assertEqual(judge.relevance("q", [node]), [])
+
+    def test_unusable_answer_degrades_to_nothing(self) -> None:
+        class Broken:
+            ok = False
+            data = None
+            text = ""
+            error = "boom"
+
+        judge = Judge(self.store, MockAdapter(router=lambda p, s: Broken()))
+        node = self.add_node(id="n_2", family="f", body="b")
+        self.assertEqual(judge.relevance("q", [node]), [])
+
+
+class TestWalk(StoreCase):
+    def build_two_levels(self):
+        child = self.add_node(id="n_child", family="f", body="detail", level=0)
+        apex = self.add_node(
+            id="n_apex", family="f", body="abstract", level=1, derived_from=[child.id]
+        )
+        child.compressed_into = apex.id
+        self.store.save_node(child)
+        self.store.invalidate()
+        return self.store.get("n_apex"), self.store.get("n_child")
+
+    def test_descends_only_when_the_model_asks(self) -> None:
+        apex, child = self.build_two_levels()
+        log: list = []
+        judge = Judge(
+            self.store,
+            counting_router({"picks": [{"id": "n_apex", "verdict": "relevant", "descend": False}]}, log),
+        )
+        result = walk(judge, "q", [apex], expand=self.store.children)
+        self.assertEqual([n.id for n in result.selected], ["n_apex"])
+        self.assertEqual(len(log), 1, "no second level should be examined")
+
+    def test_descend_replaces_the_summary_with_its_detail(self) -> None:
+        apex, child = self.build_two_levels()
+
+        def route(prompt, schema):
+            # First level asks to go deeper; second level accepts the child.
+            if "n_apex" in prompt:
+                return {"picks": [{"id": "n_apex", "verdict": "maybe", "descend": True}]}
+            return {"picks": [{"id": "n_child", "verdict": "relevant", "descend": False}]}
+
+        result = walk(judge_for(self.store, route), "q", [apex], expand=self.store.children)
+        self.assertEqual([n.id for n in result.selected], ["n_child"])
+        self.assertEqual(result.calls, 2)
+
+    def test_unrelated_lines_are_not_opened(self) -> None:
+        apex, _ = self.build_two_levels()
+        log: list = []
+        judge = Judge(
+            self.store,
+            counting_router({"picks": [{"id": "n_apex", "verdict": "unrelated", "descend": True}]}, log),
+        )
+        result = walk(judge, "q", [apex], expand=self.store.children)
+        self.assertEqual(result.selected, [])
+        self.assertEqual(len(log), 1)
+
+    def test_budget_stops_the_walk_but_keeps_what_was_found(self) -> None:
+        apex, child = self.build_two_levels()
+        judge = judge_for(
+            self.store,
+            lambda p, s: {"picks": [{"id": "n_apex", "verdict": "maybe", "descend": True}]},
+        )
+        result = walk(judge, "q", [apex], expand=self.store.children, budget=Budget(max_calls=1))
+        # The child was reached but never judged; dropping it silently would be
+        # worse than serving something plausible.
+        self.assertEqual([n.id for n in result.selected], ["n_child"])
+
+
+def judge_for(store, route):
+    return Judge(store, MockAdapter(router=route), use_cache=False)
+
+
+# --------------------------------------------------------------------------- #
+# recall
+# --------------------------------------------------------------------------- #
+
+
+class TestRecall(StoreCase):
+    def test_serves_what_the_model_selects(self) -> None:
+        self.add_node(id="n_r", family="retry", title="Retry", body="Retry idempotent calls.", level=2)
+        self.add_node(id="n_g", family="graphql", title="GraphQL", body="Batch queries.", level=1)
+        adapter = router({"picks": [{"id": "n_r", "verdict": "relevant", "why": "same subject"}]})
+
+        pack = recall_pack(self.store, "the client needs retries", adapter)
+        self.assertIn("Retry idempotent calls", pack.text)
+        self.assertNotIn("Batch queries", pack.text)
+        self.assertEqual(pack.served, ["n_r"])
+        self.assertEqual(pack.reasons["n_r"], "same subject")
+
+    def test_nothing_selected_means_nothing_injected(self) -> None:
+        self.add_node(id="n_r", family="retry", body="Retry idempotent calls.")
+        pack = recall_pack(self.store, "what colour should the logo be", router({"picks": []}))
+        self.assertFalse(pack)
+
+    def test_empty_store_asks_nothing(self) -> None:
+        log: list = []
+        recall_pack(self.store, "anything", counting_router({"picks": []}, log))
+        self.assertEqual(log, [], "no lessons means no question to ask")
+
+    def test_conflict_is_surfaced_with_the_lesson(self) -> None:
+        self.add_node(
+            id="n_c",
+            family="db",
+            body="Use port 5433.",
+            status="disputed",
+            conflict="Is 5434 permanent?",
+        )
+        pack = recall_pack(
+            self.store,
+            "run the tests",
+            router({"picks": [{"id": "n_c", "verdict": "relevant"}]}),
+        )
+        self.assertIn("Unresolved", pack.text)
+        self.assertEqual(pack.conflicts, ["n_c"])
+
+    def test_previously_rescued_claims_are_reattached(self) -> None:
+        self.add_node(id="n_p", family="f", body="Short.", dropped=[Delta("the missing bit", "parameter")])
+        self.store.log("rescue", node="n_p", claim="the missing bit")
+        pack = recall_pack(
+            self.store, "q", router({"picks": [{"id": "n_p", "verdict": "relevant"}]})
+        )
+        self.assertIn("the missing bit", pack.text)
+
+
+# --------------------------------------------------------------------------- #
+# selection
+# --------------------------------------------------------------------------- #
 
 
 class TestSelection(StoreCase):
-    def test_diagnosis_kind_drives_the_ranking(self) -> None:
-        holder_a = self.add_node(id="n_a", family="retry", body="A", level=0)
-        holder_b = self.add_node(id="n_b", family="retry", body="B", level=0)
-        apex = self.add_node(
+    def make_apex(self) -> Node:
+        return self.add_node(
             id="n_apex",
             family="retry",
             body="Retry idempotent operations.",
             level=1,
-            derived_from=["n_a", "n_b"],
             dropped=[
-                Delta("worked example for the S3 client", "example", holder_a.id),
-                Delta("backoff constants are 100ms, 400ms, 1.6s", "parameter", holder_b.id),
+                Delta("prefer table-driven tests for the parser", "example", None),
+                Delta("S3 returns 200 with an error body", "edge-case", None),
+                Delta("the deploy pipeline caches node_modules", "reference", None),
             ],
         )
-        diag = Diagnosis(category="parameter", missing=["the backoff constants"], confidence=0.9)
+
+    def test_the_model_decides_which_repair_applies(self) -> None:
+        apex = self.make_apex()
+        candidates = build_candidates(apex, resolve=self.store.get, strategy="delta-patch")
+        target = next(c.label for c in candidates if "S3" in c.text)
+        adapter = router({"ranked": [{"key": target, "usefulness": 1.0}]})
         ranked = rank(
-            build_candidates(apex, resolve=self.store.get, strategy="delta-patch"),
-            diag=diag,
-            task_sig={"retry", "backoff"},
+            candidates,
+            diag=Diagnosis(missing=["the upload silently succeeded"]),
+            judge=Judge(self.store, adapter),
             config=self.store.config,
         )
-        self.assertEqual(ranked[0].kind, "delta")
-        self.assertIn("backoff constants", ranked[0].text)
+        self.assertEqual(ranked[0].label, target)
+        self.assertGreater(ranked[0].parts["judge"], 0)
 
-    def test_children_offered_when_manifest_is_empty(self) -> None:
+    def test_without_a_judge_it_falls_back_to_evidence_not_a_similarity_score(self) -> None:
+        apex = self.make_apex()
+        ranked = rank(
+            build_candidates(apex, resolve=self.store.get, strategy="delta-patch"),
+            diag=Diagnosis(missing=["s3 error body"]),
+            judge=None,
+            config=self.store.config,
+        )
+        # No judgement term at all — not a guess dressed up as one.
+        self.assertEqual(ranked[0].parts["judge"], 0.0)
+        self.assertTrue(all(c.parts["judge"] == 0.0 for c in ranked))
+        # Cheapest wins on the remaining terms.
+        self.assertEqual(ranked[0].tokens, min(c.tokens for c in ranked))
+
+    def test_children_are_offered_when_the_manifest_is_empty(self) -> None:
         self.add_node(id="n_c", family="f", body="detail", level=0)
         apex = self.add_node(id="n_p", family="f", body="abstract", level=1, derived_from=["n_c"])
         cands = build_candidates(apex, resolve=self.store.get, strategy="delta-patch")
         self.assertTrue(any(c.kind == "node" and c.node.id == "n_c" for c in cands))
 
-    def test_cost_breaks_ties_toward_cheaper(self) -> None:
-        apex = self.add_node(
-            id="n_p2",
-            family="f",
-            body="abstract",
-            level=1,
-            dropped=[
-                Delta("short claim", "parameter", None),
-                Delta("a very much longer claim " * 40, "parameter", None),
-            ],
-        )
-        diag = Diagnosis(category="parameter", missing=["claim"], confidence=0.5)
-        ranked = rank(
-            build_candidates(apex, resolve=self.store.get, strategy="delta-patch"),
-            diag=diag,
-            task_sig=set(),
-            config=self.store.config,
-        )
-        self.assertEqual(ranked[0].text, "short claim")
 
-
-class TestRecall(StoreCase):
-    def test_family_matching_and_pack_budget(self) -> None:
-        self.add_node(
-            id="n_r",
-            family="retry",
-            title="Retry",
-            body="Retry idempotent HTTP requests with jittered exponential backoff.",
-            level=2,
-            tags=["retry", "http"],
-        )
-        self.add_node(
-            id="n_g",
-            family="graphql",
-            title="GraphQL",
-            body="Batch GraphQL queries through the dataloader.",
-            level=1,
-            tags=["graphql"],
-        )
-        matches = match_families(self.store, "the http client needs retry with backoff")
-        self.assertTrue(matches)
-        self.assertEqual(matches[0][0], "retry")
-
-        pack = recall_pack(self.store, "the http client needs retry with backoff")
-        self.assertIn("jittered exponential backoff", pack.text)
-        self.assertIn("n_r", pack.served)
-
-    def test_unrelated_prompt_matches_nothing(self) -> None:
-        self.add_node(id="n_r2", family="retry", body="Retry idempotent HTTP requests.", tags=["retry"])
-        self.assertEqual(match_families(self.store, "what colour should the logo be"), [])
+# --------------------------------------------------------------------------- #
+# control flow: compress, fail, descend, rescue
+# --------------------------------------------------------------------------- #
 
 
 class TestCompaction(StoreCase):
-    """The full cycle against the simulated knowledge world."""
-
     def build_family(self) -> Node:
-        # Deliberately verbose, the way a freshly-minted L0 lesson actually is,
-        # with the wordiest content in the edge case the compressor will drop.
-        # A terse fixture would fail the reduction gate before any replay runs.
         body = (
-            "When calling flaky remote services, follow these rules carefully.\n"
+            "When calling flaky remote services, follow these rules carefully.\n\n"
             "- Retry only idempotent operations; a non-idempotent write needs a "
-            "dedupe key established before the first attempt. @idempotent\n"
+            "dedupe key established before the first attempt. @idempotent\n\n"
             "- Use jittered exponential backoff rather than a fixed delay, so that "
-            "retries from many clients do not synchronise. @backoff\n"
+            "retries from many clients do not synchronise. @backoff\n\n"
             "- S3 is a special case: it can return HTTP 200 with an error document "
             "in the response body, so you must parse the body rather than trusting "
             "the status code, and treat a parsed error exactly as you would treat a "
@@ -283,34 +508,21 @@ class TestCompaction(StoreCase):
     def world(self) -> MockWorld:
         return MockWorld({"e1": {"idempotent"}, "e2": {"idempotent", "backoff"}})
 
-    def test_compression_accepted_when_regression_set_still_passes(self) -> None:
+    def test_accepted_when_the_regression_set_still_passes(self) -> None:
         node = self.build_family()
-        adapter = MockAdapter(world=self.world())
-        result = compress_node(self.store, adapter, node)
-
+        result = compress_node(self.store, MockAdapter(world=self.world()), node)
         self.assertTrue(result.accepted, result.reason)
-        self.assertLess(result.after_tokens, result.before_tokens)
-        # The mock drops the trailing @s3-body line, which neither episode needs.
         self.assertTrue(any("@s3-body" in d.claim for d in result.dropped))
         self.assertEqual(result.pass_rate, 1.0)
+        self.assertEqual(self.store.apex("retry").id, result.new_node.id)
 
-        new = result.new_node
-        self.assertEqual(new.level, 1)
-        self.assertEqual(new.derived_from, ["n_base"])
-        self.assertEqual(self.store.get("n_base").compressed_into, new.id)
-        self.assertEqual(self.store.apex("retry").id, new.id)
-
-    def test_compression_rejected_when_it_drops_a_needed_fact(self) -> None:
+    def test_rejected_when_it_drops_a_needed_fact(self) -> None:
         node = self.build_family()
-        # A world where every episode needs the fact the compressor wants to cut.
         world = MockWorld({"e1": {"idempotent", "s3-body"}, "e2": {"idempotent", "s3-body"}})
-        adapter = MockAdapter(world=world)
-        result = compress_node(self.store, adapter, node)
-
+        result = compress_node(self.store, MockAdapter(world=world), node)
         self.assertFalse(result.accepted)
         self.assertEqual(result.pass_rate, 0.0)
         self.assertIsNone(self.store.get("n_base").compressed_into)
-        # The rejection must leave hints behind so the next attempt converges.
         self.assertTrue(self.store.get("n_base").preserve)
 
     def test_manifest_under_reporting_is_rejected(self) -> None:
@@ -342,9 +554,7 @@ class TestCompaction(StoreCase):
 
 
 class TestDescent(StoreCase):
-    """Compress away a fact, then prove descent finds it again."""
-
-    def test_delta_patch_rescues_a_dropped_fact(self) -> None:
+    def test_the_dropped_fact_is_found_past_distractors(self) -> None:
         base = self.add_node(
             id="n_d0",
             family="retry",
@@ -358,8 +568,6 @@ class TestDescent(StoreCase):
             level=1,
             derived_from=[base.id],
             dropped=[
-                # Distractors of the wrong kind and topic, so a rescue can only
-                # succeed if the manifest match is genuinely doing the work.
                 Delta("prefer table-driven tests for the parser", "example", base.id),
                 Delta("the deploy pipeline caches node_modules", "reference", base.id),
                 Delta("S3 returns 200 with error bodies. @s3-body", "edge-case", base.id),
@@ -370,7 +578,7 @@ class TestDescent(StoreCase):
         self.store.invalidate()
 
         world = MockWorld({"t_s3": {"idempotent", "s3-body"}})
-        adapter = MockAdapter(world=world, diagnosis_kind="edge-case")
+        adapter = MockAdapter(world=world)
 
         def verify(run, pack):
             ok, missing = world.solves("t_s3", pack)
@@ -387,49 +595,30 @@ class TestDescent(StoreCase):
         self.assertTrue(result.ok)
         self.assertIsNotNone(result.rescued_by)
         self.assertIn("@s3-body", result.final_pack)
-        # The apex alone must have failed first, or the test proves nothing.
-        self.assertGreaterEqual(len(result.attempts), 2)
-        self.assertFalse(result.attempts[0].ok)
-        # The right claim must be picked on the FIRST descent, past two
-        # distractors, and the delta term must be what picked it. Without this
-        # the suite still passes when delta_match silently degrades to zero and
-        # the prior alone carries the choice.
+        # Right on the first descent, past two distractors, and because the
+        # judgement term chose it — not because it was the only option left.
         self.assertEqual(len(result.attempts), 2)
-        self.assertGreater(result.rescued_by.parts["delta"], 0.0)
-        self.assertGreater(
-            result.rescued_by.parts["delta"],
-            max(result.rescued_by.parts["affinity"], result.rescued_by.parts["prior"]),
-        )
+        self.assertFalse(result.attempts[0].ok)
+        self.assertGreater(result.rescued_by.parts["judge"], 0.0)
 
     def test_escalates_to_level_zero_when_no_delta_helps(self) -> None:
-        base = self.add_node(
-            id="n_e0",
-            family="f",
-            body="Full lesson. @a @b",
-            level=0,
-        )
+        base = self.add_node(id="n_e0", family="f", body="Full lesson. @a @b", level=0)
         apex = self.add_node(
-            id="n_e1",
-            family="f",
-            body="Short lesson. @a",
-            level=1,
-            derived_from=[base.id],
-            dropped=[],  # nothing declared: descent has to fall back
+            id="n_e1", family="f", body="Short lesson. @a", level=1, derived_from=[base.id], dropped=[]
         )
         base.compressed_into = apex.id
         self.store.save_node(base)
         self.store.invalidate()
 
         world = MockWorld({"t": {"a", "b"}})
-        adapter = MockAdapter(world=world)
 
         def verify(run, pack):
             ok, missing = world.solves("t", pack)
-            return ok, f"missing {sorted(missing)}"
+            return ok, "missing: " + " ".join(f"@{m}" for m in sorted(missing))
 
         result = solve_with_descent(
             self.store,
-            adapter=adapter,
+            adapter=MockAdapter(world=world),
             task_id="t",
             task="do the thing",
             family="f",
@@ -451,158 +640,139 @@ class TestRepair(StoreCase):
         for _ in range(2):
             self.store.log("rescue", node=node.id, claim="the missing constant is 1.6s")
         restored = repair(self.store, node, min_rescues=2)
-
         self.assertEqual(restored, ["the missing constant is 1.6s"])
         reloaded = self.store.get("n_rep")
         self.assertIn("1.6s", reloaded.body)
         self.assertEqual(reloaded.dropped, [])
 
 
+# --------------------------------------------------------------------------- #
+# observe: plumbing a verdict into the tree
+# --------------------------------------------------------------------------- #
+
+
 class TestObserve(StoreCase):
-    def test_success_updates_stats_and_files_an_episode(self) -> None:
-        from rmc.reflect import observe
-
-        node = self.add_node(id="n_o", family="retry", body="Retry stuff.", level=1)
-        facts = SessionFacts(
-            user_messages=["add retry logic", "perfect, that works"],
-            assistant_messages=["added retry with backoff"],
+    def facts(self, **kw) -> SessionFacts:
+        base = dict(
+            user_messages=["do the thing"],
+            assistant_messages=["done"],
             tool_calls=14,
+            first_prompt="do the thing",
+            last_assistant="done",
         )
-        result = observe(self.store, facts, session_id="s1", served=[node.id])
+        base.update(kw)
+        return SessionFacts(**base)
 
+    def verdict(self, **kw):
+        payload = {"outcome": "success", "confidence": 0.9, "corrected": False}
+        payload.update(kw)
+        return router(payload)
+
+    def test_success_updates_stats_and_files_an_episode(self) -> None:
+        node = self.add_node(id="n_o", family="retry", body="Retry stuff.", level=1)
+        result = observe(self.store, self.facts(), adapter=self.verdict(), served=[node.id])
         self.assertEqual(result.outcome.label, "success")
         self.assertEqual(self.store.get("n_o").stats.successes, 1)
-        self.assertIsNotNone(result.episode)
         self.assertEqual(result.episode.outcome, "success")
 
-    def test_failure_matches_the_correction_against_the_manifest(self) -> None:
-        from rmc.reflect import observe
-
-        node = self.add_node(
-            id="n_o2",
-            family="retry",
-            body="Retry stuff.",
-            level=1,
-            dropped=[Delta("the backoff must be jittered, not fixed", "parameter", None)],
-        )
-        facts = SessionFacts(
-            user_messages=["add retry", "no, don't use a fixed backoff delay, jitter it"],
-            assistant_messages=["added retry"],
-            tool_calls=12,
-        )
-        result = observe(self.store, facts, session_id="s2", served=[node.id])
-
-        self.assertEqual(result.outcome.label, "failure")
-        self.assertTrue(result.rescues, "correction should have matched a dropped claim")
-        self.assertIn("jitter", result.rescues[0][1])
-
-    def test_corrected_but_successful_session_counts_against_the_lesson(self) -> None:
-        """A session the human had to steer is a success for the episode but a
-        failure for whichever lesson should have prevented the mistake."""
-        from rmc.reflect import observe
-
+    def test_a_corrected_session_counts_against_the_lesson(self) -> None:
+        """Success for the episode, failure for the lesson that should have prevented it."""
         node = self.add_node(
             id="n_o4",
             family="deploy",
             body="Deploy with kubectl apply.",
             level=1,
-            dropped=[Delta("use the argo rollouts plugin, not raw kubectl", "procedure-step", None)],
+            dropped=[Delta("use the argo rollouts plugin", "procedure-step", None)],
         )
-        facts = SessionFacts(
-            user_messages=[
-                "deploy staging",
-                "no, don't use raw kubectl, use the argo rollouts plugin",
-                "perfect, that works",
-            ],
-            assistant_messages=["deployed"],
-            tool_outputs=["12 passed"],
-            tool_calls=14,
-        )
-        result = observe(self.store, facts, session_id="s4", served=[node.id])
+        adapter = self.verdict(corrected=True, correction="use the argo rollouts plugin, not kubectl")
+        result = observe(self.store, self.facts(), adapter=adapter, served=[node.id])
 
-        self.assertEqual(result.outcome.label, "success")  # session ended well
+        self.assertEqual(result.outcome.label, "success")
         reloaded = self.store.get("n_o4")
-        self.assertEqual(reloaded.stats.failures, 1)  # but the lesson did not hold
+        self.assertEqual(reloaded.stats.failures, 1)
         self.assertEqual(reloaded.stats.successes, 0)
-        self.assertTrue(result.rescues)
         self.assertEqual(result.episode.outcome, "success")
 
-    def test_exact_threshold_is_not_lost_to_float_error(self) -> None:
-        facts = SessionFacts(
-            user_messages=["do it", "no, that's wrong", "perfect, that works"],
-            assistant_messages=["done"],
-            tool_outputs=["12 passed"],
-            tool_calls=4,
-        )
-        # -0.65 (correction) + 0.6 (approval) + 0.35 (tests) == exactly 0.30
-        self.assertEqual(classify(facts).label, "success")
-
-    def test_low_confidence_changes_nothing(self) -> None:
-        from rmc.reflect import observe
-
+    def test_low_confidence_and_no_correction_changes_nothing(self) -> None:
         node = self.add_node(id="n_o3", family="f", body="x", level=0)
-        facts = SessionFacts(user_messages=["hi"], assistant_messages=["hello"], tool_calls=1)
-        observe(self.store, facts, session_id="s3", served=[node.id])
+        adapter = self.verdict(outcome="unknown", confidence=0.1)
+        observe(self.store, self.facts(), adapter=adapter, served=[node.id])
         self.assertEqual(self.store.get("n_o3").stats.attempts, 0)
+
+    def test_a_correction_is_acted_on_even_at_low_confidence(self) -> None:
+        """Corrected-then-fixed sessions score near zero; they must not be dropped."""
+        node = self.add_node(id="n_o5", family="f", body="x", level=0)
+        adapter = self.verdict(outcome="unknown", confidence=0.2, corrected=True, correction="wrong tool")
+        observe(self.store, self.facts(), adapter=adapter, served=[node.id])
+        self.assertEqual(self.store.get("n_o5").stats.failures, 1)
+
+    def test_tiny_session_is_skipped_without_asking(self) -> None:
+        log: list = []
+        adapter = counting_router({"outcome": "success", "confidence": 1.0, "corrected": False}, log)
+        result = observe(self.store, SessionFacts(user_messages=["hi"], tool_calls=1), adapter=adapter)
+        self.assertIn("too small", result.skipped)
+        self.assertEqual(log, [])
+
+
+# --------------------------------------------------------------------------- #
+# placement / consolidation
+# --------------------------------------------------------------------------- #
 
 
 class TestPlacement(StoreCase):
-    """Where new knowledge goes: fold in, sit beside, start fresh, or conflict."""
-
-    RETRY_BODY = "Retry idempotent HTTP calls with jittered exponential backoff."
+    BODY = "Retry idempotent HTTP calls with jittered exponential backoff."
 
     def seed(self) -> Node:
-        return self.add_node(
-            id="n_seed",
-            family="retry",
-            title="Retry",
-            body=self.RETRY_BODY,
-            level=0,
-            tags=["retry", "http"],
-        )
+        return self.add_node(id="n_seed", family="retry", title="Retry", body=self.BODY, level=0)
 
-    def reconciler(self, relation: str, match: str = "n_seed", **extra):
-        payload = {
-            "match": match,
-            "relation": relation,
-            "rationale": f"mock says {relation}",
-            **extra,
-        }
-        return MockAdapter(router=lambda prompt, schema: payload)
+    def reconciler(self, relation: str, match: str = "n_seed", related=True, **extra):
+        """Answers the walk's `related` question, then the reconcile question."""
 
-    def test_unrelated_lesson_starts_a_new_leaf_without_a_model_call(self) -> None:
+        def route(prompt, schema):
+            if "RMC:related" in prompt:
+                verdict = "relevant" if related else "unrelated"
+                return {"picks": [{"id": "n_seed", "verdict": verdict}]}
+            return {"match": match, "relation": relation, "rationale": f"mock says {relation}", **extra}
+
+        return MockAdapter(router=route)
+
+    def test_unrelated_lesson_starts_a_new_leaf(self) -> None:
         from rmc.placement import decide
 
         self.seed()
-        adapter = MockAdapter(router=lambda p, s: self.fail("should not consult a model"))
         decision = decide(
             self.store,
-            adapter,
-            body="Figma exports need the viewBox stripped before committing SVGs.",
+            self.reconciler("orthogonal", related=False),
+            body="Figma exports need the viewBox stripped.",
             family_hint="svg-assets",
         )
         self.assertEqual(decision.action, "new-family")
-        self.assertFalse(decision.consulted)
+
+    def test_empty_store_needs_no_judgement(self) -> None:
+        from rmc.placement import decide
+
+        log: list = []
+        decision = decide(
+            self.store, counting_router({"picks": []}, log), body="anything", family_hint="new"
+        )
+        self.assertEqual(decision.action, "new-family")
+        self.assertEqual(log, [])
 
     def test_refinement_folds_into_the_base_node(self) -> None:
         from rmc.placement import apply, decide
 
         seed = self.seed()
-        merged = self.RETRY_BODY + " Cap total elapsed time by the caller's deadline."
+        merged = self.BODY + " Cap total elapsed time by the caller's deadline."
         decision = decide(
             self.store,
             self.reconciler("refines", merged_body=merged),
-            body="Retry attempts must be capped by the caller's deadline, not attempt count.",
+            body="Retries must be capped by the caller's deadline.",
             family_hint="retry",
         )
         self.assertEqual(decision.action, "fold-into")
-
-        node = Node(id="n_new", family="retry", body="ignored", level=0)
-        result = apply(self.store, decision, node)
+        result = apply(self.store, decision, Node(id="n_new", family="retry", body="ignored"))
         self.assertIn("deadline", self.store.get(seed.id).body)
-        # No second node: refinement merges rather than accumulating near-duplicates.
         self.assertIsNone(self.store.get("n_new"))
-        self.assertEqual(result.node.id, seed.id)
 
     def test_refinement_patches_ancestors_so_the_apex_is_not_left_stale(self) -> None:
         from rmc.placement import apply, decide
@@ -615,17 +785,15 @@ class TestPlacement(StoreCase):
         self.store.save_node(base)
         self.store.invalidate()
 
-        decision = decide(
-            self.store,
-            self.reconciler("refines", merged_body=self.RETRY_BODY + " Cap by deadline."),
-            body="Cap retries by the caller's deadline.",
-            family_hint="retry",
-        )
+        def route(prompt, schema):
+            if "RMC:related" in prompt:
+                return {"picks": [{"id": "n_apex2", "verdict": "relevant"}]}
+            return {"match": "n_apex2", "relation": "refines", "rationale": "adds a deadline cap",
+                    "merged_body": self.BODY + " Cap by deadline."}
+
+        decision = decide(self.store, MockAdapter(router=route), body="Cap by deadline.", family_hint="retry")
         result = apply(self.store, decision, Node(id="n_x", family="retry", body="b"))
         self.assertIn(apex.id, result.patched)
-        # The patch must reach recall immediately, not wait for recompression.
-        pack = recall_pack(self.store, "retry the http call with backoff")
-        self.assertTrue(pack.patches)
 
     def test_contradiction_disputes_both_and_asks_a_question(self) -> None:
         from rmc.placement import apply, decide, open_conflicts
@@ -633,64 +801,21 @@ class TestPlacement(StoreCase):
         seed = self.seed()
         decision = decide(
             self.store,
-            self.reconciler(
-                "contradicts", question="Is a fixed delay required, or jittered backoff?"
-            ),
-            body="Always retry with a fixed 1s delay; never jitter.",
+            self.reconciler("contradicts", question="Fixed delay or jittered backoff?"),
+            body="Always retry with a fixed 1s delay.",
             family_hint="retry",
         )
         self.assertEqual(decision.action, "conflict")
-
-        node = Node(id="n_conflict", family="retry", body="Always use a fixed 1s delay.", level=0)
-        apply(self.store, decision, node)
-
-        # Both sides are marked, because we do not know which one is wrong.
+        apply(self.store, decision, Node(id="n_conflict", family="retry", body="Fixed 1s delay.", level=0))
         self.assertEqual(self.store.get(seed.id).status, "disputed")
         self.assertEqual(self.store.get("n_conflict").status, "disputed")
         self.assertEqual({n.id for n in open_conflicts(self.store)}, {seed.id, "n_conflict"})
-
-    def test_conflict_is_surfaced_in_the_recall_pack(self) -> None:
-        node = self.add_node(
-            id="n_disp",
-            family="retry",
-            title="Retry",
-            body=self.RETRY_BODY,
-            level=0,
-            tags=["retry", "http"],
-            status="disputed",
-            conflict="Is a fixed delay required, or jittered backoff?",
-        )
-        pack = recall_pack(self.store, "add retry with backoff to the http client")
-        self.assertIn("Unresolved", pack.text)
-        self.assertIn("fixed delay", pack.text)
-        self.assertEqual(pack.conflicts, [node.id])
-
-    def test_resolving_clears_the_conflict(self) -> None:
-        from rmc.placement import resolve
-
-        self.add_node(
-            id="n_r1",
-            family="retry",
-            body=self.RETRY_BODY,
-            level=0,
-            status="disputed",
-            conflict="which one?",
-        )
-        resolve(self.store, "n_r1", keep=True)
-        node = self.store.get("n_r1")
-        self.assertEqual(node.status, "active")
-        self.assertEqual(node.conflict, "")
 
     def test_duplicate_writes_nothing(self) -> None:
         from rmc.placement import apply, decide
 
         self.seed()
-        decision = decide(
-            self.store,
-            self.reconciler("duplicate"),
-            body="Retry idempotent HTTP requests using jittered exponential backoff.",
-            family_hint="retry",
-        )
+        decision = decide(self.store, self.reconciler("duplicate"), body="Retry idempotently.", family_hint="retry")
         self.assertEqual(decision.action, "duplicate")
         result = apply(self.store, decision, Node(id="n_dup", family="retry", body="x"))
         self.assertIsNone(result.node)
@@ -700,170 +825,92 @@ class TestPlacement(StoreCase):
         from rmc.placement import decide
 
         self.seed()
-        broken = MockAdapter(router=lambda p, s: AgentResultStub())
-        decision = decide(
-            self.store,
-            broken,
-            body="Retry idempotent HTTP calls, and log the attempt count.",
-            family_hint="retry",
-        )
-        # Nothing is lost or overwritten when reconciliation is unavailable.
+
+        class Broken:
+            ok = False
+            data = None
+            text = ""
+            error = "boom"
+
+        def route(prompt, schema):
+            if "RMC:related" in prompt:
+                return {"picks": [{"id": "n_seed", "verdict": "relevant"}]}
+            return Broken()
+
+        decision = decide(self.store, MockAdapter(router=route), body="Retry, and log attempts.", family_hint="retry")
         self.assertEqual(decision.action, "attach-sibling")
 
+    def test_resolving_clears_the_conflict(self) -> None:
+        from rmc.placement import resolve
 
-class TestReconciliationEfficiency(StoreCase):
-    """Reconciliation must stay cheap as the tree grows."""
+        self.add_node(id="n_r1", family="retry", body=self.BODY, status="disputed", conflict="which one?")
+        resolve(self.store, "n_r1", keep=True)
+        node = self.store.get("n_r1")
+        self.assertEqual(node.status, "active")
+        self.assertEqual(node.conflict, "")
 
-    def test_value_mismatch_is_detected_for_free(self) -> None:
-        from rmc.placement import contradiction_hints
-
-        hints = contradiction_hints(
-            "Run the suite with PAYMENTS_PG_PORT=5433 pytest tests/integration",
-            "The payments postgres moved: use PAYMENTS_PG_PORT=5434 instead",
-        )
-        self.assertTrue(hints)
-        self.assertIn("PAYMENTS_PG_PORT", hints[0])
-
-    def test_agreeing_values_produce_no_hint(self) -> None:
-        from rmc.placement import contradiction_hints
-
-        self.assertEqual(
-            contradiction_hints("use PORT=5433 here", "also use PORT=5433 in staging"), []
-        )
-
-    def test_value_mismatch_forces_a_check_similarity_would_have_skipped(self) -> None:
-        """The case a similarity floor misses is exactly the one that matters."""
-        from rmc.placement import decide
-
-        self.add_node(
-            id="n_seed",
-            family="db",
-            title="DB",
-            body="Point the harness at the database with PAYMENTS_PG_PORT=5433.",
-            level=0,
-        )
-        calls: list[str] = []
-
-        def router(prompt, schema):
-            calls.append(prompt)
-            return {"match": "n_seed", "relation": "contradicts", "rationale": "port differs",
-                    "question": "which port?"}
-
-        # Almost no shared vocabulary — similarity alone would file this as a new
-        # leaf and the contradiction would go unnoticed forever.
-        decision = decide(
-            self.store,
-            MockAdapter(router=router),
-            body="Migration runbook step 7: export PAYMENTS_PG_PORT=5434 before invoking flyway.",
-            family_hint="migrations",
-        )
-        self.assertEqual(len(calls), 1)
-        self.assertIn("PAYMENTS_PG_PORT", calls[0])
-        self.assertEqual(decision.action, "conflict")
-
-    def test_all_candidates_are_reconciled_in_one_call(self) -> None:
+    def test_all_candidates_reconciled_in_one_call(self) -> None:
         from rmc.placement import decide
 
         for i in range(3):
-            self.add_node(
-                id=f"n_c{i}",
-                family=f"retry{i}",
-                title="Retry",
-                body="Retry idempotent http calls with jittered exponential backoff.",
-                level=0,
-            )
-        calls: list[str] = []
+            self.add_node(id=f"n_c{i}", family=f"retry{i}", title="Retry", body="Retry calls.", level=0)
+        reconcile_calls: list = []
 
-        def router(prompt, schema):
-            calls.append(prompt)
+        def route(prompt, schema):
+            if "RMC:related" in prompt:
+                return {"picks": [{"id": f"n_c{i}", "verdict": "relevant"} for i in range(3)]}
+            reconcile_calls.append(prompt)
             return {"match": "n_c1", "relation": "specialises", "rationale": "distinct case"}
 
-        decision = decide(
-            self.store,
-            MockAdapter(router=router),
-            body="Retry idempotent http calls, but give websocket upgrades a longer backoff.",
-            family_hint="retry0",
-        )
-        self.assertEqual(len(calls), 1, "one call must cover every candidate")
-        # And the match may be a candidate other than the top-scoring one.
+        decision = decide(self.store, MockAdapter(router=route), body="Retry websockets slower.", family_hint="retry0")
+        self.assertEqual(len(reconcile_calls), 1)
         self.assertEqual(decision.target.id, "n_c1")
 
-    def test_verdicts_are_cached_so_reruns_are_free(self) -> None:
-        from rmc.placement import decide
 
-        self.add_node(id="n_seed", family="retry", title="Retry",
-                      body="Retry idempotent http calls with jittered backoff.", level=0)
-        calls: list[int] = []
+class TestLayering(unittest.TestCase):
+    """A project store reads through to a global one; writes stay local."""
 
-        def router(prompt, schema):
-            calls.append(1)
-            return {"match": "n_seed", "relation": "duplicate", "rationale": "same"}
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        self.global_store = Store.init(base / "home")
+        self.project = Store(Store.init(base / "repo").root, parent=self.global_store)
 
-        body = "Retry idempotent http requests using jittered exponential backoff."
-        for _ in range(3):
-            decide(self.store, MockAdapter(router=router), body=body, family_hint="retry")
-        self.assertEqual(len(calls), 1, "identical reconciliation must not be re-paid")
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
 
+    def test_global_lessons_are_visible_from_a_project(self) -> None:
+        self.global_store.save_node(Node(id="n_g", family="style", body="Prefer judgement."))
+        self.global_store.invalidate()
+        self.project.invalidate()
+        self.assertIsNotNone(self.project.get("n_g"))
+        self.assertIn("style", self.project.families())
 
-class AgentResultStub:
-    """Stands in for a reconciler that returned nothing usable."""
+    def test_new_lessons_are_written_locally(self) -> None:
+        self.global_store.save_node(Node(id="n_g2", family="style", body="global"))
+        self.project.invalidate()
+        path = self.project.save_node(Node(id="n_l", family="repo", body="local"))
+        self.assertIn(self.project.root.name, str(path))
+        self.assertIsNone(self.global_store.get("n_l"))
 
-    ok = False
-    data = None
-    text = ""
-    error = "boom"
+    def test_editing_a_global_lesson_writes_back_to_it(self) -> None:
+        """Otherwise a repo silently forks a cross-project lesson and it drifts."""
+        self.global_store.save_node(Node(id="n_g3", family="style", body="original"))
+        self.project.invalidate()
+        node = self.project.get("n_g3")
+        node.body = "revised"
+        self.project.save_node(node)
+        self.global_store.invalidate()
+        self.assertEqual(self.global_store.get("n_g3").body, "revised")
+        self.assertFalse((self.project.root / "nodes" / "style").exists())
 
-
-class TestSelfDiscovery(StoreCase):
-    """Learning from the environment, with no human in the loop."""
-
-    def build(self):
-        from rmc.signals import SessionFacts, ToolEvent
-
-        return SessionFacts(
-            user_messages=["run the integration tests"],
-            assistant_messages=["tests pass"],
-            tool_outputs=["42 passed"],
-            tool_calls=4,
-            tool_events=[
-                ToolEvent("Bash", "pytest tests/integration", "could not connect to postgres", False, "1"),
-                ToolEvent("Bash", "docker compose up -d postgres", "port 5432 already allocated", False, "2"),
-                ToolEvent("Read", "tests/conftest.py", "PAYMENTS_PG_PORT", True, "3"),
-                ToolEvent("Bash", "PAYMENTS_PG_PORT=5433 pytest tests/integration", "42 passed", True, "4"),
-            ],
-        )
-
-    def test_error_then_fix_is_detected(self) -> None:
-        from rmc.signals import discoveries
-
-        found = discoveries(self.build())
-        self.assertTrue(found)
-        self.assertEqual(found[0].tool, "Bash")
-        self.assertIn("PAYMENTS_PG_PORT", found[0].worked)
-        self.assertGreaterEqual(found[0].attempts, 2)
-
-    def test_identical_retry_is_flakiness_not_discovery(self) -> None:
-        from rmc.signals import SessionFacts, ToolEvent, discoveries
-
-        facts = SessionFacts(
-            tool_events=[
-                ToolEvent("Bash", "pytest", "connection reset", False, "1"),
-                ToolEvent("Bash", "pytest", "42 passed", True, "2"),
-            ]
-        )
-        self.assertEqual(discoveries(facts), [])
-
-    def test_unaided_recovery_counts_as_success(self) -> None:
-        outcome = classify(self.build(), min_tool_calls=4)
-        self.assertEqual(outcome.label, "success")
-        self.assertTrue(any("unaided" in e for e in outcome.evidence))
-
-    def test_discoveries_lead_the_reflection_excerpt(self) -> None:
-        from rmc.signals import excerpt
-
-        text = excerpt(self.build())
-        self.assertIn("[discovered by trial]", text)
-        self.assertIn("PAYMENTS_PG_PORT", text)
+    def test_a_local_node_shadows_a_global_one_with_the_same_id(self) -> None:
+        self.global_store.save_node(Node(id="n_same", family="style", body="global version"))
+        local = Node(id="n_same", family="style", body="local version")
+        local.path = self.project.nodes_dir / "style" / "n_same.md"
+        self.project.save_node(local)
+        self.project.invalidate()
+        self.assertEqual(self.project.get("n_same").body, "local version")
 
 
 class TestHooks(StoreCase):

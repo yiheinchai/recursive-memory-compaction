@@ -104,13 +104,62 @@ class MockAdapter:
     # ------------------------------------------------------------- behaviours
     def _builtin(self, prompt: str, schema: dict | None) -> Any:
         kind = _classify(prompt)
-        if kind == "compress":
-            return self._compress(prompt)
-        if kind == "diagnose":
-            return self._diagnose(prompt)
-        if kind == "judge":
-            return self._judge(prompt)
-        return self._solve(prompt)
+        handler = {
+            "compress": self._compress,
+            "diagnose": self._diagnose,
+            "judge": self._judge,
+            "relevance": self._relevance,
+            "related": self._relevance,
+            "repair": self._repair,
+            "assess": self._assess,
+        }.get(kind)
+        return handler(prompt) if handler else self._solve(prompt)
+
+    # -------------------------------------------------- judgement stand-ins
+    #
+    # These simulate a model's opinion using the @fact world. They are crude on
+    # purpose: their job is to make the *control flow* deterministic, not to be
+    # good judges. Tests that care about a specific verdict pass a `router`.
+
+    def _relevance(self, prompt: str) -> dict[str, Any]:
+        """Relevant iff the candidate shares a @fact with the question."""
+        question = _section(prompt, "WORK") or _section(prompt, "NEW LESSON")
+        wanted = self.facts(question)
+        picks = []
+        for ident, text in _candidates(prompt):
+            shared = bool(self.facts(text) & wanted)
+            picks.append(
+                {
+                    "id": ident,
+                    "verdict": "relevant" if shared else "unrelated",
+                    "descend": False,
+                    "why": "shares a fact" if shared else "no shared fact",
+                }
+            )
+        return {"picks": picks}
+
+    def _repair(self, prompt: str) -> dict[str, Any]:
+        """Useful iff the option supplies a @fact the failure says is missing."""
+        missing = self.facts(_section(prompt, "FAILURE"))
+        ranked = []
+        for key, text in _keyed_options(prompt):
+            supplies = self.facts(text) & missing
+            ranked.append({"key": key, "usefulness": 1.0 if supplies else 0.0})
+        return {"ranked": ranked}
+
+    def _assess(self, prompt: str) -> dict[str, Any]:
+        digest = _section(prompt, "SESSION")
+        corrected = "[the human then said]" in digest
+        failed = digest.count("FAILED")
+        return {
+            "outcome": "success",
+            "confidence": 0.9,
+            "corrected": corrected,
+            "correction": _after(digest, "[the human then said]"),
+            "evidence": [f"{failed} failed tool calls"],
+            "discoveries": [] if not failed else [{"what_failed": "x", "what_worked": "y"}],
+            "summary": "mock summary",
+        }
 
     def _compress(self, prompt: str) -> dict[str, Any]:
         """Drop the last fact-bearing *block*, and honestly declare it as a delta.
@@ -157,7 +206,10 @@ class MockAdapter:
         # Prefer explicit @fact tokens, but fall back to the raw complaint text
         # so that a verifier which reports in prose still yields something the
         # selector can match lexically — exactly as a real diagnoser would.
-        missing = sorted(self.facts(complaint)) or [complaint.strip()]
+        # Keep the @ prefix: the failure text is what `_repair` later matches
+        # against, and stripping it there makes the two halves of the simulation
+        # unable to talk to each other.
+        missing = [f"@{f}" for f in sorted(self.facts(complaint))] or [complaint.strip()]
         return {
             "category": self.diagnosis_kind,
             "missing": [m for m in missing if m] or ["unspecified detail"],
@@ -196,13 +248,37 @@ class MockAdapter:
 
 def _classify(prompt: str) -> str:
     head = (prompt or "")[:4000].lower()
-    if "rmc:compress" in head:
-        return "compress"
-    if "rmc:diagnose" in head:
-        return "diagnose"
-    if "rmc:judge" in head:
-        return "judge"
+    for kind in ("compress", "diagnose", "judge", "relevance", "related", "repair", "assess"):
+        if f"rmc:{kind}" in head:
+            return kind
     return "solve"
+
+
+def _candidates(prompt: str) -> list[tuple[str, str]]:
+    """Parse the `[id: n_x] ...` blocks a relevance/related prompt renders."""
+    body = _section(prompt, "LESSONS") or _section(prompt, "REMEMBERED")
+    out: list[tuple[str, str]] = []
+    for chunk in re.split(r"\n\s*\n(?=\[id: )", body):
+        match = re.match(r"\[id: ([^\]]+)\]", chunk.strip())
+        if match:
+            out.append((match.group(1).strip(), chunk))
+    return out
+
+
+def _keyed_options(prompt: str) -> list[tuple[str, str]]:
+    """Parse the `[key: ...]` blocks a repair prompt renders."""
+    body = _section(prompt, "REMOVED DETAILS")
+    out: list[tuple[str, str]] = []
+    for chunk in re.split(r"\n\s*\n(?=\[key: )", body):
+        match = re.match(r"\[key: ([^\]]+)\]", chunk.strip())
+        if match:
+            out.append((match.group(1).strip(), chunk))
+    return out
+
+
+def _after(text: str, marker: str, limit: int = 400) -> str:
+    idx = text.find(marker)
+    return text[idx + len(marker) : idx + len(marker) + limit].strip() if idx >= 0 else ""
 
 
 def _section(prompt: str, name: str) -> str:

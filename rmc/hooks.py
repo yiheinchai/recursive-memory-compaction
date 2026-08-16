@@ -12,7 +12,10 @@ Three rules govern everything here:
    the expensive work is detached into a background process.
 2. **Never recurse.** The background work spawns `claude`/`codex`, which would
    fire these same hooks. `RMC_CHILD=1` in the child environment stops that.
-3. **Never call a model on the hot path.** Injection is pure lexical matching.
+3. **Judgement is the model's.** Relevance is decided by a model call, cached
+   by prompt, because injecting the wrong lesson is worse than injecting none
+   and only a reader can tell the difference. Set `recall.enabled: false` if you
+   would rather not pay for that on every prompt.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .adapters import get_adapter
 from .recall import recall_pack
 from .signals import parse_transcript
 from .store import Store
@@ -80,7 +84,12 @@ def on_user_prompt_submit(payload: dict[str, Any]) -> int:
     if store is None or not store.config.get("recall.enabled", True):
         return 0
 
-    pack = recall_pack(store, prompt)
+    adapter = get_adapter(
+        str(store.config.get("agent", "claude")), model=store.config.get("model")
+    )
+    if not adapter.available():
+        return 0
+    pack = recall_pack(store, prompt, adapter)
     if not pack:
         return 0
 
@@ -141,10 +150,14 @@ def on_session_end(payload: dict[str, Any]) -> int:
 
     from .reflect import observe
 
+    adapter = get_adapter(
+        str(store.config.get("agent", "claude")), model=store.config.get("model")
+    )
     try:
         result = observe(
             store,
             facts,
+            adapter=adapter if adapter.available() else None,
             session_id=session_id,
             served=served,
             family_hint=(state.get("families") or [""])[0],

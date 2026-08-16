@@ -228,11 +228,11 @@ Lessons come from two places, and the second is the more common one:
      long chain of exploration converged on an answer. Nobody had to intervene —
      the codebase, the test suite or the infrastructure taught it.
 
-Lines marked `[discovered by trial]` are the second kind, already paired as
-failed-attempt → what-worked. They are the highest-value material here: the
-whole point is that the next agent reaches the answer directly instead of
-repeating the detour. When you capture one, write down what to do AND the trap
-that made the detour necessary, or the next agent will simply fall into it again.
+The `WORKED OUT BY TRIAL` section below is the second kind, already paired as
+failed-attempt → what-worked. It is the highest-value material here: the whole
+point is that the next agent reaches the answer directly instead of repeating
+the detour. When you capture one, write down what to do AND the trap that made
+the detour necessary, or the next agent will simply fall into it again.
 
 Capture ONLY if all of these hold:
   (a) it is a reusable fact or method, not a narrative of what happened;
@@ -257,6 +257,14 @@ Existing families (reuse one if it fits):
 <<<FAMILIES
 {families}
 FAMILIES>>>
+
+<<<WHAT THE HUMAN CORRECTED
+{correction}
+WHAT THE HUMAN CORRECTED>>>
+
+<<<WORKED OUT BY TRIAL
+{discovered}
+WORKED OUT BY TRIAL>>>
 
 <<<SESSION
 {excerpt}

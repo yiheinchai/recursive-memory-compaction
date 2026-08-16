@@ -18,18 +18,20 @@ DEFAULTS: dict[str, Any] = {
         "enabled": True,
         "strategy": "delta-patch",  # delta-patch | delta-jump | stepwise
         "max_pack_tokens": 1200,
-        "max_families": 3,  # how many lesson families to inject per prompt
-        "min_match": 0.12,  # family must clear this similarity to be served
+        "max_families": 3,  # how many lessons to inject per prompt
+        "judge_calls": 2,  # model calls the relevance walk may spend
+        "max_depth": 2,  # how far down the tree the walk may look
         "max_expansions": 3,
     },
     "selection": {
-        "w_delta": 0.45,
-        "w_affinity": 0.25,
-        "w_prior": 0.20,
-        "w_cost": 0.10,
+        # The model decides which dropped detail explains a failure; the other
+        # two terms are evidence (observed rescue rate) and measurement (tokens),
+        # not proxies for judgement.
+        "w_judge": 0.60,
+        "w_prior": 0.28,
+        "w_cost": 0.12,
         "explore": "posterior",  # posterior | ucb
         "ucb_c": 0.7,
-        "judge": False,  # use an agent call to score delta relevance
     },
     "compaction": {
         "enabled": True,
@@ -52,11 +54,9 @@ DEFAULTS: dict[str, Any] = {
         "capture_failures": True,
     },
     "placement": {
-        # Below this lexical similarity a new lesson is a brand-new leaf and no
-        # reconciliation call is made at all.
-        "min_similarity": 0.15,
         "consult": True,  # ask a model how new knowledge relates to old
-        "candidates": 3,  # existing lessons compared in ONE reconciliation call
+        "judge_calls": 2,  # levels of tree walk when looking for related lessons
+        "max_depth": 2,
         "surface_conflicts": True,  # raise unresolved contradictions at recall
     },
     "signals": {

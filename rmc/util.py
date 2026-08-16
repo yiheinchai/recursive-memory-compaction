@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
 import secrets
 from datetime import datetime, timezone
 
@@ -66,57 +65,6 @@ def count_tokens(text: str) -> int:
         except Exception:
             pass
     return max(1, round(len(text) / 4))
-
-
-# --------------------------------------------------------------------------- #
-# text signatures (used for task affinity and family matching)
-# --------------------------------------------------------------------------- #
-
-_WORD_RE = re.compile(r"[a-z0-9_][a-z0-9_+.#-]{2,}")
-
-_STOPWORDS = frozenset(
-    """
-    the and for that this with you your are was were will would can could should
-    have has had not but from they them their there then than when what which who
-    how why into out about over under just like get got make made use used using
-    now new all any some more most other another same each every been being does
-    did doing done here also because while after before during between very much
-    such only own too its it's i'm don't didn't we're let lets please thanks thank
-    okay yeah sure need needs needed want wants wanted try tried trying run runs
-    file files code line lines add adds added fix fixes fixed change changes
-    """.split()
-)
-
-
-def signature(text: str, limit: int = 40) -> set[str]:
-    """Bag of salient lowercase terms, used for cheap lexical similarity."""
-    words = _WORD_RE.findall((text or "").lower())
-    seen: dict[str, int] = {}
-    for w in words:
-        if w in _STOPWORDS or w.isdigit():
-            continue
-        seen[w] = seen.get(w, 0) + 1
-    ranked = sorted(seen.items(), key=lambda kv: (-kv[1], kv[0]))
-    return {w for w, _ in ranked[:limit]}
-
-
-def jaccard(a: set[str], b: set[str]) -> float:
-    if not a or not b:
-        return 0.0
-    inter = len(a & b)
-    if not inter:
-        return 0.0
-    return inter / len(a | b)
-
-
-def overlap_coeff(a: set[str], b: set[str]) -> float:
-    """Overlap coefficient — kinder than Jaccard when one side is much smaller.
-
-    A three-word failure diagnosis should be able to match a long delta claim.
-    """
-    if not a or not b:
-        return 0.0
-    return len(a & b) / min(len(a), len(b))
 
 
 def truncate(text: str, limit: int) -> str:

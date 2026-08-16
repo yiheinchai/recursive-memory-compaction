@@ -1,23 +1,23 @@
-"""Reading outcomes out of a real session.
+"""Reading a transcript into facts. Nothing here decides what those facts mean.
 
-In a scripted harness you write an oracle by hand. Running ambiently inside
-someone's repo you do not get that, so the outcome has to be inferred from what
-the human did next.
+This module used to classify sessions with regex phrase banks and hand-tuned
+weights — `-0.65` if the user said something matching a "correction" pattern,
+`+0.6` for an "approval" pattern. That approach cannot work: whether "actually,
+let's use the other one" is a correction or a change of mind is a reading of
+intent, and a pattern list only matches the surface forms someone thought of in
+advance. Worse, it looks like a judgement while being a lookup table.
 
-The signals, strongest first:
+So the split is now strict:
 
-* the user explicitly corrected the agent            -> failure   (high conf)
-* the user denied a tool call                        -> failure   (medium)
-* a test command exited non-zero and was never fixed -> failure   (medium)
-* the user said some version of "yes, that"          -> success   (high)
-* tests passed / a commit landed after the work      -> success   (medium)
-* the session just ended with real work done         -> success   (low)
+* **here** — parsing. Turn a transcript into structured facts: who said what,
+  which tool ran with which input, what came back, what the host itself marked
+  as a refusal or a meta turn. All of this is reading a file format.
+* **`judge.assess`** — meaning. Did it go well, was the agent corrected, what
+  did it work out by trial.
 
-None of these is trustworthy alone, which is why they are combined into a
-confidence and why anything below `signals.min_confidence` is recorded as
-`unknown` and excluded from both stats and the replay corpus. The corpus is the
-thing that must stay clean: it is what every future compression is judged
-against.
+The one thing this module still decides is *whether a session is worth judging
+at all* (`worth_assessing`), which is a structural question about size, not a
+semantic one.
 """
 
 from __future__ import annotations
@@ -28,61 +28,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-# --------------------------------------------------------------------------- #
-# phrase banks
-# --------------------------------------------------------------------------- #
-
-_CORRECTION = re.compile(
-    r"(?i)\b("
-    r"no,?\s+(?:don'?t|do not|that'?s|you|i|it|use|stop)"
-    r"|that'?s (?:wrong|not right|not what|incorrect)"
-    r"|not what i (?:asked|wanted|said|meant)"
-    r"|i (?:said|told you|asked for|meant)\b"
-    r"|you (?:were|are) (?:wrong|supposed to)"
-    r"|revert|undo (?:that|this)|roll ?back"
-    r"|stop (?:doing|using)"
-    r"|why did you|don'?t do that"
-    r"|actually,? (?:no|it|we|you|i)"
-    r"|wrong (?:approach|file|answer|assumption)"
-    r"|doesn'?t work|didn'?t work|still (?:broken|failing|fails)"
-    r"|try again"
-    r")\b"
-)
-
-_APPROVAL = re.compile(
-    r"(?i)\b("
-    r"perfect|exactly|lgtm|looks good|ship it|that'?s (?:it|right|correct)"
-    r"|nice work|great work|works now|that works|thanks[,! ]*(?:that|it)?"
-    r"|yes,? (?:that|exactly|please)"
-    r")\b"
-)
-
-_TEST_PASS = re.compile(
-    r"(?i)("
-    r"\b\d+ passed|\ball tests? passed|\btests? pass\b|\bbuild succeeded|✓ \d+"
-    r"|\b0 failed|\bno errors found|\bcompiled successfully"
-    # unittest prints a bare "OK" on its own line after "Ran N tests"
-    r"|^OK$|^OK \(|\bRan \d+ tests? in [\d.]+s\s*\n+OK"
-    r")",
-    re.MULTILINE,
-)
-
-_TEST_FAIL = re.compile(
-    r"(?i)\b("
-    r"\d+ failed|test failures?|assertionerror|traceback \(most recent"
-    r"|build failed|compilation (?:error|failed)|error TS\d+|panicked at"
-    r")\b"
-)
-
-_DENIED = re.compile(
-    r"(?i)(user (?:denied|rejected|doesn'?t want)|tool use was rejected"
-    r"|permission denied by user|request interrupted by user)"
-)
-
 # Hosts inject synthetic turns that wear the user role but were never typed by a
-# human: slash-command envelopes, harness reminders, command stdout. Scoring
-# them as intent is how a `/goal` payload gets read as the user approving the
-# work. Strip them before anything looks for corrections or approvals.
+# human: slash-command envelopes, harness reminders, command stdout. These are
+# matched by tag name, not by meaning — this is format parsing, not classification.
 _SYNTHETIC_BLOCK = re.compile(
     r"<(command-name|command-message|command-args|local-command-stdout|"
     r"system-reminder|cross-session-message|task-notification)>.*?"
@@ -109,9 +57,10 @@ def strip_synthetic(text: str) -> str:
 class ToolEvent:
     """One tool call and what came back.
 
-    Kept in order and paired by id so that error-then-fix sequences can be
-    recovered. That pairing is what lets RMC learn from the environment instead
-    of only from the human.
+    Kept in order and paired by id. ``ok`` is set only from what the host
+    actually reported — an `is_error` flag or a non-zero exit code. When the host
+    says nothing, ``ok`` stays ``None`` rather than being guessed from the text,
+    and the model decides from the transcript instead.
     """
 
     name: str = ""
@@ -120,39 +69,15 @@ class ToolEvent:
     ok: bool | None = None
     uid: str = ""
 
-    @property
-    def sig(self) -> set[str]:
-        from .util import signature
-
-        return signature(f"{self.name} {self.detail}")
-
-
-@dataclass
-class Discovery:
-    """Something the agent worked out by trial, with no human involvement.
-
-    A failed attempt followed by a succeeding one on the same tool is the
-    environment teaching the agent. This is the raw material for a lesson that
-    lets a future agent skip the whole detour.
-    """
-
-    tool: str
-    failed: str
-    error: str
-    worked: str
-    attempts: int = 2
-
-    def render(self) -> str:
-        return (
-            f"[{self.tool}] tried `{self.failed[:160]}` -> failed: {self.error[:200]}\n"
-            f"    then `{self.worked[:160]}` -> worked "
-            f"(after {self.attempts} attempts)"
-        )
+    def render(self, *, limit: int = 400) -> str:
+        mark = {True: "ok", False: "FAILED", None: "?"}[self.ok]
+        out = " ".join((self.output or "").split())[:limit]
+        return f"  [{self.name} {mark}] {self.detail[:200]}\n      -> {out}"
 
 
 @dataclass
 class SessionFacts:
-    """Flattened, backend-agnostic view of a transcript."""
+    """Flattened, backend-agnostic view of a transcript. Facts only."""
 
     user_messages: list[str] = field(default_factory=list)
     assistant_messages: list[str] = field(default_factory=list)
@@ -161,26 +86,15 @@ class SessionFacts:
     tool_calls: int = 0
     first_prompt: str = ""
     last_assistant: str = ""
-    denied: bool = False
+    denied: bool = False  # the host reported a refused or interrupted tool call
 
     @property
     def follow_ups(self) -> list[str]:
-        """User turns after the first — where corrections live."""
         return self.user_messages[1:]
 
     @property
     def failures(self) -> list[ToolEvent]:
         return [e for e in self.tool_events if e.ok is False]
-
-
-@dataclass
-class Outcome:
-    label: str = "unknown"  # success | failure | unknown
-    confidence: float = 0.0
-    evidence: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"label": self.label, "confidence": self.confidence, "evidence": self.evidence}
 
 
 # --------------------------------------------------------------------------- #
@@ -205,6 +119,20 @@ def _text_of(content: Any) -> str:
     return ""
 
 
+def _input_digest(payload: Any, limit: int = 220) -> str:
+    """A short, human-readable stand-in for a tool's input."""
+    if not isinstance(payload, dict):
+        return str(payload or "")[:limit]
+    for key in ("command", "file_path", "path", "pattern", "query", "url", "prompt"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return " ".join(value.split())[:limit]
+    try:
+        return json.dumps(payload)[:limit]
+    except Exception:
+        return str(payload)[:limit]
+
+
 def parse_transcript(path: Path | str, *, max_lines: int = 20000) -> SessionFacts:
     """Read a JSONL transcript. Tolerant by design: unknown shapes are skipped.
 
@@ -215,7 +143,6 @@ def parse_transcript(path: Path | str, *, max_lines: int = 20000) -> SessionFact
     path = Path(path)
     if not path.exists():
         return facts
-
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except Exception:
@@ -247,10 +174,8 @@ def _absorb(row: dict[str, Any], facts: SessionFacts) -> None:
     if role == "user":
         text = _text_of(content)
 
-        # Prefer the host's own metadata over guessing from the text. Claude
-        # Code marks harness-injected turns with `isMeta`, tool results with
-        # `toolUseResult`, and refusals with `toolDenialKind`. Without this, a
-        # slash-command payload gets scored as the user approving the work.
+        # The host's own metadata, not guesswork: Claude Code marks harness turns
+        # `isMeta`, tool results `toolUseResult`, and refusals `toolDenialKind`.
         if row.get("toolDenialKind") or row.get("interruptedMessageId"):
             facts.denied = True
             return
@@ -260,22 +185,16 @@ def _absorb(row: dict[str, Any], facts: SessionFacts) -> None:
             facts.tool_outputs.append(text)
             _attach_result(facts, content, text, row.get("toolUseResult"))
             return
-
-        # Tool results also arrive wearing the user role on hosts that do not
-        # set `toolUseResult`; keep them out of the human-intent channel or
-        # every tool output reads as a correction.
         if isinstance(content, list) and any(
             isinstance(b, dict) and b.get("type") == "tool_result" for b in content
         ):
             facts.tool_outputs.append(text)
-            if _DENIED.search(text):
-                facts.denied = True
+            _attach_result(facts, content, text, None)
             return
-        if _DENIED.search(text):
-            facts.denied = True
+
         human = strip_synthetic(text)
-        # Some hosts re-inject a standing instruction on every turn. Counting it
-        # once per turn would let a single phrase dominate the whole score.
+        # Some hosts re-inject a standing instruction on every turn; counting it
+        # repeatedly would let one phrase dominate the record shown to the model.
         if human and human not in facts.user_messages:
             facts.user_messages.append(human)
         return
@@ -301,31 +220,10 @@ def _absorb(row: dict[str, Any], facts: SessionFacts) -> None:
         text = _text_of(content) or _text_of(row.get("output"))
         if text:
             facts.tool_outputs.append(text)
-        if _DENIED.search(text):
-            facts.denied = True
-
-
-# --------------------------------------------------------------------------- #
-# scoring
-# --------------------------------------------------------------------------- #
-
-
-def _input_digest(payload: Any, limit: int = 220) -> str:
-    """A short, human-readable stand-in for a tool's input."""
-    if not isinstance(payload, dict):
-        return str(payload or "")[:limit]
-    for key in ("command", "file_path", "path", "pattern", "query", "url", "prompt"):
-        value = payload.get(key)
-        if isinstance(value, str) and value.strip():
-            return " ".join(value.split())[:limit]
-    try:
-        return json.dumps(payload)[:limit]
-    except Exception:
-        return str(payload)[:limit]
 
 
 def _attach_result(facts: SessionFacts, content: Any, text: str, raw: Any) -> None:
-    """Pair a tool result back to its call, and decide whether it failed."""
+    """Pair a tool result back to its call, and record what the host said about it."""
     uid = ""
     if isinstance(content, list):
         for block in content:
@@ -341,142 +239,72 @@ def _attach_result(facts: SessionFacts, content: Any, text: str, raw: Any) -> No
         return
 
     event.output = text[:2000]
-    is_error = False
+    # Only the host's own error signal counts. Left as None when absent — an
+    # unknown is honest, and the model reads the output anyway.
     if isinstance(raw, dict):
         if raw.get("is_error") or raw.get("isError"):
-            is_error = True
+            event.ok = False
+            return
         code = raw.get("exit_code", raw.get("exitCode"))
-        if isinstance(code, int) and code != 0:
-            is_error = True
+        if isinstance(code, int):
+            event.ok = code == 0
+            return
     if isinstance(content, list):
         for block in content:
-            if isinstance(block, dict) and block.get("is_error"):
-                is_error = True
-    event.ok = not (is_error or bool(_ERROR_HINT.search(text[:1500])))
+            if isinstance(block, dict) and "is_error" in block:
+                event.ok = not block["is_error"]
+                return
 
 
-def discoveries(facts: SessionFacts, *, max_out: int = 4) -> list[Discovery]:
-    """Error-then-fix sequences: what the agent learned from the environment.
+# --------------------------------------------------------------------------- #
+# structural gate and digest
+# --------------------------------------------------------------------------- #
 
-    No human involvement required. A tool that failed and then, later in the
-    session, succeeded is the codebase, the test suite or the infrastructure
-    teaching the agent something — and it is exactly the kind of knowledge that
-    should not have to be rediscovered by a long reasoning trace next time.
+
+def worth_assessing(facts: SessionFacts, *, min_tool_calls: int = 8) -> bool:
+    """Is there enough here to be worth a judgement?
+
+    Structural, not semantic: a session with two tool calls and no follow-up has
+    nothing to teach regardless of what it says, and asking would be waste.
     """
-    out: list[Discovery] = []
-    for i, failed in enumerate(facts.tool_events):
-        if failed.ok is not False:
-            continue
-        # Find the next success on the same tool. Requiring the same tool keeps
-        # the pair causally plausible: a failing Bash fixed by a later Bash is a
-        # discovery, a failing Bash followed by an unrelated Read is not.
-        for later in facts.tool_events[i + 1 :]:
-            if later.name != failed.name or later.ok is not True:
-                continue
-            if later.detail.strip() == failed.detail.strip():
-                continue  # identical retry: flakiness, not a discovery
-            attempts = sum(
-                1
-                for e in facts.tool_events[i:]
-                if e.name == failed.name and e.ok is False
-            )
-            out.append(
-                Discovery(
-                    tool=failed.name,
-                    failed=failed.detail,
-                    error=" ".join(failed.output.split())[:300],
-                    worked=later.detail,
-                    attempts=attempts + 1,
-                )
-            )
-            break
-    # Most-worked-for first: a trap that cost five attempts beats one that cost two.
-    out.sort(key=lambda d: -d.attempts)
-    return out[:max_out]
+    if facts.tool_calls >= min_tool_calls:
+        return True
+    if len(facts.user_messages) > 1:
+        return True  # the human said something after the first prompt
+    return facts.denied
 
 
-def effort(facts: SessionFacts) -> int:
-    """How much work this session took. High effort + success = valuable lesson."""
-    return facts.tool_calls + 3 * len(facts.failures)
+def digest(facts: SessionFacts, *, limit: int = 11000) -> str:
+    """The session rendered for judgement.
 
+    Interleaves the human's turns with the tool trail, because both questions
+    the model is asked — was the agent corrected, what did it discover — depend
+    on the *order* of what happened.
+    """
+    parts: list[str] = []
+    if facts.first_prompt:
+        parts.append(f"[the request]\n{facts.first_prompt[:1500]}")
 
-def _last_pos(pattern: re.Pattern[str], text: str) -> int:
-    """Index of the last match, or -1. Used to decide red-then-green ordering."""
-    last = -1
-    for match in pattern.finditer(text):
-        last = match.start()
-    return last
-
-
-def classify(facts: SessionFacts, *, min_tool_calls: int = 8) -> Outcome:
-    """Combine signals into a single labelled outcome with a confidence."""
-    evidence: list[str] = []
-    score = 0.0  # positive -> success, negative -> failure
-
-    corrections = [m for m in facts.follow_ups if _CORRECTION.search(m)]
-    if corrections:
-        score -= 0.65
-        evidence.append(f"user correction ×{len(corrections)}: {corrections[0][:120]!r}")
-
-    approvals = [m for m in facts.follow_ups if _APPROVAL.search(m)]
-    if approvals:
-        score += 0.6
-        evidence.append(f"user approval: {approvals[0][:120]!r}")
+    for msg in facts.follow_ups[:8]:
+        parts.append(f"[the human then said]\n{msg[:800]}")
 
     if facts.denied:
-        score -= 0.35
-        evidence.append("a tool call was denied")
+        parts.append("[the human refused or interrupted a tool call]")
 
-    # Red-then-green is the normal shape of successful work, so what matters is
-    # which signal came *last*, not which appeared at all.
-    tail = "\n".join(facts.tool_outputs[-12:])
-    last_pass = _last_pos(_TEST_PASS, tail)
-    last_fail = _last_pos(_TEST_FAIL, tail)
-    if last_pass > last_fail:
-        score += 0.35
-        evidence.append("tests passing at the end of the session")
-    elif last_fail > last_pass:
-        score -= 0.3
-        evidence.append("tests failing at the end of the session")
+    if facts.tool_events:
+        parts.append("[what the agent ran, in order]")
+        events = facts.tool_events
+        # Keep the ends: the opening moves and the resolution are where the
+        # useful signal is. The middle of a long grind rarely adds anything.
+        shown = events if len(events) <= 40 else events[:20] + events[-20:]
+        if len(events) > 40:
+            parts.append(f"  ... {len(events) - 40} further calls omitted ...")
+        parts.extend(e.render() for e in shown)
 
-    if facts.tool_calls >= min_tool_calls and not corrections:
-        score += 0.25
-        evidence.append(f"{facts.tool_calls} tool calls, no correction")
+    if facts.last_assistant:
+        parts.append(f"[the agent's closing message]\n{facts.last_assistant[:1500]}")
 
-    # Self-recovery: the agent hit failures and worked past them without being
-    # told how. The environment verified the fix, which is a stronger and more
-    # available oracle than waiting for a human to say "perfect".
-    found = discoveries(facts)
-    if found and not corrections:
-        score += 0.3
-        evidence.append(
-            f"recovered from {len(found)} failure(s) unaided "
-            f"(e.g. {found[0].tool}: {found[0].error[:60]})"
-        )
-
-    if facts.tool_calls < min_tool_calls and not corrections and not approvals:
-        evidence.append("session too small to judge")
-        return Outcome("unknown", 0.0, evidence)
-
-    # Round before comparing: the weights are decimal literals, so an exact
-    # boundary case like -0.65 + 0.6 + 0.35 lands at 0.2999999 and silently
-    # misses the threshold it was designed to hit.
-    score = round(score, 6)
-    if score >= 0.3:
-        return Outcome("success", min(1.0, score), evidence)
-    if score <= -0.3:
-        return Outcome("failure", min(1.0, abs(score)), evidence)
-    return Outcome("unknown", abs(score), evidence)
-
-
-def was_corrected(facts: SessionFacts) -> bool:
-    """Did the human have to steer the agent at any point?
-
-    Distinct from the session outcome. A session can end perfectly *because* the
-    user corrected it — that is a success for the episode but a failure for
-    whichever lesson was supposed to have prevented the mistake.
-    """
-    return any(_CORRECTION.search(m) for m in facts.follow_ups)
+    return "\n\n".join(parts)[:limit]
 
 
 def summarise_work(facts: SessionFacts, *, limit: int = 1500) -> str:
@@ -485,60 +313,6 @@ def summarise_work(facts: SessionFacts, *, limit: int = 1500) -> str:
     if not text:
         text = "\n".join(facts.assistant_messages[-2:]).strip()
     return text[:limit]
-
-
-def correction_text(facts: SessionFacts) -> str:
-    """The steering the human supplied — the raw material for a new lesson."""
-    return "\n\n".join(m for m in facts.follow_ups if _CORRECTION.search(m))[:2000]
-
-
-_ERROR_HINT = re.compile(
-    r"(?i)(error|exception|traceback|failed|not found|denied|refus|invalid|"
-    r"unexpected|cannot|no such|timed out|command not found)"
-)
-
-
-def excerpt(facts: SessionFacts, *, limit: int = 7000) -> str:
-    """A slice of the session chosen for where lessons actually live.
-
-    Sampling the opening of a session gets you the framing, not the knowledge —
-    the reusable part is almost always in the middle, where something failed and
-    was then fixed. So this budget goes to, in priority order: the original
-    intent, every human correction, tool output that mentions an error, and the
-    final outcome.
-    """
-    parts: list[str] = []
-
-    if facts.first_prompt:
-        parts.append(f"[intent] {facts.first_prompt[:1200]}")
-
-    corrections = [m for m in facts.follow_ups if _CORRECTION.search(m)]
-    for msg in corrections[:5]:
-        parts.append(f"[user correction] {msg[:700]}")
-
-    steering = [m for m in facts.follow_ups if m not in corrections]
-    for msg in steering[:3]:
-        parts.append(f"[user follow-up] {msg[:500]}")
-
-    # Self-discovery: what the environment taught, with no human involved. These
-    # come first among the machine signals because a paired failure-then-success
-    # is far more informative than a raw error log.
-    for found in discoveries(facts):
-        parts.append(f"[discovered by trial] {found.render()}")
-
-    paired = {d.error[:80] for d in discoveries(facts)}
-    errors = [
-        o
-        for o in facts.tool_outputs
-        if _ERROR_HINT.search(o) and " ".join(o.split())[:80] not in paired
-    ]
-    for out in errors[-4:]:
-        parts.append(f"[tool output] {out[:600]}")
-
-    if facts.last_assistant:
-        parts.append(f"[outcome] {facts.last_assistant[:1200]}")
-
-    return "\n\n".join(parts)[:limit]
 
 
 def iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:

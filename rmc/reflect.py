@@ -1,17 +1,19 @@
 """Turning a finished session into store updates.
 
-Three jobs, in order of cost:
+Three steps, in order of cost:
 
-``observe``  — free. Score the session, update the stats of whatever was served,
-               and file the episode into the replay corpus.
-``descend``  — free. If a served lesson failed and the human said what was
-               missing, match that text against the node's delta manifest and
-               record a rescue, so the next recall re-attaches the claim.
-``mint``     — one model call. Only when the session contains something reusable
-               that is not already in the tree.
+``observe``  — one judgement. The model reads the session and says how it went,
+               whether the human had to steer, and what was worked out by trial.
+               Node statistics, the episode record and ambient descent all key
+               off that verdict.
+``descend``  — free when nothing was dropped; otherwise one judgement about
+               which omitted detail the correction was really about.
+``mint``     — one judgement. Only when the session contains something reusable,
+               followed by reconciliation against what is already known.
 
-The ordering matters: the common case (a session that went fine) costs nothing
-beyond a few counter increments.
+A structural gate comes first: a session with two tool calls and no follow-up is
+skipped without asking anything. That is a question about size, not meaning, so
+it stays in code.
 """
 
 from __future__ import annotations
@@ -21,20 +23,66 @@ from pathlib import Path
 from typing import Any
 
 from .adapters import Adapter
+from .judge import Judge
 from .node import Node
 from .prompts import REFLECT, REFLECT_SCHEMA
-from .selection import Diagnosis, rank, build_candidates
-from .signals import (
-    Outcome,
-    SessionFacts,
-    classify,
-    correction_text,
-    excerpt,
-    summarise_work,
-    was_corrected,
-)
+from .selection import Diagnosis, build_candidates, rank
+from .signals import SessionFacts, digest, summarise_work, worth_assessing
 from .store import Episode, Store
-from .util import new_id, signature, truncate, utcnow
+from .util import new_id, truncate, utcnow
+
+
+@dataclass
+class Outcome:
+    """The model's reading of a session."""
+
+    label: str = "unknown"  # success | failure | unknown
+    confidence: float = 0.0
+    corrected: bool = False
+    correction: str = ""
+    evidence: list[str] = field(default_factory=list)
+    discoveries: list[dict[str, Any]] = field(default_factory=list)
+    summary: str = ""
+
+    @classmethod
+    def from_verdict(cls, raw: dict[str, Any] | None) -> "Outcome":
+        raw = raw or {}
+        label = str(raw.get("outcome") or "unknown").strip().lower()
+        if label not in ("success", "failure", "unknown"):
+            label = "unknown"
+        try:
+            confidence = max(0.0, min(1.0, float(raw.get("confidence") or 0.0)))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        evidence = raw.get("evidence") or []
+        return cls(
+            label=label,
+            confidence=confidence,
+            corrected=bool(raw.get("corrected")),
+            correction=str(raw.get("correction") or ""),
+            evidence=[str(e) for e in evidence][:6],
+            discoveries=[d for d in (raw.get("discoveries") or []) if isinstance(d, dict)],
+            summary=str(raw.get("summary") or ""),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "confidence": self.confidence,
+            "corrected": self.corrected,
+            "evidence": self.evidence,
+        }
+
+    def render_discoveries(self) -> str:
+        lines = []
+        for found in self.discoveries:
+            failed = str(found.get("what_failed") or "").strip()
+            why = str(found.get("why_it_failed") or "").strip()
+            worked = str(found.get("what_worked") or "").strip()
+            attempts = found.get("attempts")
+            suffix = f" (after {attempts} attempts)" if isinstance(attempts, int) else ""
+            lines.append(f"- tried: {failed}\n  failed because: {why}\n  what worked: {worked}{suffix}")
+        return "\n".join(lines)
 
 
 @dataclass
@@ -43,43 +91,50 @@ class ObserveResult:
     episode: Episode | None = None
     updated: list[str] = field(default_factory=list)
     rescues: list[tuple[str, str]] = field(default_factory=list)  # (node_id, claim)
+    skipped: str = ""
 
 
 def observe(
     store: Store,
     facts: SessionFacts,
     *,
+    adapter: Adapter | None = None,
     session_id: str = "",
     served: list[str] | None = None,
     family_hint: str = "",
     cwd: str = "",
 ) -> ObserveResult:
-    """Score a finished session and fold the result back into the tree."""
+    """Judge a finished session and fold the result back into the tree."""
     min_tool_calls = int(store.config.get("learning.min_tool_calls", 8))
     min_conf = float(store.config.get("signals.min_confidence", 0.5))
-
-    outcome = classify(facts, min_tool_calls=min_tool_calls)
-    result = ObserveResult(outcome=outcome)
-
     served = served or []
     nodes = [n for n in (store.get(i) for i in served) if n is not None]
 
-    # The session outcome and the *lesson's* outcome are different questions.
-    # If the human had to correct the agent, the served lesson failed at its job
-    # even when the session went on to end well — and that is precisely the case
-    # RMC most needs to learn from, so it must not be scored as a success.
-    corrected = was_corrected(facts)
+    if not worth_assessing(facts, min_tool_calls=min_tool_calls):
+        return ObserveResult(outcome=Outcome(), skipped="session too small to judge")
+    if adapter is None:
+        return ObserveResult(outcome=Outcome(), skipped="no backend available to judge with")
+
+    verdict = Judge(store, adapter).assess(digest(facts))
+    if verdict is None:
+        store.log("observe", session=session_id, outcome="unknown", reason="judge unavailable")
+        return ObserveResult(outcome=Outcome(), skipped="judge unavailable")
+
+    outcome = Outcome.from_verdict(verdict)
+    result = ObserveResult(outcome=outcome)
+
+    # The session outcome and the *lesson's* outcome are different questions. If
+    # the human had to steer, the served lesson failed at its job even when the
+    # session went on to end well — and that is the case RMC most needs to learn
+    # from, so it must not be recorded as a success.
     confident = outcome.label != "unknown" and outcome.confidence >= min_conf
 
     # Below the confidence floor we deliberately do nothing: a noisy label is
     # worse than no label, because it poisons both the priors and the replay
-    # corpus that every future compression is judged against.
-    #
-    # An explicit correction is exempt. It is unambiguous evidence *about the
-    # lesson* regardless of how the session ended — and a corrected-then-fixed
-    # session scores near zero precisely because its signals cancel, so the
-    # floor would otherwise discard the most informative sessions there are.
-    if not confident and not corrected:
+    # corpus every future compression is judged against. An explicit correction
+    # is exempt — it is unambiguous evidence about the lesson however the session
+    # ended.
+    if not confident and not outcome.corrected:
         store.log(
             "observe",
             session=session_id,
@@ -91,7 +146,7 @@ def observe(
 
     for node in nodes:
         node.stats.attempts += 1
-        if corrected or outcome.label == "failure":
+        if outcome.corrected or outcome.label == "failure":
             node.stats.failures += 1
         elif confident:
             node.stats.successes += 1
@@ -107,13 +162,14 @@ def observe(
         outcome=outcome.label,
         confidence=outcome.confidence,
         served=served,
-        accepted_summary=summarise_work(facts) if outcome.label == "success" else "",
+        accepted_summary=(outcome.summary or summarise_work(facts))
+        if outcome.label == "success"
+        else "",
         session_id=session_id,
         cwd=cwd,
     )
-    # Only successful episodes are replayable regression tests; failures are
-    # kept for diagnosis but must never become the thing a compression is
-    # validated against.
+    # Only successful episodes are replayable regression tests; failures are kept
+    # for diagnosis but must never become what a compression is validated against.
     if (confident and outcome.label == "success") or store.config.get(
         "learning.capture_failures", True
     ):
@@ -121,25 +177,25 @@ def observe(
         result.episode = episode
 
     # Attach as a covering task only when the lesson produced the result on its
-    # own. A corrected session's episode stays in the corpus (it is useful once
-    # the node is repaired) but attaching it now would gate every future
-    # compression behind a test the node cannot currently pass.
-    if confident and outcome.label == "success" and not corrected:
+    # own. A corrected session's episode stays in the corpus — useful once the
+    # node is repaired — but attaching it now would gate every future compression
+    # behind a test the node cannot currently pass.
+    if confident and outcome.label == "success" and not outcome.corrected:
         for node in nodes:
             if episode.id not in node.covers_tasks:
                 node.covers_tasks = sorted({*node.covers_tasks, episode.id})
                 store.save_node(node)
 
-    # Descend whenever the human had to steer — the correction is the diagnosis,
-    # regardless of how the session eventually ended.
-    if nodes and (corrected or outcome.label == "failure"):
-        result.rescues = descend(store, nodes, facts)
+    if nodes and (outcome.corrected or outcome.label == "failure"):
+        result.rescues = descend(store, nodes, outcome, facts, adapter)
 
     store.log(
         "observe",
         session=session_id,
         outcome=outcome.label,
         confidence=outcome.confidence,
+        corrected=outcome.corrected,
+        discoveries=len(outcome.discoveries),
         served=served,
         episode=episode.id,
         evidence=outcome.evidence[:3],
@@ -147,51 +203,57 @@ def observe(
     return result
 
 
-def descend(store: Store, nodes: list[Node], facts: SessionFacts) -> list[tuple[str, str]]:
-    """Ambient descent: match the human's correction against the delta manifest.
+def descend(
+    store: Store,
+    nodes: list[Node],
+    outcome: Outcome,
+    facts: SessionFacts,
+    adapter: Adapter | None = None,
+) -> list[tuple[str, str]]:
+    """Work out which dropped detail the correction was really about.
 
-    This is the cheap half of the descent policy. The human has already told us
-    what was missing, in words, so there is nothing to diagnose with a model —
-    we can treat the correction as the diagnosis and rank the dropped claims
-    against it directly.
+    The human has already said what went wrong, so there is nothing to diagnose
+    — but deciding *which* omitted claim that correction refers to is a
+    judgement about meaning, and the model makes it.
 
     A match is recorded as a `rescue` event rather than acted on immediately:
     the session is already over. `recall._sticky_patches` re-attaches the claim
     on the next matching prompt, and `compact.repair` eventually folds it back
     into the body for good.
     """
-    correction = correction_text(facts)
-    if not correction.strip():
+    complaint = outcome.correction.strip() or "\n".join(outcome.evidence).strip()
+    if not complaint:
         return []
 
     diag = Diagnosis(
-        category="rationale",  # unknown; scoring falls back to lexical overlap
-        missing=[correction],
-        wrong_step="",
-        confidence=0.4,
+        category="",
+        missing=[complaint],
+        wrong_step="the agent had to be corrected" if outcome.corrected else "the work was wrong",
+        confidence=outcome.confidence,
     )
-    task_sig = signature(facts.first_prompt)
+    judge = Judge(store, adapter) if adapter is not None else None
     rescues: list[tuple[str, str]] = []
 
     for node in nodes:
         if not node.dropped:
             # Nothing was ever dropped from this node, so the gap is genuinely
-            # new knowledge, not lost detail. Leave it to `mint`.
+            # new knowledge rather than lost detail. Leave it to `mint`.
             continue
         candidates = rank(
             build_candidates(node, resolve=store.get, strategy="delta-patch"),
             diag=diag,
-            task_sig=task_sig,
+            judge=judge,
             config=store.config,
+            task=facts.first_prompt,
         )
         best = next((c for c in candidates if c.kind == "delta"), None)
-        if best is None or best.parts.get("delta", 0.0) <= 0.05:
-            continue  # no dropped claim plausibly explains this failure
+        if best is None or best.parts.get("judge", 0.0) <= 0.05:
+            continue  # the model does not think any dropped claim explains this
         store.log("rescue", node=node.id, claim=best.text, score=round(best.score, 4))
         rescues.append((node.id, best.text))
 
         node.stats.expansions += 1
-        hint = truncate(correction, 200)
+        hint = truncate(complaint, 200)
         if hint not in node.preserve:
             node.preserve = [*node.preserve, hint][-8:]
         store.save_node(node)
@@ -208,7 +270,7 @@ def descend(store: Store, nodes: list[Node], facts: SessionFacts) -> list[tuple[
 class MintResult:
     created: Node | None = None
     reason: str = ""
-    placement: Any = None  # placement.Placement, when one was decided
+    placement: Any = None
     patched: list[str] = field(default_factory=list)
 
 
@@ -217,26 +279,32 @@ def mint(
     adapter: Adapter,
     facts: SessionFacts,
     *,
+    outcome: Outcome | None = None,
     session_id: str = "",
     cwd: Path | None = None,
 ) -> MintResult:
-    """Ask a model whether this session contained a reusable lesson, and file it.
+    """Decide whether this session contained a reusable lesson, and file it.
 
     Deliberately conservative — the prompt tells the model that "no" is the
     expected answer. Every low-value lesson permanently taxes retrieval, because
-    it competes for the family match on every future prompt.
+    it competes for attention on every future prompt.
     """
     if not store.config.get("learning.enabled", True):
         return MintResult(reason="learning disabled")
 
     min_tool_calls = int(store.config.get("learning.min_tool_calls", 8))
-    if facts.tool_calls < min_tool_calls and not correction_text(facts):
+    if not worth_assessing(facts, min_tool_calls=min_tool_calls):
         return MintResult(reason="session too small")
+
+    discovered = outcome.render_discoveries() if outcome else ""
+    correction = (outcome.correction if outcome else "").strip()
 
     run = adapter.run(
         REFLECT.format(
             families="\n".join(f"- {f}" for f in store.families()) or "(none yet)",
-            excerpt=excerpt(facts),
+            correction=correction or "(the human did not correct anything)",
+            discovered=discovered or "(nothing was worked out by trial)",
+            excerpt=digest(facts, limit=7000),
         ),
         schema=REFLECT_SCHEMA,
         cwd=cwd,
