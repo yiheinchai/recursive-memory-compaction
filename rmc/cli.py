@@ -599,8 +599,11 @@ def cmd_compact(args: argparse.Namespace) -> int:
                 f"{green('accepted')} {res.node_id} -> "
                 f"{res.new_node.id if res.new_node else '(dry-run)'}  "
                 f"{res.before_tokens}->{res.after_tokens} tokens "
-                f"({res.ratio:.0%}), replay {res.pass_rate:.0%}"
+                f"({res.ratio:.0%}), generality {res.generality}, "
+                f"replay {res.pass_rate:.0%}"
             )
+            for warning in res.warnings:
+                print(f"    {yellow('!')} {warning}")
             for delta in res.dropped:
                 print(dim(f"    dropped [{delta.kind}] {delta.claim[:90]}"))
         else:
@@ -921,10 +924,52 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     else:
         print(f"  {green('✓')} {store.root}")
         print(f"    nodes={len(store.nodes())} episodes={len(store.episodes())}")
+    if store is not None:
+        drift = _config_drift(store)
+        if drift:
+            print(bold("\nconfig overrides"))
+            print(dim("  stored values that differ from the current defaults:"))
+            for key, stored, default in drift:
+                print(f"  {yellow('!')} {key} = {stored!r}  (default is {default!r})")
+            print(dim("  if you did not set these, they are a stale snapshot — delete them"))
+
     print(bold("\nhooks"))
     for line in install_status():
         print(f"  {line}")
     return 0
+
+
+def _config_drift(store: Store) -> list[tuple[str, object, object]]:
+    """Stored settings that disagree with the current defaults.
+
+    Older stores were initialised with a full copy of the defaults, which the
+    merge then prefers forever — so an improved default never reaches them and
+    nothing says so. Surfacing the difference is the least that can be done for
+    stores already in that state.
+    """
+    from .config import DEFAULTS
+    from . import yamlish
+
+    path = store.root / "config.yaml"
+    if not path.exists():
+        return []
+    try:
+        stored = yamlish.load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return []
+
+    out: list[tuple[str, object, object]] = []
+
+    def walk(current: dict, defaults: dict, prefix: str = "") -> None:
+        for key, value in (current or {}).items():
+            default = (defaults or {}).get(key)
+            if isinstance(value, dict) and isinstance(default, dict):
+                walk(value, default, f"{prefix}{key}.")
+            elif key in (defaults or {}) and value != default:
+                out.append((f"{prefix}{key}", value, default))
+
+    walk(stored, DEFAULTS)
+    return out
 
 
 def cmd_events(args: argparse.Namespace) -> int:

@@ -133,8 +133,19 @@ class Store:
         for sub in ("nodes", "episodes", "sessions"):
             (root / sub).mkdir(parents=True, exist_ok=True)
         store = cls(root)
-        if not (root / "config.yaml").exists():
-            store.config.save(root / "config.yaml")
+        config_path = root / "config.yaml"
+        if not config_path.exists():
+            # Overrides only — never a snapshot of the defaults. Writing the full
+            # default set at init freezes them: the file wins the merge, so a
+            # store created today keeps today's numbers forever and silently
+            # ignores every later improvement. `rmc config` adds keys here when
+            # you actually mean to override one.
+            config_path.write_text(
+                "# RMC overrides. Anything absent follows the current defaults;\n"
+                "# see `rmc config` for the full effective settings.\n"
+                "version: 1\n",
+                encoding="utf-8",
+            )
         gitignore = root / ".gitignore"
         if not gitignore.exists():
             # Sessions and telemetry are machine-local noise; nodes and episodes

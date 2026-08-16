@@ -55,6 +55,8 @@ class CompactionResult:
     after_tokens: int = 0
     replays: list[ReplayOutcome] = field(default_factory=list)
     dropped: list[Delta] = field(default_factory=list)
+    generality: str = "same"  # more | same | less — the second axis of worth
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def ratio(self) -> float:
@@ -246,10 +248,44 @@ def compress_node(
         store.log("compaction", node=node.id, accepted=False, reason=why)
         return result
 
-    if result.after_tokens > node.tokens * ratio:
-        result.reason = f"insufficient reduction: {result.after_tokens}/{node.tokens} tokens"
-        store.log("compaction", node=node.id, accepted=False, reason=result.reason)
+    # Worth is a judgement, not a threshold. A candidate can earn its place by
+    # costing less *or* by being more general — saying at a higher level what the
+    # original said about one case. A ratio sees only the first axis, so a
+    # genuinely better abstraction was being refused for saving 22% instead of
+    # 25%. The measurements go to the judge as evidence; the verdict is its own.
+    #
+    # Correctness is a different question and stays mechanical: replay, below.
+    verdict = Judge(store, adapter).worth_keeping(
+        node.body,
+        body,
+        [d.claim for d in dropped],
+        {
+            "before": node.tokens,
+            "after": result.after_tokens,
+            "ratio": result.ratio,
+            "target_ratio": ratio,
+        },
+    )
+    if verdict is not None and not verdict.get("keep", True):
+        result.reason = f"not worth keeping: {str(verdict.get('why') or '')[:200]}"
+        store.log(
+            "compaction",
+            node=node.id,
+            accepted=False,
+            reason=result.reason,
+            ratio=round(result.ratio, 3),
+            generality=verdict.get("generality"),
+        )
         return result
+    result.generality = str((verdict or {}).get("generality") or "same")
+    if result.after_tokens > node.tokens * ratio:
+        # Advisory now, not fatal — recorded so a store full of marginal
+        # compressions is visible rather than silently accumulating.
+        result.warnings.append(
+            f"reduction below target: {result.after_tokens}/{node.tokens} tokens "
+            f"({result.ratio:.0%} vs {ratio:.0%}) — kept for generality: "
+            f"{str((verdict or {}).get('why') or '')[:120]}"
+        )
 
     result.replays = validate(store, adapter, body, episodes, cwd=cwd)
     if result.pass_rate < threshold:

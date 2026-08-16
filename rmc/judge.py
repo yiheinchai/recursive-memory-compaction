@@ -354,6 +354,36 @@ class Judge:
             )
         return picks
 
+    # ------------------------------------------------------------- worth
+    def worth_keeping(
+        self, original: str, candidate: str, dropped: list[str], measured: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Is this compression an improvement worth keeping?
+
+        Separate from *correctness*, which replay settles mechanically. This is
+        the question of worth, and worth has two axes: a candidate can be better
+        because it costs less, or because it says the same thing at a higher
+        level and so covers cases the original did not. A token count sees only
+        the first, and will reject a genuinely better abstraction for saving
+        22% instead of 25%.
+
+        The measurements go in as evidence — they are facts and belong in the
+        prompt — but the verdict is the model's.
+        """
+        return self.ask(
+            WORTH.format(
+                original=truncate(original, 4000),
+                candidate=truncate(candidate, 4000),
+                dropped="\n".join(f"- {d}" for d in dropped) or "(nothing declared)",
+                before=measured.get("before", 0),
+                after=measured.get("after", 0),
+                ratio=measured.get("ratio", 1.0),
+                target=measured.get("target_ratio", 0.75),
+            ),
+            WORTH_SCHEMA,
+            cache_key=self.key("worth", original.strip(), candidate.strip()),
+        )
+
     # ----------------------------------------------------------- descent
     def rank_repairs(self, failure: str, options: list[tuple[str, str, str]]) -> dict[str, float]:
         """Which of these dropped details would fix this failure?
@@ -428,6 +458,60 @@ Repository: {repo}
 <<<LESSON
 {body}
 LESSON>>>
+"""
+
+WORTH_SCHEMA = {
+    "type": "object",
+    "required": ["keep", "why", "generality"],
+    "properties": {
+        "keep": {"type": "boolean"},
+        "generality": {
+            "type": "string",
+            "enum": ["more", "same", "less"],
+            "description": "Does the candidate cover more situations than the original?",
+        },
+        "why": {"type": "string"},
+    },
+}
+
+WORTH = """RMC:worth
+
+A lesson has been compressed. Decide whether the shorter version is worth
+keeping as a new level above the original. This is not about correctness — that
+is tested separately by replaying real tasks against it. This is about whether
+it is an *improvement*.
+
+A candidate earns its place on either of two axes:
+
+1. **It costs less.** Fewer tokens on every future recall, with nothing
+   important lost.
+2. **It is more general.** It states at a higher level what the original said
+   about one case, so it now covers situations the original did not. This can be
+   worth keeping even when the token saving is small — an abstraction that
+   applies to five situations instead of one is more valuable per token, and
+   token count cannot see that.
+
+Refuse it when: it saves little AND generalises nothing (a reworded copy); or it
+became shorter by becoming vaguer, so an agent reading it would no longer know
+what to actually do. Vagueness is not generality. "Handle errors properly" is
+shorter and broader than a specific retry rule and is worth nothing.
+
+Measured, as evidence — the numbers are facts, the verdict is yours:
+  original:  {before} tokens
+  candidate: {after} tokens  ({ratio:.0%} of the original)
+  the compressor was asked to reach {target:.0%}
+
+<<<ORIGINAL
+{original}
+ORIGINAL>>>
+
+<<<CANDIDATE
+{candidate}
+CANDIDATE>>>
+
+<<<DECLARED AS REMOVED
+{dropped}
+DECLARED AS REMOVED>>>
 """
 
 ASSESS_SCHEMA = {

@@ -604,6 +604,60 @@ class TestCompaction(StoreCase):
         self.assertEqual(self.store.get("n_base").parents, [])
         self.assertTrue(self.store.get("n_base").preserve)
 
+    def test_a_modest_saving_survives_if_it_generalises(self) -> None:
+        """Worth has two axes. A ratio only sees one, and would refuse a better
+        abstraction for saving 22% instead of 25%."""
+        node = self.build_family()
+
+        def route(prompt, schema):
+            if "RMC:worth" in prompt:
+                return {"keep": True, "generality": "more",
+                        "why": "states the rule at a level covering all three cases"}
+            if "RMC:compress" in prompt:
+                # Barely under target, but broader.
+                return {"body": "Retry idempotent remote calls with jittered backoff; "
+                                "parse response bodies, not status codes. @idempotent @backoff",
+                        "dropped": [], "lossless": True}
+            return {"pass": True, "reason": "ok"}
+
+        result = compress_node(self.store, MockAdapter(router=route), node)
+        self.assertTrue(result.accepted, result.reason)
+        self.assertEqual(result.generality, "more")
+
+    def test_a_reworded_copy_is_refused_by_the_judge_not_the_ratio(self) -> None:
+        node = self.build_family()
+
+        def route(prompt, schema):
+            if "RMC:worth" in prompt:
+                return {"keep": False, "generality": "same",
+                        "why": "reworded, saves little and covers no new case"}
+            if "RMC:compress" in prompt:
+                return {"body": "Retry things carefully. @idempotent", "dropped": [],
+                        "lossless": True}
+            return {"pass": True, "reason": "ok"}
+
+        result = compress_node(self.store, MockAdapter(router=route), node)
+        self.assertFalse(result.accepted)
+        self.assertIn("not worth keeping", result.reason)
+
+    def test_a_poor_ratio_warns_rather_than_blocking(self) -> None:
+        node = self.build_family()
+        # Only marginally shorter than the original, which is the case that used
+        # to be fatal and should now merely be noted.
+        long_body = " ".join(node.body.split()[: int(len(node.body.split()) * 0.85)])
+
+        def route(prompt, schema):
+            if "RMC:worth" in prompt:
+                return {"keep": True, "generality": "more", "why": "broader"}
+            if "RMC:compress" in prompt:
+                return {"body": long_body, "dropped": [], "lossless": True}
+            return {"pass": True, "reason": "ok"}
+
+        result = compress_node(self.store, MockAdapter(router=route), node)
+        self.assertTrue(result.accepted, result.reason)
+        self.assertTrue(result.warnings, "a weak reduction must still be visible")
+        self.assertIn("below target", result.warnings[0])
+
     def test_manifest_under_reporting_is_rejected(self) -> None:
         node = self.build_family()
         adapter = MockAdapter(
