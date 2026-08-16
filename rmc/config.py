@@ -88,6 +88,16 @@ DEFAULTS: dict[str, Any] = {
         # cooldown off after this many nudges in a row that yielded nothing.
         "nudge_backoff_after": 3,
     },
+    "dream": {
+        "enabled": True,
+        # Consolidation is not a reaction to a session, so no session event is
+        # its natural occasion. It runs on elapsed time instead, gated on there
+        # being new evidence — dreaming over an unchanged store only re-asks
+        # questions already answered and cached.
+        "interval_s": 86400,  # once a day
+        "min_new_episodes": 3,  # new successful multi-lesson episodes since last run
+        "limit": 2,  # merge groups attempted per pass
+    },
     "placement": {
         "consult": True,  # ask a model how new knowledge relates to old
         "judge_calls": 2,  # levels of tree walk when looking for related lessons

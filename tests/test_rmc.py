@@ -1548,6 +1548,77 @@ class TestReInjection(StoreCase):
         self.assertEqual(self.store.read_session("s")["served_at"], {})
 
 
+class TestDreamSchedule(StoreCase):
+    """Consolidation runs on a clock and on evidence, and leaves an account.
+
+    Both gates are structural — a clock reading and a count of episodes. Neither
+    asks what anything means, so neither belongs to the model.
+    """
+
+    def seed_evidence(self, n: int) -> None:
+        for ident, family in (("n_a", "deploy"), ("n_b", "caching")):
+            if not self.store.get(ident):
+                self.add_node(id=ident, family=family, body=f"lesson {ident}")
+        for i in range(n):
+            self.add_episode(f"e{i}", "x", "work", served=["n_a", "n_b"], used=["n_a", "n_b"])
+
+    def test_not_due_without_new_evidence(self) -> None:
+        from rmc.compact import dream_due
+
+        self.seed_evidence(1)
+        due, why = dream_due(self.store)
+        self.assertFalse(due)
+        self.assertIn("need 3", why)
+
+    def test_due_once_enough_has_accumulated(self) -> None:
+        from rmc.compact import dream_due
+
+        self.seed_evidence(3)
+        due, why = dream_due(self.store)
+        self.assertTrue(due, why)
+
+    def test_not_due_again_inside_the_interval(self) -> None:
+        """A clock reading, not a judgement."""
+        from rmc.compact import dream_due
+
+        self.seed_evidence(3)
+        self.store.log("dream", episodes_seen=3)
+        due, why = dream_due(self.store)
+        self.assertFalse(due)
+        self.assertIn("interval", why)
+
+    def test_can_be_switched_off(self) -> None:
+        from rmc.compact import dream_due
+
+        self.store.config.set("dream.enabled", False)
+        self.seed_evidence(9)
+        self.assertFalse(dream_due(self.store)[0])
+
+    def test_a_dream_writes_a_readable_account(self) -> None:
+        """Nobody watched it happen, so it has to say what it did."""
+        from rmc.compact import dream, dream_logs
+
+        self.seed_evidence(3)
+        report = dream(self.store, MockAdapter(world=MockWorld()), limit=1)
+
+        logs = dream_logs(self.store)
+        self.assertTrue(logs, "the dream must leave a record")
+        text = logs[0].read_text()
+        self.assertIn("before", text)
+        self.assertIn("tokens served at apex", text)
+        # Before/after is the point: it shows what changed, not just what ran.
+        self.assertIn("nodes", report.before)
+        self.assertIn("apex_tokens", report.after)
+
+    def test_a_refused_merge_is_recorded_with_its_reason(self) -> None:
+        from rmc.compact import dream, dream_logs
+
+        self.seed_evidence(3)
+        broken = MockAdapter(router=lambda p, s: {"body": "", "dropped": []})
+        dream(self.store, broken, limit=1)
+        self.assertIn("refused", dream_logs(self.store)[0].read_text())
+
+
 class TestRoutingCost(StoreCase):
     def test_routing_sends_a_gist_not_the_body(self) -> None:
         """Deciding what to load must not cost more than loading it.

@@ -415,6 +415,17 @@ def _absorb(store, adapter, facts, served, args) -> int:
         for res in run_due(store, adapter, limit=1):
             state = "accepted" if res.accepted else "rejected"
             print(f"compact: {state} {res.node_id} — {res.reason[:120]}")
+
+    # Consolidation is not a reaction to this session, so it does not belong to
+    # it — but this is the one place that already runs detached, holds a lock and
+    # is allowed to spend calls. Gated on a clock and on new evidence, so most
+    # sessions skip it entirely.
+    due, why = dream_due(store)
+    if due:
+        print(f"dream: running ({why})")
+        print(f"dream: {dream(store, adapter, limit=int(store.config.get('dream.limit', 2))).render()}")
+    else:
+        print(f"dream: skipped — {why}")
     return 0
 
 
@@ -543,6 +554,28 @@ def cmd_dream(args: argparse.Namespace) -> int:
     store = need_store(args)
     if store is None:
         return 1
+
+    if args.log:
+        from .compact import dream_logs
+
+        logs = dream_logs(store, limit=args.limit)
+        if not logs:
+            print(dim("no dreams recorded yet"))
+            return 0
+        if args.log is True or args.log == "latest":
+            print(logs[0].read_text())
+            print(dim(f"— {logs[0]}  ({len(logs)} dream(s) on record)"))
+            return 0
+        for path in logs:
+            print(f"  {path.stem}  {dim(str(path))}")
+        return 0
+
+    if args.due:
+        from .compact import dream_due
+
+        due, why = dream_due(store)
+        print(f"{green('due') if due else dim('not due')} — {why}")
+        return 0
 
     if args.list:
         groups = co_use_groups(store)
@@ -929,6 +962,15 @@ def build_parser() -> argparse.ArgumentParser:
         "dream", help="consolidate the whole store: fill gists, merge co-used lessons"
     )
     p.add_argument("--list", action="store_true", help="show merge candidates, change nothing")
+    p.add_argument(
+        "--log",
+        nargs="?",
+        const=True,
+        default=None,
+        metavar="all",
+        help="read the last dream's report; 'all' lists every recorded dream",
+    )
+    p.add_argument("--due", action="store_true", help="say whether a dream is due, and why")
     p.add_argument("--limit", type=int, default=2)
     p.add_argument("--dry-run", action="store_true")
     add_agent_flags(p)

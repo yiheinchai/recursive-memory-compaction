@@ -66,7 +66,7 @@ the whole idea: usage drives abstraction.
 | a substantial turn ends | a reflector runs off-thread: did anything teach us something, and which lessons actually mattered | 1–2, detached |
 | you teach it something | `rmc add` records it immediately, reconciled against what is known | 1–2 |
 | the session ends | the transcript is judged, lessons minted, compression attempted | 2–4, detached |
-| periodically | `rmc dream` merges lessons that keep being used together | 1–2 per group |
+| once a day, if there is new evidence | `dream` merges lessons that keep being used together | 1–2 per group |
 
 Everything expensive is **detached** — spawned as a separate process that
 outlives the hook. Spawned agents get `RMC_CHILD=1`, which makes RMC's own hooks
@@ -404,8 +404,54 @@ Counting co-occurrence is evidence and stays in code. Whether a group shares a
 generalisable idea is the model's call. Threshold is 2 occurrences; one is
 coincidence. Failed sessions do not count.
 
-`rmc dream --list` shows candidates without changing anything. It also backfills
-gists for older lessons.
+### When it runs
+
+Dreaming is not a reaction to a session, so no session event is its natural
+occasion. It runs on **elapsed time gated by new evidence**: at most once per
+`dream.interval_s` (24h), and only when at least `dream.min_new_episodes` (3)
+new successful multi-lesson episodes have accumulated since the last pass.
+Dreaming over an unchanged store only re-asks questions already answered and
+cached.
+
+Both halves of that gate are structural — a clock reading and a count — so
+neither belongs to the model. It is invoked from `absorb`, the detached
+end-of-session pipeline, because that is the one place that already runs off the
+main thread, already holds a lock, and is already allowed to spend calls. Most
+sessions skip it in a line.
+
+### Seeing what it did
+
+A dream rewrites the store while nobody is watching, which is exactly the
+situation that needs a record. Every pass writes a report to `.rmc/dreams/`:
+
+```
+# dream 2026-08-16T16:12:41Z
+
+| | before | after |
+|---|---|---|
+| nodes | 12 | 13 |
+| apexes | 9 | 8 |
+| tokens served at apex | 2088 | 1640 |
+
+Examined 3 co-use group(s); wrote 2 gist(s).
+
+## merged
+- n_cache+n_deploy (co-used 4x) -> n_9f10
+
+## refused
+- n_a+n_b (co-used 3x): merge regression pass-rate 67% < 100%
+```
+
+`tokens served at apex` is the number that matters — it is what recall pays on
+every prompt.
+
+```bash
+rmc dream --due        # is a dream due, and why not
+rmc dream --list       # merge candidates from co-use, change nothing
+rmc dream --log        # the last dream's report
+rmc dream --log all    # every dream on record
+rmc dream --dry-run    # generate and validate, write nothing
+```
 
 ---
 

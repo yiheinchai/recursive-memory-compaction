@@ -631,12 +631,27 @@ def _slug(text: str) -> str:
 
 @dataclass
 class DreamReport:
+    """A written account of what consolidation changed while nobody was looking.
+
+    Dreaming rewrites the store unattended, which is exactly the situation that
+    needs a record: you were not there, and a memory you cannot audit is one you
+    cannot correct. So the report states what was examined, what changed, what
+    was refused and why, and the before/after of the number that actually
+    matters — the tokens recall will pay on every prompt.
+    """
+
+    started: str = ""
     gists_filled: int = 0
     groups_considered: int = 0
     merged: list[str] = field(default_factory=list)
     rejected: list[str] = field(default_factory=list)
+    before: dict[str, int] = field(default_factory=dict)
+    after: dict[str, int] = field(default_factory=dict)
+    skipped: str = ""
 
     def render(self) -> str:
+        if self.skipped:
+            return f"dream skipped: {self.skipped}"
         parts = []
         if self.gists_filled:
             parts.append(f"{self.gists_filled} gist(s) written")
@@ -645,7 +660,75 @@ class DreamReport:
             parts.append(f"{len(self.merged)} merged")
         if self.rejected:
             parts.append(f"{len(self.rejected)} rejected")
+        delta = self.after.get("apex_tokens", 0) - self.before.get("apex_tokens", 0)
+        if delta:
+            parts.append(f"{delta:+d} tokens served at apex")
         return ", ".join(parts)
+
+    def to_markdown(self) -> str:
+        lines = [f"# dream {self.started}", ""]
+        if self.skipped:
+            lines += [f"Skipped: {self.skipped}", ""]
+            return "\n".join(lines)
+        lines += [
+            "| | before | after |",
+            "|---|---|---|",
+            f"| nodes | {self.before.get('nodes', 0)} | {self.after.get('nodes', 0)} |",
+            f"| apexes | {self.before.get('apexes', 0)} | {self.after.get('apexes', 0)} |",
+            f"| tokens served at apex | {self.before.get('apex_tokens', 0)} "
+            f"| {self.after.get('apex_tokens', 0)} |",
+            "",
+            f"Examined {self.groups_considered} co-use group(s); "
+            f"wrote {self.gists_filled} gist(s).",
+            "",
+        ]
+        if self.merged:
+            lines += ["## merged", ""] + [f"- {m}" for m in self.merged] + [""]
+        if self.rejected:
+            lines += ["## refused", ""] + [f"- {r}" for r in self.rejected] + [""]
+        if not self.merged and not self.rejected:
+            lines += ["Nothing had accumulated enough co-use evidence to merge.", ""]
+        return "\n".join(lines)
+
+
+def _census(store: Store) -> dict[str, int]:
+    """The numbers a dream should be judged on. Apex tokens is the one that
+    matters: it is what recall pays on every prompt."""
+    apexes = store.apexes()
+    return {
+        "nodes": len(store.nodes()),
+        "apexes": len(apexes),
+        "apex_tokens": sum(n.tokens for n in apexes),
+    }
+
+
+def dream_due(store: Store) -> tuple[bool, str]:
+    """Is it time, and is there anything new to consolidate?
+
+    Both halves are structural. Elapsed time is a clock reading; 'new evidence'
+    counts episodes. Neither asks what anything means.
+    """
+    if not store.config.get("dream.enabled", True):
+        return False, "dreaming disabled"
+
+    interval = int(store.config.get("dream.interval_s", 86400))
+    last = max(
+        (_epoch(e.get("ts")) for e in store.read_events("dream", limit=200)), default=0.0
+    )
+    waited = time.time() - last
+    if last and waited < interval:
+        return False, f"last dream {int(waited / 3600)}h ago, interval is {interval // 3600}h"
+
+    usable = [e for e in store.episodes() if e.outcome == "success" and len(e.used or []) > 1]
+    seen_at_last = 0
+    for event in store.read_events("dream", limit=200):
+        if _epoch(event.get("ts")) == last:
+            seen_at_last = int(event.get("episodes_seen") or 0)
+    fresh = len(usable) - seen_at_last
+    minimum = int(store.config.get("dream.min_new_episodes", 3))
+    if fresh < minimum:
+        return False, f"only {fresh} new multi-lesson episode(s) since last dream, need {minimum}"
+    return True, f"{fresh} new multi-lesson episode(s)"
 
 
 def dream(
@@ -668,7 +751,7 @@ def dream(
     everything beneath it — so the index is not a separate structure that can
     drift, it is the tree, grown from what actually got used.
     """
-    report = DreamReport()
+    report = DreamReport(started=utcnow(), before=_census(store))
 
     if not dry_run:
         report.gists_filled = _backfill_gists(store, adapter)
@@ -687,8 +770,42 @@ def dream(
             report.merged.append(f"{label} -> {result.new_node.id if result.new_node else 'dry-run'}")
         else:
             report.rejected.append(f"{label}: {result.reason[:120]}")
-    store.log("dream", **{k: v for k, v in report.__dict__.items() if not k.startswith("_")})
+
+    store.invalidate()
+    report.after = _census(store)
+    if not dry_run:
+        _write_dream_log(store, report)
+    store.log(
+        "dream",
+        started=report.started,
+        groups=report.groups_considered,
+        merged=len(report.merged),
+        rejected=len(report.rejected),
+        gists=report.gists_filled,
+        apex_tokens_before=report.before.get("apex_tokens", 0),
+        apex_tokens_after=report.after.get("apex_tokens", 0),
+        episodes_seen=len(
+            [e for e in store.episodes() if e.outcome == "success" and len(e.used or []) > 1]
+        ),
+    )
     return report
+
+
+def _write_dream_log(store: Store, report: DreamReport) -> Path:
+    """Persist the account, because nobody watched it happen."""
+    directory = store.root / "dreams"
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = report.started.replace(":", "").replace("-", "")
+    path = directory / f"{stamp}.md"
+    path.write_text(report.to_markdown(), encoding="utf-8")
+    return path
+
+
+def dream_logs(store: Store, limit: int = 10) -> list[Path]:
+    directory = store.root / "dreams"
+    if not directory.is_dir():
+        return []
+    return sorted(directory.glob("*.md"), reverse=True)[:limit]
 
 
 GIST = """RMC:gist

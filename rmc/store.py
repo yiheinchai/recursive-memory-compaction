@@ -360,6 +360,13 @@ class Store:
 
         Validating a compression only against the episode that triggered it is
         how you end up with a beautifully compressed, useless tree.
+
+        Deliberately **not** filtered by family. An episode's family is a weak
+        label — the first family that happened to be served — while what makes
+        an episode a regression test for a node is that the node was *used* in
+        it. Filtering by family meant a cross-family merge could never find its
+        evidence, which broke the one case merging exists for: two lessons from
+        different families that keep being needed together.
         """
         ids = {node.id} | {d.id for d in self.descendants(node)}
         task_ids = set(node.covers_tasks)
@@ -367,8 +374,9 @@ class Store:
             task_ids.update(desc.covers_tasks)
         out = [
             e
-            for e in self.episodes(node.family)
-            if e.outcome == "success" and (e.id in task_ids or set(e.served) & ids)
+            for e in self.episodes()
+            if e.outcome == "success"
+            and (e.id in task_ids or set(e.used or e.served) & ids)
         ]
         out.sort(key=lambda e: e.created, reverse=True)
         return out[:limit] if limit else out

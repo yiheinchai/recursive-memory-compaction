@@ -112,6 +112,23 @@ Ask a model whether the session contained a reusable lesson, and mint a level-0
 node if so. Deliberately conservative — "nothing captured" is the common and
 correct outcome.
 
+### `rmc dream`
+Whole-store consolidation: backfill gists, then merge lessons that keep being
+used together. Runs automatically from `absorb` at most once per
+`dream.interval_s` and only with `dream.min_new_episodes` of new evidence.
+
+| Flag | Meaning |
+|---|---|
+| `--due` | say whether a dream is due, and why not |
+| `--list` | merge candidates from co-use, change nothing |
+| `--log [all]` | read the last dream's report, or list every one |
+| `--limit N` | merge groups attempted per pass (default 2) |
+| `--dry-run` | generate and validate, write nothing |
+
+Every pass writes a report to `.rmc/dreams/<timestamp>.md` recording what was
+examined, what merged, what was refused and why, and the before/after of nodes,
+apexes and tokens served at apex.
+
 ### `rmc compact`
 Compress lessons and regression-test the result.
 
@@ -173,6 +190,10 @@ Any key can be overridden per-run by an environment variable:
 | `learning.min_surprises` | `2` | failed tool calls that also do |
 | `learning.nudge_cooldown_s` | `900` | minimum gap between asks |
 | `learning.nudge_backoff_after` | `3` | consecutive fruitless nudges before backing off |
+| `dream.enabled` | `true` | run whole-store consolidation at all |
+| `dream.interval_s` | `86400` | minimum gap between dreams |
+| `dream.min_new_episodes` | `3` | new multi-lesson episodes required before dreaming |
+| `dream.limit` | `2` | merge groups attempted per pass |
 | `placement.consult` | `true` | ask a model how new knowledge relates to old |
 | `placement.judge_calls` | `2` | model calls the relatedness walk may spend |
 | `placement.max_depth` | `2` | how far down the walk may look |
