@@ -2,14 +2,16 @@
 
 Two events carry the whole loop:
 
-``user-prompt-submit``  inject the apex lessons matching this prompt
-``stop`` / ``session-end``  score what happened, then learn from it
+``user-prompt-submit``  inject the lessons that bear on this prompt
+``stop`` / ``session-end``  hand the session to a detached learner
 
 Three rules govern everything here:
 
 1. **Never block the user.** A hook that errors, hangs or prints garbage
-   degrades someone's editor. Every path is wrapped, every failure exits 0, and
-   the expensive work is detached into a background process.
+   degrades someone's editor. Every path is wrapped and every failure exits 0.
+   This binds hardest at session end: the host is tearing down and cancels a
+   hook still running, so work that is slow there does not happen *at all*.
+   Everything expensive is detached; only transcript parsing runs inline.
 2. **Never recurse.** The background work spawns `claude`/`codex`, which would
    fire these same hooks. `RMC_CHILD=1` in the child environment stops that.
 3. **Judgement is the model's.** Relevance is decided by a model call, cached
@@ -29,7 +31,7 @@ from typing import Any
 
 from .adapters import get_adapter
 from .recall import recall_pack
-from .signals import parse_transcript
+from .signals import parse_transcript, worth_assessing
 from .store import Store
 
 BANNER = "## Recalled lessons (RMC)"
@@ -149,7 +151,14 @@ def recall_notice(pack) -> str:
 
 
 def on_session_end(payload: dict[str, Any]) -> int:
-    """Score the session now (free), then detach the expensive learning."""
+    """Hand the whole post-session pipeline to a detached process, immediately.
+
+    Nothing here may block. A session is *exiting*: the host is tearing down and
+    will cancel a hook that is still running, so anything slow is not merely
+    late, it never happens. Judging the session takes a model call, so the only
+    work done inline is parsing the transcript to decide whether it is worth
+    spawning at all.
+    """
     store = _store_for(payload)
     if store is None:
         return 0
@@ -161,37 +170,23 @@ def on_session_end(payload: dict[str, Any]) -> int:
 
     state = store.read_session(session_id)
     served = list(state.get("served") or [])
+
+    # Cheap structural gate, so a trivial session does not even spawn.
     facts = parse_transcript(Path(transcript))
     if not facts.user_messages:
         return 0
-
-    from .reflect import observe
-
-    adapter = get_adapter(
-        str(store.config.get("agent", "claude")), model=store.config.get("model")
-    )
-    try:
-        result = observe(
-            store,
-            facts,
-            adapter=adapter if adapter.available() else None,
-            session_id=session_id,
-            served=served,
-            family_hint=(state.get("families") or [""])[0],
-            cwd=str(state.get("cwd") or ""),
-        )
-    except Exception as exc:  # never let bookkeeping break the user's session
-        store.log("error", where="observe", error=f"{type(exc).__name__}: {exc}")
+    if not worth_assessing(
+        facts, min_tool_calls=int(store.config.get("learning.min_tool_calls", 8))
+    ):
+        store.log("observe", session=session_id, outcome="skipped", reason="session too small")
         return 0
 
-    # Minting and compaction spawn agents, so they cannot run inline.
-    spawn_background(
-        store,
-        ["learn", "--transcript", str(transcript), "--session", session_id or "unknown"],
-        cwd=state.get("cwd") or os.getcwd(),
-    )
-    if result.outcome.label == "success":
-        spawn_background(store, ["compact", "--due", "--limit", "1"], cwd=state.get("cwd") or os.getcwd())
+    args = ["absorb", "--transcript", str(transcript), "--session", session_id or "unknown"]
+    if served:
+        args += ["--served", ",".join(served)]
+    if state.get("families"):
+        args += ["--family", state["families"][0]]
+    spawn_background(store, args, cwd=state.get("cwd") or os.getcwd())
     return 0
 
 

@@ -263,6 +263,55 @@ def _slugify(text: str) -> str:
     return cleaned.strip("-")[:48] or "general"
 
 
+def cmd_absorb(args: argparse.Namespace) -> int:
+    """The whole post-session pipeline, run detached: judge, learn, compress.
+
+    Exists as one command rather than three spawns because the steps are
+    ordered: compaction is only eligible once `observe` has recorded the
+    successes that make a node due. Running them as separate background
+    processes raced, and compaction usually lost.
+    """
+    from .compact import run_due
+    from .reflect import mint, observe
+    from .signals import parse_transcript
+
+    store = need_store(args)
+    if store is None:
+        return 1
+    path = Path(args.transcript)
+    if not path.exists():
+        return die(f"no such transcript: {path}")
+
+    adapter = make_adapter(store, args)
+    facts = parse_transcript(path)
+    served = [s for s in (args.served or "").split(",") if s]
+
+    result = observe(
+        store,
+        facts,
+        adapter=adapter,
+        session_id=args.session or "",
+        served=served,
+        family_hint=args.family or "",
+    )
+    if result.skipped:
+        print(f"observe: skipped ({result.skipped})")
+        return 0
+    print(
+        f"observe: {result.outcome.label} conf={result.outcome.confidence:.2f} "
+        f"corrected={result.outcome.corrected} rescues={len(result.rescues)}"
+    )
+
+    minted = mint(store, adapter, facts, outcome=result.outcome, session_id=args.session or "")
+    print(f"learn: {minted.reason[:160]}")
+
+    if result.outcome.label == "success":
+        for res in run_due(store, adapter, limit=1):
+            state = "accepted" if res.accepted else "rejected"
+            print(f"compact: {state} {res.node_id} — {res.reason[:120]}")
+    return 0
+
+
 def cmd_observe(args: argparse.Namespace) -> int:
     from .reflect import observe
     from .signals import parse_transcript
@@ -662,6 +711,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-reconcile", action="store_true", help="skip the consistency check")
     add_agent_flags(p)
     p.set_defaults(func=cmd_add)
+
+    p = sub.add_parser(
+        "absorb", help="run the whole post-session pipeline (judge, learn, compress)"
+    )
+    p.add_argument("--transcript", required=True)
+    p.add_argument("--session")
+    p.add_argument("--served", help="comma-separated node ids that were injected")
+    p.add_argument("--family")
+    add_agent_flags(p)
+    p.set_defaults(func=cmd_absorb)
 
     p = sub.add_parser("observe", help="judge a transcript and update stats")
     p.add_argument("--transcript", required=True)

@@ -33,8 +33,8 @@ tagged entries — hooks you configured yourself are left alone.
 
 | Event | Command | Purpose | Budget |
 |---|---|---|---|
-| `UserPromptSubmit` | `rmc hook user-prompt-submit` | ask which remembered lessons bear on this prompt, and inject them | 10s, 1 model call, cached per prompt |
-| `SessionEnd` | `rmc hook session-end` | judge how the session went, then detach learning | 15s, 1 model call |
+| `UserPromptSubmit` | `rmc hook user-prompt-submit` | serve the lessons that bear on this prompt | 30s; instant while the store fits the budget |
+| `SessionEnd` | `rmc hook session-end` | parse the transcript, then detach the whole learner | 30s; returns in ~0.1s, always |
 
 `UserPromptSubmit` returns:
 
@@ -74,6 +74,16 @@ transcript or a raised exception all degrade to "inject nothing" rather than
 interrupting the session. This is deliberate: a memory system that can break
 someone's editor will be uninstalled, and correctly so.
 
+`SessionEnd` gets a stricter rule still. The host is shutting down and will
+cancel a hook that is still running, so slow work there is not late — it never
+happens. Judging a session takes a model call, so the hook does none of it: it
+parses the transcript, decides whether the session is even worth learning from,
+and hands everything else to a detached `rmc absorb`. It returns in about 0.1s.
+
+`absorb` runs judge → learn → compress in that order, in one process. They were
+briefly three parallel spawns, which raced: compaction is only eligible once the
+judgement has recorded the successes that make a node due, so it usually lost.
+
 ---
 
 ## Codex
@@ -110,7 +120,7 @@ rmc compact --due --agent codex
   sessions/          per-session scratch. Machine-local.
   events.jsonl       telemetry. Machine-local.
   judge-cache.json   cached judgements. Machine-local.
-  background.log     output from detached learning runs.
+  background.log     output from detached learning runs (`rmc absorb`).
 ```
 
 ### Two scopes
