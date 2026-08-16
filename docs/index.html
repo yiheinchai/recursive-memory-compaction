@@ -47,8 +47,9 @@
 <div class="wrap hero-head">
   <h1>Agent memory that gets cheaper<br><span class="accent">the more you use it.</span></h1>
   <p class="lede">
-    For Claude Code and Codex. It learns a lesson once, then makes it shorter
-    every time the lesson proves useful.
+    For Claude Code and Codex. It learns what you had to correct, so you never
+    have to say it twice — and the context it costs you goes <i>down</i> the
+    longer you use it.
   </p>
   <div class="hero-cta">
     <a class="btn" href="#install">Get started</a>
@@ -59,7 +60,7 @@
 <!-- ------------------------------------------------------ what a lesson is -->
 <div class="wrap" id="idea">
   <div class="fig-lead">
-    <span class="kicker" style="margin:0">One problem, three sessions, one shrinking lesson</span>
+    <span class="kicker" style="margin:0">Watch it learn once, then get cheaper twice</span>
   </div>
   <figure class="fig term-fig" data-term>
     <div class="plate">
@@ -123,38 +124,28 @@
     </div>
   </figure>
 
-  <div class="two" style="padding:16px 0 clamp(30px,4vw,48px)">
-    <div><h3>You never write one.</h3></div>
-    <div>
-      <p style="color:var(--muted);margin-top:6px">
-        You spend a session getting something right — a wrong turn, a correction,
-        a fix. RMC watches that happen and writes down the
-        <b style="color:var(--ink)">conclusion</b>, not the transcript. Next time
-        the same problem comes up, the conclusion goes into context and the
-        session does not.
-      </p>
-    </div>
   </div>
-</div>
 
-
-<!-- ------------------------------------------------------- what that was -->
+<!-- ---------------------------------------------------------- payoff -->
 <div class="wrap">
-  <div class="two" style="padding:8px 0 clamp(30px,4vw,52px)">
+  <div class="two" style="padding:10px 0 clamp(30px,4vw,52px)">
     <div>
-      <h3>Two numbers, moving apart.</h3>
+      <h3>By session three it knew more<br>and cost half as much.</h3>
     </div>
     <div>
       <p style="color:var(--muted);margin-top:6px">
-        Across those three sessions the store <b style="color:var(--ink)">grew</b>
-        — a second lesson arrived, then the two became a shared parent — while
-        what gets loaded fell from <b style="color:var(--ink)">260 to 118 tokens</b>
-        for strictly more knowledge.
+        Nobody wrote that lesson. You corrected the agent once, in the course of
+        normal work, and RMC kept the conclusion instead of the transcript —
+        <b style="color:var(--ink)">4,200 tokens of fumbling reduced to 260</b>.
       </p>
       <p style="color:var(--muted)">
-        Every other memory system moves those together: remember more, load more.
-        Pulling them apart is the whole idea, and it works because a lesson only
-        earns a shorter form after it has been used on work that succeeded.
+        Then it earned its way shorter twice: used, worked, shortened. A second
+        lesson arrived from another repo and the two became one. Store went up,
+        <b style="color:var(--ink)">tokens loaded went 260 → 118</b>.
+      </p>
+      <p style="color:var(--muted)">
+        Every other memory moves those together — remember more, load more.
+        Pulling them apart is the entire product.
       </p>
       <p><a href="docs.html">How it works&nbsp;→</a></p>
     </div>
@@ -165,7 +156,7 @@
 <section id="different">
   <div class="wrap">
     <div class="kicker">Why it's different</div>
-    <h3 style="max-width:20ch">There were only two options.<br>Both of them rot.</h3>
+    <h3 style="max-width:20ch">Every other memory either<br>bankrupts you or forgets.</h3>
 
 <figure class="fig" style="margin-top:32px">
       <div class="plate">
@@ -256,8 +247,8 @@
 <!-- ----------------------------------------------------- three ideas -->
 <section>
   <div class="wrap">
-    <div class="kicker">What makes it work</div>
-    <h3 style="max-width:24ch">Three ideas, and none of them is a similarity score.</h3>
+    <div class="kicker">Why you can trust it to shorten</div>
+    <h3 style="max-width:24ch">It gets shorter without losing anything.</h3>
 
     <div class="three" style="margin-top:38px">
       <div class="cell">
@@ -294,7 +285,7 @@
 <!-- ---------------------------------------------------------- descent -->
 <section>
   <div class="wrap">
-    <div class="kicker">The hard part</div>
+    <div class="kicker">The obvious objection</div>
     <div class="two">
       <div>
         <h3>What happens when the short lesson isn't enough?</h3>
@@ -411,7 +402,7 @@
     <div class="kicker">Install</div>
     <div class="two">
       <div>
-        <h3>You don't drive it.</h3>
+        <h3>Install once. It runs in every repo you open.</h3>
         <p style="color:var(--muted)">
           Install once, then work normally. RMC runs in hooks: it injects on
           prompt submit, reflects off-thread when a turn ends, mints and
@@ -450,7 +441,7 @@ rmc recall --prompt <span class="g">"..."</span>  <span class="c"># what it woul
     <div class="kicker">Where it is honest</div>
     <div class="two">
       <div>
-        <h3>What it does not do yet.</h3>
+        <h3>What it still gets wrong.</h3>
         <p style="color:var(--muted)">
           RMC is young and its claims are falsifiable, which is the point.
           <code>rmc eval</code> replays held-out work against every level of a
