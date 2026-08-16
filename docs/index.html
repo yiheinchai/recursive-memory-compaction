@@ -435,12 +435,15 @@
         <p><a href="docs.html">Read the docs&nbsp;→</a></p>
       </div>
       <div>
-        <div class="kicker" style="margin-bottom:10px">As a Claude Code plugin</div>
+        <div class="kicker" style="margin-bottom:10px">Install</div>
+<pre>uv tool install rmc-memory
+rmc install --scope user</pre>
+        <div class="kicker" style="margin:26px 0 10px">Or as a Claude Code plugin</div>
 <pre><span class="b">/plugin</span> marketplace add yiheinchai/rmc
 <span class="b">/plugin</span> install rmc@rmc</pre>
-        <div class="kicker" style="margin:26px 0 10px">Or from a clone</div>
+        <div class="kicker" style="margin:26px 0 10px">Working on RMC itself</div>
 <pre>git clone https://github.com/yiheinchai/rmc
-<span class="c">cd</span> rmc &amp;&amp; ./bin/rmc install --link \
+<span class="c">cd</span> rmc &amp;&amp; ./bin/rmc install --scope user \
   --target claude --target codex</pre>
         <div class="kicker" style="margin:26px 0 10px">Then, whenever you're curious</div>
 <pre>rmc status     <span class="c"># what it knows, what it cost</span>

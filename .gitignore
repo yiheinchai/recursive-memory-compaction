@@ -17,3 +17,8 @@ venv/
 !examples/**/.rmc/
 sandbox/
 *.log
+
+# build artefacts
+dist/
+build/
+*.egg-info/

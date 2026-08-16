@@ -350,13 +350,23 @@
       virtualenv because the package is stdlib-only.
     </p>
 
-    <h3>As a Claude Code plugin (works in every repo)</h3>
+    <h3>Install</h3>
+<pre>uv tool install rmc-memory
+rmc install --scope user</pre>
+<p>
+  That is the whole thing — <code>rmc install</code> wires the hooks and RMC runs
+  in every repo you open. Try it first with <code>uvx rmc-memory doctor</code>.
+  The distribution is <code>rmc-memory</code> because <code>rmc</code> was taken
+  on PyPI; the command it installs is <code>rmc</code>.
+</p>
+
+<h3>Or as a Claude Code plugin</h3>
 <pre><span class="b">/plugin</span> marketplace add yiheinchai/rmc
 <span class="b">/plugin</span> install rmc@rmc</pre>
 
-    <h3>Or from a clone, into one repo</h3>
+    <h3>Working on RMC itself</h3>
 <pre>git clone https://github.com/yiheinchai/rmc
-<span class="c">cd</span> rmc &amp;&amp; ./bin/rmc install --link --target claude --target codex</pre>
+<span class="c">cd</span> rmc &amp;&amp; ./bin/rmc install --scope user --target claude --target codex</pre>
     <p>
       Add <code>--scope user</code> to install globally.
       <code>rmc uninstall</code> removes only what RMC added.

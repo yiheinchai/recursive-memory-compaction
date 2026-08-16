@@ -1,0 +1,39 @@
+# Publish to PyPI when a version tag is pushed.
+#
+# Uses Trusted Publishing (OIDC) rather than a stored API token: configure
+# rmc-memory on PyPI to trust this repository + workflow, and no secret ever
+# has to exist. https://docs.pypi.org/trusted-publishers/
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m unittest discover -s tests
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write          # required for Trusted Publishing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pipx run build
+      - name: Check the built distributions
+        run: pipx run twine check dist/*
+      - uses: pypa/gh-action-pypi-publish@release/v1

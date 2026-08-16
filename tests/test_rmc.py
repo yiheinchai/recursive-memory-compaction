@@ -1979,12 +1979,29 @@ class TestCliOnPath(unittest.TestCase):
                         "a link into a dir that is not on PATH must say so")
 
     def test_advice_is_given_when_the_command_is_missing(self) -> None:
-        with mock.patch.object(self.inst.shutil, "which", return_value=None):
+        home = Path(self.tmp)          # nothing linked here yet
+        with mock.patch.object(Path, "home", staticmethod(lambda: home)), \
+             self._env("/usr/bin:/bin", self.tmp), \
+             mock.patch.object(self.inst.shutil, "which", return_value=None):
             advice = self.inst.cli_advice()
         self.assertTrue(advice)
         self.assertTrue(any("ln -s" in line for line in advice))
         self.assertTrue(any("Hooks are unaffected" in line for line in advice),
                         "must not imply the hooks are broken too")
+
+    def test_advice_after_linking_never_tells_you_to_run_rmc(self) -> None:
+        """The bootstrap trap: advice for someone without the command must not
+        require the command. Once linked, the only gap is PATH itself."""
+        home = Path(self.tmp)
+        with mock.patch.object(Path, "home", staticmethod(lambda: home)), \
+             self._env("/usr/bin:/bin", self.tmp), \
+             mock.patch.object(self.inst.shutil, "which", return_value=None):
+            self.inst.link_cli()
+            advice = self.inst.cli_advice()
+        text = "\n".join(advice)
+        self.assertIn("export PATH=", text, "must say how to finish the job")
+        self.assertNotIn("ln -s", text, "it is already linked; do not repeat that step")
+        self.assertNotIn("rmc install", text, "cannot ask them to run the missing command")
 
     def test_no_advice_when_already_on_path(self) -> None:
         with mock.patch.object(self.inst.shutil, "which", return_value="/somewhere/rmc"):

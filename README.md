@@ -523,41 +523,51 @@ sends anything anywhere; model calls go through whichever CLI you already have.
 
 ## Install
 
-Python 3.10+ and at least one of `claude` / `codex`. No third-party Python
+Python 3.10+ and at least one of `claude` / `codex`. No third-party
 dependencies.
 
-**As a Claude Code plugin** (works in every repo):
+```bash
+uv tool install rmc-memory
+rmc install --scope user
+```
+
+That is the whole thing. `rmc install` wires the hooks and RMC runs in every
+repo you open — you do not drive it, you just work. Drop `--scope user` to
+limit it to the project you run it from.
+
+Try it without installing anything: `uvx rmc-memory doctor`. Without uv:
+`pipx install rmc-memory`, or `pip install --user rmc-memory`.
+
+> The distribution is `rmc-memory` because `rmc` was taken on PyPI. The command
+> it installs, and the package you import, are both `rmc`.
+
+**As a Claude Code plugin**, if you would rather not install anything yourself:
 
 ```
 /plugin marketplace add yiheinchai/rmc
 /plugin install rmc@rmc
 ```
 
-**Or from a clone**, into one repo:
-
-```bash
-git clone https://github.com/yiheinchai/rmc
-cd rmc && ./bin/rmc install --target claude --target codex
-```
-
-`./bin/rmc` needs no virtualenv — the package is stdlib-only. Add
-`--scope user` to install globally. `rmc uninstall` removes only what RMC added.
-
-**Getting the `rmc` command.** Installing wires *hooks*, which invoke the
-package by absolute path and never need your PATH — so RMC runs whether or not
-the command exists in a shell. The CLI below is a separate thing. Add `--link`
-to put it on PATH:
-
-```bash
-./bin/rmc install --link
-```
-
-or do it yourself with `ln -s "$PWD/bin/rmc" ~/.local/bin/rmc`. `rmc doctor`
-reports which of the two you have.
-
 **Codex** gets an `AGENTS.md` block instructing the agent to call `rmc recall`
 itself, since Codex's hook schema is less settled. Codex also works as an
 execution backend for any RMC install (`rmc config agent codex`).
+
+### Working on RMC itself
+
+```bash
+git clone https://github.com/yiheinchai/rmc && cd rmc
+python3 -m unittest discover -s tests
+./bin/rmc install --scope user
+```
+
+`./bin/rmc` runs from a clone with no virtualenv, since the package is
+stdlib-only. Installing from a clone also symlinks the command into
+`~/.local/bin`; pass `--no-link` to skip that. Note the scope — without
+`--scope user` the hooks land in the clone, and every repo you actually work in
+gets nothing.
+
+`rmc uninstall` removes only what RMC added, and `rmc doctor` reports what is
+wired where.
 
 ---
 

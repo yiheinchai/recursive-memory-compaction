@@ -333,26 +333,57 @@ def link_cli(*, dry_run: bool = False) -> list[str]:
 
 
 def cli_advice() -> list[str]:
-    """What to tell someone who did not pass --link."""
+    """What to tell someone still lacking the command.
+
+    Every suggestion here must be runnable by someone who does not have `rmc`
+    on PATH — that is the whole problem being solved, so "run rmc ..." is not
+    an answer. Absolute paths only.
+    """
     if cli_on_path():
         return []
     shim = shim_path()
     if shim is None:
         return ["`rmc` is not on PATH. Install the package to get it:", "    pip install -e ."]
-    target = link_dir() / "rmc"
-    return [
-        "`rmc` is not on PATH, so the commands above will not run in a shell.",
-        "Hooks are unaffected — they call the package directly. To get the CLI:",
-        f"    ln -s {shim} {target}",
-        "or re-run this with --link.",
-    ]
+
+    target_dir = link_dir()
+    target = target_dir / "rmc"
+    head = "`rmc` is not on PATH, so the commands above will not run in a shell."
+    tail = "Hooks are unaffected — they call the package directly."
+
+    if target.is_symlink() and target.resolve() == shim.resolve():
+        # Already linked; the only thing missing is the directory on PATH.
+        return [head, tail + " The command is installed at:",
+                f"    {target}",
+                "Add its directory to your shell profile:",
+                f'    export PATH="{target_dir}:$PATH"']
+    return [head, tail + " To get the CLI:", f"    ln -s {shim} {target}"]
+
+
+def installing_into_rmc_itself(path: Path) -> bool:
+    """Is project-scope install being pointed at RMC's own clone?
+
+    The documented clone install used to say `cd rmc && ./bin/rmc install`,
+    which wires hooks into the clone — a repository the user has no intention
+    of working in — while every project they actually use gets nothing. It is
+    the exact opposite of what the product promises, and it looks like success.
+    """
+    repo = Path(__file__).resolve().parent.parent
+    return path.resolve() == repo and (repo / "rmc" / "__init__.py").exists()
 
 
 def install(*, scope: str, targets: list[str], path: Path, dry_run: bool = False,
-            link: bool = False) -> int:
+            link: bool = True) -> int:
+    from .adapters import available_backends
     from .store import Store
 
     path = path.resolve()
+
+    if scope == "project" and installing_into_rmc_itself(path):
+        print("! you are installing into RMC's own clone, so the hooks will only")
+        print("  fire while you work in this directory. To get RMC in the repos")
+        print("  you actually work on:")
+        print("      ./bin/rmc install --scope user")
+        print("  (continuing — this is what you want if you are working on RMC itself)\n")
     if Store.discover(path) is None:
         Store.init(path)
         print(f"initialised store at {path / '.rmc'}")
@@ -376,10 +407,22 @@ def install(*, scope: str, targets: list[str], path: Path, dry_run: bool = False
         print("\n(dry run — nothing written)")
         return 0
 
+    backends = available_backends()
+    usable = [b for b in backends if b != "mock"]
+    if not usable:
+        print("\n! no agent backend found on PATH — RMC needs `claude` or `codex`")
+        print("  to judge, reflect and compress. Nothing will be learned until one")
+        print("  is installed; the hooks will simply no-op.")
+
     print("\nRMC is active. Lessons will be recalled and compressed automatically.")
-    # --link already reported precisely what it did and what remains; repeating
-    # the generic advice would tell them to re-run the flag they just used.
-    advice = [] if link else cli_advice()
+    if scope == "user":
+        print("It runs in every repo you open. Nothing else to do — just work.")
+    else:
+        print(f"It runs when you work in {path.name}/. Use --scope user for every repo.")
+    print(dimmed("You will see `⋯ RMC · N lessons · N tok` above your prompt once it"))
+    print(dimmed("has learned something. That usually takes a few sessions."))
+
+    advice = cli_advice()
     if advice:
         print()
         for line in advice:

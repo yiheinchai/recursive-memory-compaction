@@ -3,17 +3,40 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rmc"
+# The distribution is `rmc-memory` because `rmc` is taken on PyPI; the command
+# it installs is still `rmc`, and the import package is still `rmc`.
+name = "rmc-memory"
 version = "0.1.0"
-description = "Recursive Memory Compaction — a continual-learning harness for Claude Code and Codex"
+description = "Recursive Memory Compaction — agent memory that gets cheaper the more you use it"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Yi Hein Chai" }]
+keywords = ["claude", "claude-code", "codex", "agent", "memory", "continual-learning", "llm"]
 dependencies = []
 
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Code Generators",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Homepage = "https://yiheinchai.com/rmc"
+Documentation = "https://yiheinchai.com/rmc/docs.html"
+Source = "https://github.com/yiheinchai/rmc"
+Issues = "https://github.com/yiheinchai/rmc/issues"
+
 [project.optional-dependencies]
-dev = ["pytest>=7"]
+dev = ["pytest>=7", "build", "twine"]
 
 [project.scripts]
 rmc = "rmc.cli:main"
