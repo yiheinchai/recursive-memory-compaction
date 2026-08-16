@@ -546,6 +546,326 @@ class TestObserve(StoreCase):
         self.assertEqual(self.store.get("n_o3").stats.attempts, 0)
 
 
+class TestPlacement(StoreCase):
+    """Where new knowledge goes: fold in, sit beside, start fresh, or conflict."""
+
+    RETRY_BODY = "Retry idempotent HTTP calls with jittered exponential backoff."
+
+    def seed(self) -> Node:
+        return self.add_node(
+            id="n_seed",
+            family="retry",
+            title="Retry",
+            body=self.RETRY_BODY,
+            level=0,
+            tags=["retry", "http"],
+        )
+
+    def reconciler(self, relation: str, match: str = "n_seed", **extra):
+        payload = {
+            "match": match,
+            "relation": relation,
+            "rationale": f"mock says {relation}",
+            **extra,
+        }
+        return MockAdapter(router=lambda prompt, schema: payload)
+
+    def test_unrelated_lesson_starts_a_new_leaf_without_a_model_call(self) -> None:
+        from rmc.placement import decide
+
+        self.seed()
+        adapter = MockAdapter(router=lambda p, s: self.fail("should not consult a model"))
+        decision = decide(
+            self.store,
+            adapter,
+            body="Figma exports need the viewBox stripped before committing SVGs.",
+            family_hint="svg-assets",
+        )
+        self.assertEqual(decision.action, "new-family")
+        self.assertFalse(decision.consulted)
+
+    def test_refinement_folds_into_the_base_node(self) -> None:
+        from rmc.placement import apply, decide
+
+        seed = self.seed()
+        merged = self.RETRY_BODY + " Cap total elapsed time by the caller's deadline."
+        decision = decide(
+            self.store,
+            self.reconciler("refines", merged_body=merged),
+            body="Retry attempts must be capped by the caller's deadline, not attempt count.",
+            family_hint="retry",
+        )
+        self.assertEqual(decision.action, "fold-into")
+
+        node = Node(id="n_new", family="retry", body="ignored", level=0)
+        result = apply(self.store, decision, node)
+        self.assertIn("deadline", self.store.get(seed.id).body)
+        # No second node: refinement merges rather than accumulating near-duplicates.
+        self.assertIsNone(self.store.get("n_new"))
+        self.assertEqual(result.node.id, seed.id)
+
+    def test_refinement_patches_ancestors_so_the_apex_is_not_left_stale(self) -> None:
+        from rmc.placement import apply, decide
+
+        base = self.seed()
+        apex = self.add_node(
+            id="n_apex2", family="retry", body="Retry idempotently.", level=1, derived_from=[base.id]
+        )
+        base.compressed_into = apex.id
+        self.store.save_node(base)
+        self.store.invalidate()
+
+        decision = decide(
+            self.store,
+            self.reconciler("refines", merged_body=self.RETRY_BODY + " Cap by deadline."),
+            body="Cap retries by the caller's deadline.",
+            family_hint="retry",
+        )
+        result = apply(self.store, decision, Node(id="n_x", family="retry", body="b"))
+        self.assertIn(apex.id, result.patched)
+        # The patch must reach recall immediately, not wait for recompression.
+        pack = recall_pack(self.store, "retry the http call with backoff")
+        self.assertTrue(pack.patches)
+
+    def test_contradiction_disputes_both_and_asks_a_question(self) -> None:
+        from rmc.placement import apply, decide, open_conflicts
+
+        seed = self.seed()
+        decision = decide(
+            self.store,
+            self.reconciler(
+                "contradicts", question="Is a fixed delay required, or jittered backoff?"
+            ),
+            body="Always retry with a fixed 1s delay; never jitter.",
+            family_hint="retry",
+        )
+        self.assertEqual(decision.action, "conflict")
+
+        node = Node(id="n_conflict", family="retry", body="Always use a fixed 1s delay.", level=0)
+        apply(self.store, decision, node)
+
+        # Both sides are marked, because we do not know which one is wrong.
+        self.assertEqual(self.store.get(seed.id).status, "disputed")
+        self.assertEqual(self.store.get("n_conflict").status, "disputed")
+        self.assertEqual({n.id for n in open_conflicts(self.store)}, {seed.id, "n_conflict"})
+
+    def test_conflict_is_surfaced_in_the_recall_pack(self) -> None:
+        node = self.add_node(
+            id="n_disp",
+            family="retry",
+            title="Retry",
+            body=self.RETRY_BODY,
+            level=0,
+            tags=["retry", "http"],
+            status="disputed",
+            conflict="Is a fixed delay required, or jittered backoff?",
+        )
+        pack = recall_pack(self.store, "add retry with backoff to the http client")
+        self.assertIn("Unresolved", pack.text)
+        self.assertIn("fixed delay", pack.text)
+        self.assertEqual(pack.conflicts, [node.id])
+
+    def test_resolving_clears_the_conflict(self) -> None:
+        from rmc.placement import resolve
+
+        self.add_node(
+            id="n_r1",
+            family="retry",
+            body=self.RETRY_BODY,
+            level=0,
+            status="disputed",
+            conflict="which one?",
+        )
+        resolve(self.store, "n_r1", keep=True)
+        node = self.store.get("n_r1")
+        self.assertEqual(node.status, "active")
+        self.assertEqual(node.conflict, "")
+
+    def test_duplicate_writes_nothing(self) -> None:
+        from rmc.placement import apply, decide
+
+        self.seed()
+        decision = decide(
+            self.store,
+            self.reconciler("duplicate"),
+            body="Retry idempotent HTTP requests using jittered exponential backoff.",
+            family_hint="retry",
+        )
+        self.assertEqual(decision.action, "duplicate")
+        result = apply(self.store, decision, Node(id="n_dup", family="retry", body="x"))
+        self.assertIsNone(result.node)
+        self.assertIsNone(self.store.get("n_dup"))
+
+    def test_reconciler_failure_degrades_to_attaching_alongside(self) -> None:
+        from rmc.placement import decide
+
+        self.seed()
+        broken = MockAdapter(router=lambda p, s: AgentResultStub())
+        decision = decide(
+            self.store,
+            broken,
+            body="Retry idempotent HTTP calls, and log the attempt count.",
+            family_hint="retry",
+        )
+        # Nothing is lost or overwritten when reconciliation is unavailable.
+        self.assertEqual(decision.action, "attach-sibling")
+
+
+class TestReconciliationEfficiency(StoreCase):
+    """Reconciliation must stay cheap as the tree grows."""
+
+    def test_value_mismatch_is_detected_for_free(self) -> None:
+        from rmc.placement import contradiction_hints
+
+        hints = contradiction_hints(
+            "Run the suite with PAYMENTS_PG_PORT=5433 pytest tests/integration",
+            "The payments postgres moved: use PAYMENTS_PG_PORT=5434 instead",
+        )
+        self.assertTrue(hints)
+        self.assertIn("PAYMENTS_PG_PORT", hints[0])
+
+    def test_agreeing_values_produce_no_hint(self) -> None:
+        from rmc.placement import contradiction_hints
+
+        self.assertEqual(
+            contradiction_hints("use PORT=5433 here", "also use PORT=5433 in staging"), []
+        )
+
+    def test_value_mismatch_forces_a_check_similarity_would_have_skipped(self) -> None:
+        """The case a similarity floor misses is exactly the one that matters."""
+        from rmc.placement import decide
+
+        self.add_node(
+            id="n_seed",
+            family="db",
+            title="DB",
+            body="Point the harness at the database with PAYMENTS_PG_PORT=5433.",
+            level=0,
+        )
+        calls: list[str] = []
+
+        def router(prompt, schema):
+            calls.append(prompt)
+            return {"match": "n_seed", "relation": "contradicts", "rationale": "port differs",
+                    "question": "which port?"}
+
+        # Almost no shared vocabulary — similarity alone would file this as a new
+        # leaf and the contradiction would go unnoticed forever.
+        decision = decide(
+            self.store,
+            MockAdapter(router=router),
+            body="Migration runbook step 7: export PAYMENTS_PG_PORT=5434 before invoking flyway.",
+            family_hint="migrations",
+        )
+        self.assertEqual(len(calls), 1)
+        self.assertIn("PAYMENTS_PG_PORT", calls[0])
+        self.assertEqual(decision.action, "conflict")
+
+    def test_all_candidates_are_reconciled_in_one_call(self) -> None:
+        from rmc.placement import decide
+
+        for i in range(3):
+            self.add_node(
+                id=f"n_c{i}",
+                family=f"retry{i}",
+                title="Retry",
+                body="Retry idempotent http calls with jittered exponential backoff.",
+                level=0,
+            )
+        calls: list[str] = []
+
+        def router(prompt, schema):
+            calls.append(prompt)
+            return {"match": "n_c1", "relation": "specialises", "rationale": "distinct case"}
+
+        decision = decide(
+            self.store,
+            MockAdapter(router=router),
+            body="Retry idempotent http calls, but give websocket upgrades a longer backoff.",
+            family_hint="retry0",
+        )
+        self.assertEqual(len(calls), 1, "one call must cover every candidate")
+        # And the match may be a candidate other than the top-scoring one.
+        self.assertEqual(decision.target.id, "n_c1")
+
+    def test_verdicts_are_cached_so_reruns_are_free(self) -> None:
+        from rmc.placement import decide
+
+        self.add_node(id="n_seed", family="retry", title="Retry",
+                      body="Retry idempotent http calls with jittered backoff.", level=0)
+        calls: list[int] = []
+
+        def router(prompt, schema):
+            calls.append(1)
+            return {"match": "n_seed", "relation": "duplicate", "rationale": "same"}
+
+        body = "Retry idempotent http requests using jittered exponential backoff."
+        for _ in range(3):
+            decide(self.store, MockAdapter(router=router), body=body, family_hint="retry")
+        self.assertEqual(len(calls), 1, "identical reconciliation must not be re-paid")
+
+
+class AgentResultStub:
+    """Stands in for a reconciler that returned nothing usable."""
+
+    ok = False
+    data = None
+    text = ""
+    error = "boom"
+
+
+class TestSelfDiscovery(StoreCase):
+    """Learning from the environment, with no human in the loop."""
+
+    def build(self):
+        from rmc.signals import SessionFacts, ToolEvent
+
+        return SessionFacts(
+            user_messages=["run the integration tests"],
+            assistant_messages=["tests pass"],
+            tool_outputs=["42 passed"],
+            tool_calls=4,
+            tool_events=[
+                ToolEvent("Bash", "pytest tests/integration", "could not connect to postgres", False, "1"),
+                ToolEvent("Bash", "docker compose up -d postgres", "port 5432 already allocated", False, "2"),
+                ToolEvent("Read", "tests/conftest.py", "PAYMENTS_PG_PORT", True, "3"),
+                ToolEvent("Bash", "PAYMENTS_PG_PORT=5433 pytest tests/integration", "42 passed", True, "4"),
+            ],
+        )
+
+    def test_error_then_fix_is_detected(self) -> None:
+        from rmc.signals import discoveries
+
+        found = discoveries(self.build())
+        self.assertTrue(found)
+        self.assertEqual(found[0].tool, "Bash")
+        self.assertIn("PAYMENTS_PG_PORT", found[0].worked)
+        self.assertGreaterEqual(found[0].attempts, 2)
+
+    def test_identical_retry_is_flakiness_not_discovery(self) -> None:
+        from rmc.signals import SessionFacts, ToolEvent, discoveries
+
+        facts = SessionFacts(
+            tool_events=[
+                ToolEvent("Bash", "pytest", "connection reset", False, "1"),
+                ToolEvent("Bash", "pytest", "42 passed", True, "2"),
+            ]
+        )
+        self.assertEqual(discoveries(facts), [])
+
+    def test_unaided_recovery_counts_as_success(self) -> None:
+        outcome = classify(self.build(), min_tool_calls=4)
+        self.assertEqual(outcome.label, "success")
+        self.assertTrue(any("unaided" in e for e in outcome.evidence))
+
+    def test_discoveries_lead_the_reflection_excerpt(self) -> None:
+        from rmc.signals import excerpt
+
+        text = excerpt(self.build())
+        self.assertIn("[discovered by trial]", text)
+        self.assertIn("PAYMENTS_PG_PORT", text)
+
+
 class TestHooks(StoreCase):
     def test_recursion_guard(self) -> None:
         import os

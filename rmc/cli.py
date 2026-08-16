@@ -304,6 +304,39 @@ def _print_node(store: Store, node, *, prefix: str, args) -> None:
         _print_node(store, child, prefix=prefix + "    ", args=args)
 
 
+def cmd_conflicts(args: argparse.Namespace) -> int:
+    from .placement import open_conflicts
+
+    store = need_store(args)
+    if store is None:
+        return 1
+    conflicts = open_conflicts(store, args.family)
+    if not conflicts:
+        print(dim("no unresolved conflicts"))
+        return 0
+    print(bold(f"{len(conflicts)} unresolved conflict(s)"))
+    for node in conflicts:
+        print(f"\n  {bold(node.id)} [{node.family}] L{node.level}  {node.title[:50]}")
+        print(f"    {yellow('?')} {node.conflict}")
+        print(dim(f"    {node.body.splitlines()[0][:90] if node.body else ''}"))
+    print(dim("\n  settle with: rmc resolve <node-id> [--drop]"))
+    return 0
+
+
+def cmd_resolve(args: argparse.Namespace) -> int:
+    from .placement import resolve
+
+    store = need_store(args)
+    if store is None:
+        return 1
+    node = resolve(store, args.node, keep=not args.drop)
+    if node is None:
+        return die(f"no such node: {args.node}")
+    verb = "archived" if args.drop else "kept"
+    print(f"{green(verb)} {node.id} — conflict cleared")
+    return 0
+
+
 def cmd_hook(args: argparse.Namespace) -> int:
     from .hooks import dispatch
 
@@ -432,6 +465,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--family")
     p.add_argument("--verbose", "-v", action="store_true")
     p.set_defaults(func=cmd_tree)
+
+    p = sub.add_parser("conflicts", help="lessons that contradict each other")
+    p.add_argument("--family")
+    p.set_defaults(func=cmd_conflicts)
+
+    p = sub.add_parser("resolve", help="settle a conflict")
+    p.add_argument("node")
+    p.add_argument("--drop", action="store_true", help="archive this node instead of keeping it")
+    p.set_defaults(func=cmd_resolve)
 
     p = sub.add_parser("hook", help="hook entry point (called by the host agent)")
     p.add_argument("event")

@@ -51,6 +51,14 @@ DEFAULTS: dict[str, Any] = {
         "min_tool_calls": 8,  # ignore trivial sessions
         "capture_failures": True,
     },
+    "placement": {
+        # Below this lexical similarity a new lesson is a brand-new leaf and no
+        # reconciliation call is made at all.
+        "min_similarity": 0.15,
+        "consult": True,  # ask a model how new knowledge relates to old
+        "candidates": 3,  # existing lessons compared in ONE reconciliation call
+        "surface_conflicts": True,  # raise unresolved contradictions at recall
+    },
     "signals": {
         "min_confidence": 0.5,  # below this an outcome is recorded as 'unknown'
     },

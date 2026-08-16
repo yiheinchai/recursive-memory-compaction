@@ -175,19 +175,32 @@ class Store:
     def family_nodes(self, family: str, *, active_only: bool = True) -> list[Node]:
         out = [n for n in self.nodes() if n.family == family]
         if active_only:
-            out = [n for n in out if n.status in ("active", "demoted")]
+            out = [n for n in out if n.status in ("active", "demoted", "disputed")]
         return sorted(out, key=lambda n: (-n.level, n.id))
 
     def apex(self, family: str) -> Node | None:
-        """Highest-level servable node of a family (demoted nodes are skipped)."""
-        candidates = [
-            n for n in self.family_nodes(family) if n.status == "active" and n.is_apex
+        """Highest-level servable node of a family.
+
+        `disputed` nodes are still served. Withholding a contradicted lesson
+        would lose the knowledge *and* remove the occasion to ask the user about
+        it — recall is exactly when the question is worth raising. It is served
+        with its conflict note attached (see `recall.recall_pack`).
+
+        `demoted` nodes — ones that have repeatedly regressed — are skipped as
+        apex where a healthy alternative exists, since those failed on merit.
+        """
+        healthy = [
+            n
+            for n in self.family_nodes(family)
+            if n.status in ("active", "disputed") and n.is_apex
         ]
-        if not candidates:
-            candidates = [n for n in self.family_nodes(family) if n.status == "active"]
-        if not candidates:
+        if not healthy:
+            healthy = [
+                n for n in self.family_nodes(family) if n.status in ("active", "disputed")
+            ]
+        if not healthy:
             return None
-        return max(candidates, key=lambda n: (n.level, n.stats.posterior))
+        return max(healthy, key=lambda n: (n.level, n.stats.posterior))
 
     def children(self, node: Node) -> list[Node]:
         """Nodes one step *down* — more detail."""

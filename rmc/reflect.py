@@ -208,6 +208,8 @@ def descend(store: Store, nodes: list[Node], facts: SessionFacts) -> list[tuple[
 class MintResult:
     created: Node | None = None
     reason: str = ""
+    placement: Any = None  # placement.Placement, when one was decided
+    patched: list[str] = field(default_factory=list)
 
 
 def mint(
@@ -259,10 +261,37 @@ def mint(
         tags=[_slug(t) for t in (run.data.get("tags") or []) if str(t).strip()][:8],
         origin="reflection",
     )
-    store.save_node(node)
-    store.invalidate()
-    store.log("mint", node=node.id, family=family, session=session_id, tokens=node.tokens)
-    return MintResult(created=node, reason="captured")
+
+    # Reconcile with what is already known before writing. Appending blindly is
+    # how a memory grows contradictions it never notices.
+    from . import placement as placement_mod
+
+    decision = placement_mod.decide(
+        store,
+        adapter,
+        body=body,
+        family_hint=family,
+        consult=bool(store.config.get("placement.consult", True)),
+    )
+    applied = placement_mod.apply(store, decision, node)
+
+    store.log(
+        "mint",
+        node=applied.node.id if applied.node else None,
+        family=decision.family,
+        action=decision.action,
+        relation=decision.relation,
+        session=session_id,
+        tokens=node.tokens,
+    )
+    if applied.node is None:
+        return MintResult(reason=f"{decision.relation}: {decision.rationale}", placement=decision)
+    return MintResult(
+        created=applied.node,
+        reason=decision.describe(),
+        placement=decision,
+        patched=applied.patched,
+    )
 
 
 def _slug(text: str) -> str:

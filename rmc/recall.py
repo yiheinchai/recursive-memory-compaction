@@ -33,6 +33,7 @@ class Pack:
     served: list[str] = field(default_factory=list)
     families: list[str] = field(default_factory=list)
     patches: list[str] = field(default_factory=list)
+    conflicts: list[str] = field(default_factory=list)
     tokens: int = 0
 
     def __bool__(self) -> bool:
@@ -137,6 +138,21 @@ def recall_pack(
                 chunks.append(f"- {claim}")
                 pack.patches.append(claim)
                 used += claim_cost
+
+        # An unresolved contradiction is raised here, at the moment the user is
+        # already thinking about this topic — the way a student asks about a
+        # confusion during the relevant lesson, not at a random later time.
+        if store.config.get("placement.surface_conflicts", True) and node.conflict:
+            note = (
+                f"> **Unresolved:** {node.conflict.strip()}\n"
+                f"> Memory holds conflicting lessons here. Ask the user to settle it "
+                f"if it matters for this task, then run `rmc resolve <node-id>`."
+            )
+            cost = count_tokens(note)
+            if used + cost <= budget:
+                chunks.append(note)
+                pack.conflicts.append(node.id)
+                used += cost
 
     pack.text = "\n\n".join(chunks).strip()
     pack.tokens = used

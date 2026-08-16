@@ -34,7 +34,7 @@ DELTA_KINDS = (
     "reference",
 )
 
-STATUSES = ("active", "superseded", "demoted", "archived")
+STATUSES = ("active", "superseded", "demoted", "disputed", "archived")
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
 
@@ -123,6 +123,10 @@ class Node:
     stats: Stats = field(default_factory=Stats)
     status: str = "active"
     origin: str = "reflection"  # reflection | compression | merge | manual
+    # An unresolved contradiction with something already in the tree. Held on
+    # the node so it can be surfaced at recall time, when the user is already
+    # thinking about this topic, rather than as an out-of-context interruption.
+    conflict: str = ""
     preserve: list[str] = field(default_factory=list)  # hints from rejected compressions
     path: Path | None = None
 
@@ -151,6 +155,7 @@ class Node:
             "level": self.level,
             "status": self.status,
             "origin": self.origin,
+            "conflict": self.conflict,
             "created": self.created,
             "updated": self.updated,
             "tokens": self.tokens,
@@ -192,6 +197,7 @@ class Node:
             stats=Stats.from_dict(meta.get("stats")),
             status=str(meta.get("status") or "active"),
             origin=str(meta.get("origin") or "reflection"),
+            conflict=str(meta.get("conflict") or ""),
             preserve=_as_list(meta.get("preserve")),
             path=path,
         )
