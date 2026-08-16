@@ -227,6 +227,10 @@ Then filter on usefulness rather than worthiness:
   (b) does it apply to some task other than this exact file?
   (c) is it still true tomorrow?
 
+If the agent ran `rmc add` itself during these turns, or the user asked why
+something was not learned, treat that as a capture an earlier pass should have
+made and did not. Say what about the criteria let it through.
+
 Calibrate against the steering, not against a general prior. A session in which
 the user never had to redirect you almost certainly teaches nothing — say so and
 finish. A session in which they redirected you repeatedly almost certainly does,
@@ -411,6 +415,13 @@ it replaces>"
 Record the blind spot as well as the correction. A lesson that states only the
 right answer lets the next agent arrive at the same wrong assumption and merely
 recognise the fix afterwards.
+
+**If the conversation shows the agent running `rmc add` itself, or the user
+asking why something was not learned, that is a capture you failed to make.**
+Not a lesson already handled — a miss. The evidence was in front of an earlier
+reflection pass and it walked past. Read what was added, work out what about
+these criteria let it through, and capture *that* in the `reflection` family. A
+capture system that cannot see its own misses cannot improve.
 
 **If the user had to tell you something that was already in a lesson you were
 served, do not add it again.** That is not a gap in what is known — it is a

@@ -129,12 +129,17 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def _print_reflection_stats(store: Store) -> None:
-    """Is the reflection nudge load-bearing, or has the agent outgrown it?
+    """Is the reflector actually catching what there was to catch?
 
-    That is an open question and worth measuring rather than arguing about. The
-    number that answers it is how many lessons the agent captured *without*
-    being prompted. If that climbs toward all of them, the nudge is scaffolding
-    you can take down; if it stays near zero, the nudge is doing the work.
+    The number that answers it is how many lessons the *live session* had to
+    capture. A reflector capturing is the system working; the main agent
+    reaching for `rmc add` mid-conversation means the lesson was sitting there
+    and the reflector walked past it, so a person had to notice instead.
+
+    An earlier version measured "captured without a nudge" and read a high
+    share as the agent having outgrown the scaffolding. That inverted the
+    signal: a session where the human has to say "why did you not learn that?"
+    scores perfectly on it.
     """
     captures = store.read_events("capture", limit=2000)
     nudges = store.read_events("nudge", limit=2000)
@@ -154,22 +159,34 @@ def _print_reflection_stats(store: Store) -> None:
     if not captures and not nudges:
         return
 
-    prompted = sum(1 for c in captures if c.get("prompted"))
-    spontaneous = len(captures) - prompted
-    share = (spontaneous / len(captures)) if captures else 0.0
+    # Captures recorded before `by` existed are unattributable; leave them out
+    # of the miss rate rather than guessing and reporting a wrong number.
+    attributed = [c for c in captures if c.get("by")]
+    by_reflector = sum(1 for c in attributed if c.get("by") == "reflector")
+    by_session = len(attributed) - by_reflector
 
     print()
-    print(f"  captures   {len(captures)}  " + dim(f"({spontaneous} unprompted, {prompted} after a nudge)"))
-    print(f"  nudges     {len(nudges)}  " + dim(f"({len(nudges) - prompted} produced nothing)"))
-    if captures:
+    origin = (
+        dim(f"({by_reflector} by a reflector, {by_session} by the session)")
+        if attributed
+        else dim("(origin not recorded for these)")
+    )
+    print(f"  captures   {len(captures)}  " + origin)
+    print(f"  nudges     {len(nudges)}  " + dim(f"({len(nudges) - sum(1 for c in captures if c.get('prompted'))} produced nothing)"))
+
+    if attributed:
+        missed = by_session / len(attributed)
         verdict = (
-            "the agent is capturing on its own"
-            if share >= 0.6
-            else "the nudge is doing the work"
-            if share <= 0.25
-            else "mixed"
+            "the reflector is catching them"
+            if missed <= 0.2
+            else "the reflector is missing most of them"
+            if missed >= 0.6
+            else "the reflector is catching some"
         )
-        print(f"  unprompted {share:.0%}  " + dim(f"— {verdict}"))
+        print(f"  missed     {missed:.0%}  " + dim(f"— {verdict}"))
+        if missed >= 0.6:
+            print(dim("             a lesson the session had to add by hand is one the"))
+            print(dim("             reflector saw the evidence for and did not take"))
 
 
 def cmd_recall(args: argparse.Namespace) -> int:
@@ -320,10 +337,12 @@ def cmd_add(args: argparse.Namespace) -> int:
         "conflict": "CONFLICTS with what is remembered",
     }.get(decision.action, decision.action)
 
-    # Attribute the capture. Whether the agent reaches for this on its own or
-    # only after being prompted is the one measurement that answers whether the
-    # reflection nudge is load-bearing scaffolding or a crutch — so record it
-    # instead of forming an opinion about it.
+    # Who captured this matters more than whether a nudge preceded it. A
+    # reflector capturing is the system working. The live session capturing is
+    # the system having missed — the lesson was there to be had, and the
+    # reflector did not take it, so a person had to notice. RMC_CHILD is already
+    # set in every spawned reflector, so this is observed, not inferred.
+    by = "reflector" if os.environ.get("RMC_CHILD") else "session"
     nudge = store.recent_nudge()
     store.log(
         "capture",
@@ -331,6 +350,7 @@ def cmd_add(args: argparse.Namespace) -> int:
         family=decision.family,
         action=decision.action,
         prompted=bool(nudge),
+        by=by,
     )
 
     colour = red if decision.action == "conflict" else green

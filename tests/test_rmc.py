@@ -2018,3 +2018,38 @@ class TestCliOnPath(unittest.TestCase):
             notes = self.inst.link_cli()
         self.assertEqual((target / "rmc").read_text(), "someone else's script")
         self.assertTrue(any("already exists" in n for n in notes))
+
+
+class TestCaptureAttribution(unittest.TestCase):
+    """Who captured a lesson is the signal; whether a nudge preceded it is not.
+
+    The metric this replaces counted captures that followed no nudge and read a
+    high share as the agent having outgrown the scaffolding. A session where the
+    user has to ask "why did you not learn that?" and the agent then runs
+    `rmc add` by hand scored perfectly on it — the worst outcome reported as the
+    best.
+    """
+
+    def test_both_reflectors_treat_a_hand_added_lesson_as_their_own_miss(self) -> None:
+        from rmc import hooks
+        flat = lambda t: " ".join(t.split())      # prompts are hard-wrapped
+        self.assertIn("rmc add", hooks.FORK_PROMPT)
+        self.assertIn("a capture you failed to make", flat(hooks.FORK_PROMPT))
+        self.assertIn("rmc add", hooks.NUDGE)
+        self.assertIn("should have made and did not", flat(hooks.NUDGE))
+
+    def test_fork_prompt_routes_the_meta_lesson_somewhere(self) -> None:
+        from rmc import hooks
+        self.assertIn("reflection", hooks.FORK_PROMPT,
+                      "a miss about missing needs a family to land in")
+
+    def test_a_reflector_capture_is_marked_as_such(self) -> None:
+        with mock.patch.dict(os.environ, {"RMC_CHILD": "1"}, clear=False):
+            self.assertEqual(
+                "reflector" if os.environ.get("RMC_CHILD") else "session", "reflector")
+
+    def test_a_session_capture_is_marked_as_such(self) -> None:
+        env = {k: v for k, v in os.environ.items() if k != "RMC_CHILD"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            self.assertEqual(
+                "reflector" if os.environ.get("RMC_CHILD") else "session", "session")
