@@ -1,282 +1,484 @@
 # RMC — Recursive Memory Compaction
 
-A harness for token-based continual learning. Lessons are learned once in verbose
-form, then **recursively compressed each time they are successfully recalled**,
-producing a tree of progressively more abstract memories. At retrieval time you
-load the most compressed node that still works, and only pay for detail when the
-abstraction fails.
+A continual-learning harness for **Claude Code** and **Codex**. Lessons are
+learned once in verbose form, then **recursively compressed each time they are
+actually used**, producing a graph of progressively more abstract memories. At
+retrieval time you load the most compressed node that still works, and only pay
+for detail when the abstraction fails.
 
-Works with **Claude Code** (`claude -p`) and **Codex** (`codex exec`) as
-interchangeable execution backends.
+You do not drive it. You work normally, and it runs in hooks.
 
 ---
 
-## The idea
+## Contents
+
+| | |
+|---|---|
+| [The thesis](#the-thesis) | why compression is driven by usage |
+| [The loop](#the-loop) | what happens, when, and what it costs |
+| [The governing rule](#the-governing-rule) | harness structures, model judges |
+| [1. Recall](#1-recall) | choosing what to inject |
+| [2. Reflection](#2-reflection) | noticing there was something to learn |
+| [3. Attribution](#3-attribution) | which lessons actually mattered |
+| [4. Consolidation](#4-consolidation) | where a new lesson goes |
+| [5. Compression](#5-compression) | earning a smaller form |
+| [6. Descent](#6-descent) | recovering detail when the short form fails |
+| [7. Dreaming](#7-dreaming) | whole-store consolidation |
+| [Data model](#data-model) | nodes, episodes, the DAG, the store |
+| [Install](#install) | plugin or clone |
+| [Inspecting it](#inspecting-it) | status, tree, recall, trace |
+| [Not built](#not-built-yet) | honest gaps |
+
+---
+
+## The thesis
 
 The standard learning cycle produces one artifact and stops:
 
 ```
-task + human steering  ->  correct output  ->  reflection  ->  lesson
+task + steering  ->  correct output  ->  reflection  ->  lesson
 ```
 
-RMC keeps going. Every *successful recall* of a lesson is evidence that the
-lesson contained slack, so it triggers a compression attempt:
+RMC keeps going. Every time a lesson is *used* and the work succeeds, that is
+evidence the lesson contained slack, so it earns a compression attempt:
 
 ```
-task + lesson(L0)   -> correct output -> reflect -> lesson(L1)   ~40% tokens
-task + lesson(L1)   -> correct output -> reflect -> lesson(L2)   ~15% tokens
-task + lesson(L2)   -> correct output -> reflect -> lesson(L3)   ~5%  tokens
+task + lesson(L0)  -> used, worked -> reflect -> lesson(L1)   ~75% tokens
+task + lesson(L1)  -> used, worked -> reflect -> lesson(L2)   ~55%
+task + lesson(L2)  -> used, worked -> reflect -> lesson(L3)   ~40%
 ```
 
-The result is a tree, not a chain, because compression also **merges siblings**:
-three lessons about retrying HTTP calls, retrying DB writes and retrying S3 puts
-collapse into one lesson about idempotent retry. Abstraction and compression are
-the same operation viewed from different ends.
-
-Retrieval walks the tree from the apex (most compressed) downward, spending
-tokens only as needed:
-
-```
-        L3  "Retry idempotent ops with jittered backoff; cap by deadline."   87 tok
-        /                          \
-      L2 (http)                    L2 (storage)                             ~300 tok each
-     /       \                    /            \
-   L1        L1                 L1             L1                          ~900 tok each
-   |          |                  |              |
-   L0        L0                 L0             L0                         ~3000 tok each
-```
+And lessons that are repeatedly useful *together* earn a shared parent, which is
+a different kind of abstraction — generalisation across lessons rather than
+compression within one.
 
 **The more a memory is used, the cheaper and more general it becomes.** That is
-the whole thesis: usage drives abstraction.
+the whole idea: usage drives abstraction.
 
 ---
 
-## The hard part: which child do you descend to?
+## The loop
 
-When the apex lesson fails, something was lost in compression — but compression
-normally *destroys the very information you would need to invert it*. Blind
-descent means trying children at random and paying full price for the wrong one.
+| When | What happens | Model calls |
+|---|---|---|
+| you submit a prompt | matching lessons are injected as context | 0–1, cached |
+| context is about to compact | the record of what you were shown is cleared | 0 |
+| a substantial turn ends | a reflector runs off-thread: did anything teach us something, and which lessons actually mattered | 1–2, detached |
+| you teach it something | `rmc add` records it immediately, reconciled against what is known | 1–2 |
+| the session ends | the transcript is judged, lessons minted, compression attempted | 2–4, detached |
+| periodically | `rmc dream` merges lessons that keep being used together | 1–2 per group |
 
-**RMC's answer: compression is required to record what it dropped.**
+Everything expensive is **detached** — spawned as a separate process that
+outlives the hook. Spawned agents get `RMC_CHILD=1`, which makes RMC's own hooks
+no-op; without it a reflector would trigger reflectors forever.
 
-Every compression emits a **delta manifest** alongside the compressed node — a
-list of discrete claims that were removed, each tagged with a kind and attributed
-to the descendant that still holds it:
+---
+
+## The governing rule
+
+> **The harness owns structure. The model owns meaning.**
+
+The harness owns the graph, the traversal, budgets, caches, the schemas answers
+must fit, and *whether to ask at all*. The model owns every question about
+meaning, each behind a JSON schema, cached so nothing is judged twice.
+
+There are exactly five semantic calls in the system (`rmc/judge.py`):
+
+| Call | Question |
+|---|---|
+| `relevance` | which remembered lessons bear on this prompt? |
+| `related` | which existing lessons cover the same subject as this new one? |
+| `scope` | does this lesson belong to this repo, or everywhere? |
+| `assess` | how did this session go, and which lessons actually bore on it? |
+| `rank_repairs` | which dropped detail explains this failure? |
+
+Plus four in the compression path: compress, merge, replay-probe, and the replay
+judge.
+
+**What stays in code, and why it is not a violation:** counting an *observed
+outcome* is evidence — a success rate, a rescue count, how often two lessons
+were used together on work that succeeded. Computing how *alike* two texts are
+is a proxy standing in for a judgement, and must be a model call. The test is
+what question the number answers, not where it came from.
+
+This distinction was learned the hard way. Retrieval was originally Jaccard
+similarity, contradictions were found with a `KEY=value` regex, and session
+outcomes came from phrase banks with hand-tuned weights. All of it looked
+structural and all of it was a lookup table wearing a judgement's clothes.
+
+---
+
+## 1. Recall
+
+Runs on `UserPromptSubmit`. Produces the block injected above your prompt.
+
+### Two structural gates first
+
+Neither is a judgement, so neither costs a call:
+
+1. **Empty store** — nothing to recall, nothing to ask.
+2. **Everything fits** — if the whole store is under `recall.max_pack_tokens`,
+   there is no *choice* to make, so all of it is served unfiltered. Relevance
+   filtering switches on exactly when the store outgrows the budget.
+
+The second gate matters more than it sounds. Without it, recall spent a model
+call deciding which two of two lessons to load, and blew the hook's deadline
+doing it. With it, recall returns in ~0.1s until the store is genuinely large.
+
+### The walk
+
+Once filtering is needed, the model decides — walking **abstract to concrete**:
+
+1. Start from the **apexes** (nodes with no parent). They are the most
+   compressed things in the store, so the whole top level fits in one question.
+2. Each candidate is rendered as one line: id, title, and a **gist** — never the
+   body. Sending 700 characters per lesson to *choose* which lessons to send is
+   the scaling bug that eats the context it was meant to protect.
+3. The model returns `relevant` / `maybe` / `unrelated` per candidate, plus
+   `descend` when a summary is too abstract to judge from.
+4. Only `descend` branches are opened. A branch judged unrelated is never walked.
+5. Bounded by `recall.judge_calls` and `recall.max_depth`. Anything unresolved
+   when the budget runs out is served rather than dropped.
+
+### Three tiers of re-injection
+
+A lesson already in context should not be paid for twice — but *present* and
+*still attended to* are different things, since attention over long context
+decays and an early injection ends up in the middle where models attend least.
+
+| State | Action |
+|---|---|
+| never served | full body |
+| served < `stays_fresh_turns` ago (8) | **skipped** — still fresh |
+| served longer ago | **refreshed** with its one-line gist, ~20 tokens |
+
+`PreCompact` clears the whole record, because compaction may have deleted the
+text being tracked.
+
+### Also in the pack
+
+- **Sticky patches** — dropped claims that previously rescued this node get
+  re-attached, rather than waiting for the same failure to recur.
+- **Unresolved conflicts** — surfaced here, at the moment you are thinking about
+  the topic.
+
+### What you see
+
+```
+⋯ Recalling lessons…              (while the hook runs)
+⋯ RMC · 3 lessons · 961 tok       (after injection)
+```
+
+An injection is never silent. A memory system that edits your prompts without
+saying so is one you cannot notice going wrong.
+
+---
+
+## 2. Reflection
+
+Runs on `Stop`, per turn. Its job is to **schedule attention**, not to judge.
+
+The occasion is structural — "did this turn have enough substance to be worth a
+thought" — measured by `nudge_after_tool_calls` (12), `nudge_after_turns` (3), or
+`min_surprises` (2 failed tool calls), subject to `nudge_cooldown_s`.
+
+**The occasion is deliberately not "something failed."** An earlier version
+triggered on failed tool calls, which sounds structural but is a mechanical
+proxy for a semantic question, and it biases hard toward the cheapest mistakes.
+Conceptual errors — believing a system works one way when it does not — exit
+zero and pass their tests. During RMC's own development the worst mistake ran
+green the whole way.
+
+### Where it runs — `learning.nudge_mode`
+
+| Mode | Reflector sees | Cost | Interrupts you |
+|---|---|---|---|
+| `background` (default) | a transcript digest, ~3k tokens | one small call | no |
+| `fork` | the whole session, inherited | ~0.1× its tokens | no |
+| `block` | the agent's own live context | none extra | **yes**, one turn |
+| `off` | — | none until session end | no |
+
+`fork` spawns `claude --resume <id> --fork-session` detached. `--fork-session`
+allocates a new id, so the live session is never written to. It is affordable
+because prompt-cache reads bill at **0.1×** and the cache keys on prefix
+*content*, not session identity — the fork hits what the live session just
+wrote.
+
+If nudges keep producing nothing, the cooldown backs off automatically
+(`nudge_backoff_after`).
+
+---
+
+## 3. Attribution
+
+The question that drives everything downstream: **which served lessons actually
+bore on the work?**
+
+Serving is a retrieval decision; using is an outcome. Conflating them breaks two
+things at once — an irrelevant lesson that happened to be injected accrues a
+record of usefulness it never earned, and serving ten lessons manufactures
+forty-five "co-use" pairs out of a single retrieval decision.
+
+Two sources, best first:
+
+1. **The in-session reflector.** The fork holds the real conversation, so it can
+   see a principle being applied and not merely a command being run. It reports
+   with `rmc used --session <id> --used <ids> --unused <ids>`.
+2. **The digest judge.** `assess` is shown the served lessons and the session
+   digest and answers `lessons_used` per lesson. Weaker: influence on *reasoning*
+   is nearly invisible in a digest of commands, so it under-credits principles.
+   The digest now includes the agent's own reasoning for exactly this reason.
+
+Either way the prompt is strict and defaults to false: *being on-topic is not
+being used; being read and found irrelevant is not being used; having been
+served a lesson and then done the opposite means it was not used.*
+
+**A lesson served but unused is scored neither success nor failure.** It has
+three possible causes and only the first is a retrieval problem:
+
+| Cause | Meaning |
+|---|---|
+| irrelevant | recall over-served |
+| redundant | the agent knew it anyway |
+| relevant and ignored | the lesson isn't landing — a salience failure |
+
+`rmc status` reports `precision` (used ÷ served).
+
+---
+
+## 4. Consolidation
+
+New knowledge is reconciled with old before it is stored, never appended blindly.
+
+### Scope, decided first
+
+Where a lesson lands decides whether it can ever be found again. A lesson about
+a vendor API filed under one repo is invisible from every other one, so nothing
+downstream can rescue it — not recall, not co-use, not dreaming.
+
+So `scope` asks: does this depend on *this repository*, or would it be true for
+anyone using these tools anywhere? Global lessons go to `~/.rmc`, project
+lessons stay local. The error is asymmetric: a global lesson filed locally is
+**lost**, a project lesson filed globally is merely noise.
+
+### Then the relation
+
+`related` walks the graph for lessons on the same subject, and `reconcile`
+classifies:
+
+| Relation | Action |
+|---|---|
+| `duplicate` | nothing stored; the hit is recorded |
+| `refines` | fold into the matched lesson's own lineage, then patch its ancestors |
+| `contradicts` | keep both, mark both `disputed`, attach a question |
+| `specialises` | attach as a sibling; a merge may later generalise both |
+| `orthogonal` | new family |
+
+**Refinement must reach the apex.** Folding detail into a level-0 node leaves
+every ancestor missing it. Rather than invalidating working compressions, the
+detail is registered as a rescue on each ancestor, so recall re-attaches it
+immediately and `repair` folds it in permanently once it proves necessary.
+
+**Contradictions are never resolved silently.** Last-write-wins is how a memory
+rots. Both lessons stay servable, and the question is raised at recall time:
+
+```
+> Unresolved: Is 5434 the new permanent host port mapping, or was 5433
+> only temporarily unavailable at the time?
+```
+
+`rmc conflicts` lists them, `rmc resolve <id> [--drop]` settles them.
+
+---
+
+## 5. Compression
+
+A node becomes eligible when it is an active apex, below `max_level` (6), has at
+least `min_successes` (2) recalls **that were attributed as used**, is past its
+cooldown, and **has recorded episodes to validate against**. A node with no
+episodes is left alone: compressing with no way to check the result is worse
+than not compressing.
+
+### The manifest is mandatory
+
+Every compression must declare what it removed, as discrete claims:
 
 ```yaml
 dropped:
   - claim: "Backoff constants are 100ms / 400ms / 1.6s, jitter ±25%"
     kind: parameter
     holder: n_7f2a
-  - claim: "S3 returns 200 with an error body; must parse body not status"
-    kind: edge-case
-    holder: n_c41b
 ```
 
-Descent then stops being a search problem and becomes a **ranking problem over
-deltas**. When a node fails, the verifier and a diagnosing agent produce a
-structured account of *how* it failed, and the model — not a similarity metric —
-decides which dropped claim explains it. That distinction matters: "parse the
-body, not the status code" is the fix for "treated HTTP 200 as success" while
-sharing almost no vocabulary with it. Three consequences fall out:
+A compression that does not record its losses cannot be descended, so the lost
+detail is simply gone. A candidate that shrank materially while declaring
+nothing is rejected as under-reported.
 
-1. **Delta jumping.** Deltas are attributed transitively, so you can jump
-   straight to the descendant holding the needed detail instead of walking the
-   tree one level at a time.
-2. **Delta patching** (the default). You usually do not need the child at all —
-   you need three sentences from it. Re-run the apex plus only the matched delta
-   claims. Typical repair cost is tens of tokens, not thousands.
-3. **Failure is training signal.** A node that fails a task adds that task to its
-   ancestors' regression sets, so future compressions are forbidden from dropping
-   that detail again. The tree repairs itself where it has been cut too deep.
+Deltas are **inherited** — an apex knows about detail several levels below it
+without holding the text, which is what makes delta-jumping possible.
 
-Full scoring function, budgets and escalation rules are in
-[DESIGN.md](DESIGN.md#4-descent-and-selection).
+### Validation
+
+The check from the original sketch, hardened:
+
+```
+R = sample(regression episodes over the node's whole subtree, k=5)
+for each: fresh agent process, candidate lesson + the original prompt
+accept iff pass_rate >= 1.0  and  tokens <= 0.75 × original
+```
+
+- **Fresh process** — otherwise the main agent's memory of the verbose lesson
+  leaks in and every compression looks successful.
+- **Subtree-wide** — validating only on the triggering episode is how you get a
+  beautifully compressed, useless tree.
+- **Probe form** — replay asks *how would you approach this*, not *do the work*.
+  Asking for the work meant judging scaffolding completeness and truncation
+  artefacts rather than the lesson.
+- **An unreadable judge is a failure**, never a pass, so an infrastructure blip
+  cannot promote a bad compression.
+- **Rejections are informative** — failing episodes become `preserve:` hints for
+  the next attempt, so the compressor converges instead of thrashing.
+
+### Merging
+
+Two or more lessons become one abstract parent covering all of them. Merges may
+span families, and a merge that would swallow one of its own ancestors is
+refused — that would make the graph cyclic and every upward walk
+non-terminating.
+
+### Repair
+
+A delta that repeatedly rescues the same node is proof the compression cut too
+deep, so it is folded permanently back into the body and dropped from the
+manifest. The graph heals where it was over-cut.
 
 ---
 
-## Compression is only accepted if it survives a regression test
+## 6. Descent
 
-The user-facing check from the original sketch — *spawn a subagent, give it the
-same prompt plus the compressed lesson, see if you still get the right output* —
-is implemented, and hardened against overfitting:
+*When the compressed lesson fails, which child do you go to?*
 
-- A candidate compression is validated against the **regression set**: every task
-  the node *and its entire subtree* were previously validated on, not just the
-  task that triggered the compression.
-- Validation runs in a **fresh agent process** with no conversation history, so
-  the only thing carrying knowledge is the lesson text itself.
-- Acceptance requires both a pass-rate threshold and a real token reduction.
-- Rejections are recorded with the failing tasks, and the next compression
-  attempt is given those as explicit `preserve:` hints.
+Compression normally destroys the information you would need to invert it, which
+is why the manifest is mandatory. Descent is then a ranking problem over dropped
+claims, not a search over the graph:
+
+```
+score = w_judge · model_usefulness + w_prior · rescue_rate − w_cost · tokens
+         (0.60)                       (0.28)                  (0.12)
+```
+
+- **`model_usefulness`** — one call ranks every candidate 0–1: *how likely is it
+  that this detail being absent caused this failure*. A judgement, so the model
+  makes it. "Parse the body, not the status code" is the fix for "treated HTTP
+  200 as success" while sharing none of its words.
+- **`prior`** — Laplace-smoothed rate at which this node has actually rescued
+  failures. Observed outcome, so it stays in code. Makes descent a contextual
+  bandit over the graph.
+- **`cost`** — token count. A measurement.
+
+With no judge available the first term is simply absent and ranking falls back
+to "try what has worked, cheapest first" — degrading honestly rather than
+substituting a metric that looks like judgement.
+
+Strategies (`recall.strategy`): `delta-patch` (apex + matched claims, default),
+`delta-jump` (swap in the holder node), `stepwise` (walk children, ignore the
+manifest — the ablation baseline).
+
+Escalation: exhaust candidates → load the level-0 node, which is never deleted.
+If that fails too, it is a genuine knowledge gap, not a compression bug.
 
 ---
 
-## The harness structures; the model judges
+## 7. Dreaming
 
-A memory system is full of questions like *is this relevant*, *does this
-contradict that*, *did this go well*. It is tempting to answer them with
-similarity scores and phrase lists, and RMC did at first. That is a mistake:
-meaning does not live in token overlap, and a heuristic silently caps the system
-at what a bag of words can express while looking like a judgement.
+`rmc dream` — whole-store consolidation, independent of any session. Every other
+path reacts to the session in front of it; this one steps back.
 
-So the split is strict.
+It grows abstraction from **co-use**: lessons repeatedly *used together* on work
+that succeeded. That signal is the right one because the pair most worth merging
+often shares no surface features — a lesson about deployment tooling and one
+about cache economics can belong under one abstraction purely because they are
+needed together, and no similarity metric will place them near each other.
 
-**The harness owns structure** — the tree, the traversal loop, the budgets, the
-caches, the schemas answers must fit, and the decision of *whether to ask at
-all* (an empty store, an exhausted budget, and a two-tool-call session need no
-judgement).
+Counting co-occurrence is evidence and stays in code. Whether a group shares a
+generalisable idea is the model's call. Threshold is 2 occurrences; one is
+coincidence. Failed sessions do not count.
 
-**The model owns meaning** — every question above, each behind a JSON schema,
-cached so nothing is judged twice.
-
-Efficiency comes from structure rather than from cheap approximations. Because
-apexes are the most compressed nodes in the store, the entire top level of the
-tree fits in one question; a line is only opened when the model says the summary
-was too abstract to decide from. Cost tracks the *depth* of the tree, not its
-size — and a branch judged clearly irrelevant is never walked at all.
-
-The two terms still computed in code are evidence, not proxies for judgement:
-how often a node has actually rescued a failure before, and how many tokens it
-costs.
+`rmc dream --list` shows candidates without changing anything. It also backfills
+gists for older lessons.
 
 ---
 
-## It runs by itself
+## Data model
 
-You do not drive RMC. You use Claude Code or Codex normally on your own repos,
-and the loop closes in the background:
+### Node — one lesson at one level of abstraction
 
-| When | What happens | Cost |
-|---|---|---|
-| you submit a prompt | the model is asked which remembered lessons bear on it, walking the tree from the most abstract nodes down | 1 call, cached by prompt |
-| the session ends | the model reads the session and judges how it went, whether you had to steer, and what was worked out by trial | 1 call, detached |
-| a correction happened | the correction *is* the diagnosis; the model picks which dropped detail it was about, and that claim is re-attached next time | 1 call |
-| a substantial turn ends | a detached process reflects on the work so far, without interrupting the agent | 1 call, detached |
-| you teach it something | `rmc add` records it immediately, reconciled, available to your next prompt | 1–2 calls |
-| something reusable happened | a reflection call mints a level-0 lesson from the transcript | 1 call, detached |
-| the new lesson touches known ground | it is reconciled with what is already there — folded in, set alongside, or flagged as a contradiction | 1 call, cached |
-| a lesson has succeeded twice | a compression is attempted and replay-tested | detached, rejects freely |
-
-The expensive steps are detached into a background process, so nothing is ever
-added to the latency of your session. Spawned agents run with `RMC_CHILD=1`,
-which makes RMC's own hooks no-op — otherwise compression would recursively
-trigger compression.
-
-
-### Scheduling attention, not making the judgement
-
-An agent mid-task is in task-completion mode. It has the judgement to tell a
-conceptual mistake from a typo, but in flight its attention is on the goal — so
-it rarely stops to ask what it just learned. That is the gap the reflection
-nudge fills, and the distinction matters: it schedules the *look*, it does not
-supply the *verdict*.
-
-An earlier version triggered on failed tool calls. That sounds structural — an
-exit code is a fact — but it is a mechanical proxy for a semantic question, and
-it biases hard toward the cheapest class of mistake. The expensive errors are
-conceptual: believing a system works one way when it does not. Those emit no
-error, exit zero, and leave nothing to grep for. During RMC's own development
-the worst mistake — building retrieval on lexical similarity — ran green the
-whole way. A failure-gated check would have sat silent through it.
-
-So the occasion is only "did this turn have enough substance to be worth a
-thought", and the nudge asks the agent what it actually cares about:
-
-```
-Look back over what you just did and ask: were you wrong about anything?
-
-1. Wrong about how something works — invisible while you hold it, makes every
-   downstream decision wrong, and usually leaves no error message at all.
-2. Wrong about what mattered — you solved the stated problem, not the real one.
-3. Wrong mechanically — a command failed. Loud, cheap, rarely a lesson.
-
-Do not let (3) crowd out (1) just because it is the kind that announces itself.
+```yaml
+id: n_7f2a91
+family: retry
+title: Retrying flaky services
+gist: Retry idempotent remote calls; S3 needs body parsing.   # the routing view
+level: 3
+status: active            # active | superseded | demoted | disputed | archived
+origin: compression       # reflection | compression | merge | manual
+conflict: ""              # an unresolved contradiction, surfaced at recall
+derived_from: [n_c41b, n_9de1]   # points DOWN, toward detail
+parents: [n_aa01]                # points UP, toward abstraction
+covers_tasks: [e_4f1a, e_9c22]   # the regression set
+dropped: [...]                   # the delta manifest
+preserve: [...]                  # hints from rejected compressions
+stats: {attempts, successes, failures, expansions, rescues, last_used}
 ```
 
-"Nothing to capture" is the expected answer, and if several nudges in a row
-produce nothing the cooldown backs off automatically.
+**Both edges are lists, so this is a DAG, not a tree.** A lesson can be
+abstracted in more than one direction: compressed vertically into a terser form
+of itself, *and* merged sideways into a shared generalisation. While the parent
+link was a single field, the second silently destroyed the first.
 
-**By default none of this touches the agent.** Interrupting a session mid-task
-has a real cost — it spends a turn, pollutes the working context with
-meta-cognition, and breaks concentration exactly when concentration is worth
-most. But the transcript *is* the context, serialised, so a detached process can
-run the same reflection with no claim on the session at all. That is the default
-(`nudge_mode: background`); `block` interrupts the agent instead, trading that
-cost for the live sense of what surprised it.
+### Episode — a replayable regression test
 
-`nudge_mode: fork` goes further, reflecting inside a fork of the live session
-(`claude --resume <id> --fork-session`) so the reflector inherits the whole
-conversation instead of a digest. That is affordable because prompt-cache reads
-bill at **0.1×** and the cache keys on prefix content, not session identity — the
-fork hits what the live session just wrote. It is not the default only because
-10% of a very large context still exceeds a 3k digest.
-
-### Is the nudge necessary? RMC measures it
-
-Whether an agent needs prompting to reflect, or would notice on its own, is an
-open question — so `rmc status` reports the number that answers it:
-
-```
-captures   14  (9 unprompted, 5 after a nudge)
-nudges     11  (6 produced nothing)
-unprompted 64%  — the agent is capturing on its own
+```yaml
+id: e_4f1a
+prompt: "add retry to the http client"
+outcome: success
+served: [n_7f2a, n_c41b]   # what was injected
+used:   [n_7f2a]           # what actually bore on the work
+accepted_summary: "..."    # what the agent ended up doing
 ```
 
-If the unprompted share climbs toward 100%, the nudge is scaffolding you can
-take down. If it stays near zero, it is doing the work. Better to find out than
-to have an opinion.
+This is the **ambient oracle**. Nobody writes YAML oracles for their own repo,
+so instead RMC records what happened when work was accepted, and later asks
+whether a compressed lesson still reproduces it.
 
-### Learning happens live, and does not need you
-
-Teach it something mid-conversation and it lands immediately:
-
-```bash
-rmc add --family deploys "Use `kubectl argo rollouts promote`; plain apply fails, the CRD is not registered"
-```
-
-That is reconciled against what is already known and available to your very next
-prompt. The bundled skill tells the agent to do this the moment you explain
-something, so you rarely type it yourself.
-
-Human corrections are the *rarer* source of lessons, though. Most of the time
-the environment does the teaching: a command fails, a different one works, a
-test rejects an approach. RMC pairs each tool call with its result, so a
-session-end sweep can recover what was learned by trial —
+### Store layout
 
 ```
-[Bash] tried `pytest tests/integration` -> failed: could not connect to postgres at :5432
-    then `PAYMENTS_PG_PORT=5433 pytest tests/integration` -> worked (after 4 attempts)
+.rmc/
+  config.yaml          settings
+  nodes/<family>/*.md  the graph. Worth committing.
+  episodes/*.json      the replay corpus. Worth committing.
+  sessions/*.json      per-session scratch. Machine-local.
+  events.jsonl         telemetry. Machine-local.
+  judge-cache.json     cached judgements. Machine-local.
 ```
 
-— and record both the fix *and* the trap. The point is to compress reasoning,
-not just text: something that cost four attempts to discover should cost zero
-next time.
+**Two scopes.** If `~/.rmc` exists it is layered under the project store: both
+are recalled, new lessons are written to the project one, and editing a global
+lesson writes back to it rather than forking a local copy that drifts.
 
-### New knowledge is reconciled, not appended
+**Privacy.** Everything passes through `redact.py` before touching disk — API
+keys, tokens, private keys, card numbers, `secret=…` assignments. Biased toward
+over-redaction: a mangled lesson is recoverable, a leaked key is not. RMC never
+sends anything anywhere; model calls go through whichever CLI you already have.
 
-A lesson that overlaps something already known is classified before it is
-stored: duplicate, refines, contradicts, specialises, or orthogonal. Refinements
-fold into the detailed node and patch the compressed ones above it. Orthogonal
-knowledge starts a new leaf.
-
-Contradictions are never settled silently — last-write-wins is how a memory
-rots. Both lessons stay, both are marked disputed, and a question is raised **at
-recall time**, when you are already thinking about that topic:
-
-```
-> Unresolved: Is 5434 the new permanent host port mapping for the payments
-> postgres container, or was 5433 only temporarily unavailable at the time?
-```
-
-`rmc conflicts` lists them; `rmc resolve <id>` settles them.
+---
 
 ## Install
 
-Requires Python 3.10+ and at least one of `claude` or `codex`. No third-party
-Python dependencies.
+Python 3.10+ and at least one of `claude` / `codex`. No third-party Python
+dependencies.
 
-**As a Claude Code plugin** (recommended — works in every repo):
+**As a Claude Code plugin** (works in every repo):
 
 ```
 /plugin marketplace add yiheinchai/recursive-memory-compaction
@@ -290,61 +492,68 @@ git clone https://github.com/yiheinchai/recursive-memory-compaction
 cd recursive-memory-compaction && ./bin/rmc install --target claude --target codex
 ```
 
-`./bin/rmc` needs no virtualenv or `pip`; `pip install -e .` also works and puts
-`rmc` on your PATH. Add `--scope user` to install globally rather than per-repo.
+`./bin/rmc` needs no virtualenv — the package is stdlib-only. Add
+`--scope user` to install globally. `rmc uninstall` removes only what RMC added.
 
-Undo with `rmc uninstall` — it removes only what it added and leaves your
-lessons in place.
+**Codex** gets an `AGENTS.md` block instructing the agent to call `rmc recall`
+itself, since Codex's hook schema is less settled. Codex also works as an
+execution backend for any RMC install (`rmc config agent codex`).
 
-## Seeing what it does
+---
 
-Recall is never silent. Claude Code shows you a line each time RMC injects:
-
-```
-⋯ RMC · recalled 2 lessons (312 tok): retry, k8s-deploys   +1 patch
-```
-
-For the whole picture — which lessons were offered to the model, what it decided
-about each and why, and the **verbatim** block that lands in the agent's context:
+## Inspecting it
 
 ```bash
-rmc trace --prompt "rank memories by cosine similarity, load the top 3"
+rmc status                     # families, levels, precision, capture stats
+rmc tree --family retry        # the graph, with delta manifests
+rmc recall --prompt "..."      # what would be injected, and the model's reason
+rmc trace --prompt "..."       # every stage, ending in the verbatim block
+rmc dream --list               # merge candidates from co-use
+rmc conflicts                  # unresolved contradictions
+rmc doctor                     # backends, store, hook wiring
+rmc events --kind inject       # raw telemetry
 ```
 
-```
-3. what the model decided
-──────────────────────────────────────────────────────────────────
-   ✓ relevant  n_ea4ce6  The work is exactly the anti-pattern this lesson names…
-   · unrelated n_369d29  About RMC being self-contained, not about retrieval
+`rmc trace` is the agent's-eye view: what was offered to the model, its verdict
+and reason for each candidate, the exact injected text, and what you see in
+Claude Code. Use it when you want to know precisely what RMC is doing to your
+prompts.
 
-   1 branch judged irrelevant was never walked further — 1 model call total
-```
+Full command reference: [docs/cli.md](docs/cli.md). Wiring details:
+[docs/integration.md](docs/integration.md). Design rationale and known failure
+modes: [DESIGN.md](DESIGN.md).
 
-Add `--after <transcript.jsonl>` to trace the other half: what RMC parsed out of
-a finished session and what the model made of it.
+---
 
-## Seeing what it knows
+## Not built yet
 
-```bash
-rmc status                        # families, levels, token cost, success rates
-rmc tree --family retry           # the tree, with delta manifests
-rmc recall --prompt "add retry"   # exactly what would be injected, and why
-rmc compact --list                # what is eligible for compression
-rmc doctor                        # backends, store, hook wiring
-```
+Stated plainly, because a harness that hides its gaps is useless:
 
-In a session, `/rmc` does the same through the bundled skill.
+- **Progressive disclosure.** Recall is one pass. A lesson only recognisable as
+  relevant *after* reading another one cannot currently be found — you ask about
+  a stuck deploy, retrieve "deploys use Argo Rollouts", and the lesson about
+  Argo's dedupe key stays invisible because your prompt never said "Argo". The
+  fix is a second pass with the first results in hand.
+- **Agent-driven search.** Lessons are plain markdown on disk, so
+  `grep -r "argo" .rmc/nodes/` already works — the agent is just never told it
+  can.
+- **Held-out evaluation.** Compressions are validated against the episodes they
+  were tested on. In-sample. There is no measurement of whether a compressed
+  lesson generalises to unseen work.
+- **Codex hooks.** Instruction block only, not true ambient operation.
 
-## Watch the whole cycle
+## Known limits
 
-```bash
-python3 examples/walkthrough.py            # deterministic, offline, ~1 second
-python3 examples/walkthrough.py --agent claude
-```
-
-It mints a lesson, records episodes, compresses it, then fails a task that needed
-the dropped detail and shows descent recovering it — printing the score
-components so you can see *why* each candidate was chosen.
+- **Attribution is a counterfactual the model cannot run.** "Would this have
+  gone differently without the lesson?" is inferred, not measured. Reliable for
+  concrete lessons, softer for dispositional ones.
+- **Recall costs a call per prompt once the store outgrows the budget.**
+  Cached, and `recall.enabled: false` opts out.
+- **Reconciliation only compares against apexes**, so a contradiction with
+  detail deep in a subtree is missed until descent surfaces it.
+- **Merges can over-generalise.** The regression set is a mitigation, not a proof.
+- **Compression is not monotone.** A level-4 node is only known to be better on
+  the episodes it was validated against.
 
 ## Tests
 
@@ -352,23 +561,7 @@ components so you can see *why* each candidate was chosen.
 python3 -m unittest discover -s tests
 ```
 
-55 tests, no dependencies. Two kinds: structural tests stub the judgements and
-assert what the harness does with an answer, and control-flow tests run against
-a simulated knowledge world where a task is solved iff the required facts are
-present in the lesson text — so compress → fail → descend → rescue genuinely
-executes rather than being mocked at the seams.
-
-## Documentation
-
-| Doc | Contents |
-|---|---|
-| [DESIGN.md](DESIGN.md) | Tree semantics, delta manifests, selection policy, validation protocol, known failure modes |
-| [docs/integration.md](docs/integration.md) | How the hooks wire in, and how to run it with Codex |
-| [docs/cli.md](docs/cli.md) | Full command reference |
-
-## Status
-
-Research harness, v0.1. It works end to end and is tested, but the store format
-is not yet stable and the ambient outcome signals are heuristic — see
-[DESIGN.md §8](DESIGN.md#9-failure-modes-this-design-accepts) for what this
-design knowingly gets wrong.
+97 tests, no dependencies. Two kinds: *structural* tests stub the judgements and
+assert what the harness does with an answer; *control-flow* tests run against a
+simulated knowledge world where a task is solved iff the required facts are in
+the lesson text, so compress → fail → descend → rescue genuinely executes.
