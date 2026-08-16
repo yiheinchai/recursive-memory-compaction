@@ -2102,3 +2102,21 @@ class TestDefectReport(unittest.TestCase):
         self.assertIn("rmc report", flat)
         self.assertIn("ask the user whether they want it filed", flat)
         self.assertIn("never file it yourself", flat)
+
+
+class TestTreeRecency(unittest.TestCase):
+    """`rmc tree` groups by family, so "what did it just learn?" is unanswerable
+    from it — the newest lesson lands wherever its family sorts, looking exactly
+    like one from last month."""
+
+    def test_age_is_short_and_degrades_quietly(self) -> None:
+        from rmc.cli import _age
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        fmt = lambda d: (now - d).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.assertEqual(_age(fmt(timedelta(seconds=5))), "just now")
+        self.assertIn("m ago", _age(fmt(timedelta(minutes=20))))
+        self.assertIn("h ago", _age(fmt(timedelta(hours=5))))
+        self.assertIn("d ago", _age(fmt(timedelta(days=3))))
+        self.assertEqual(_age(""), "", "a missing stamp must not raise")
+        self.assertEqual(_age("not a date"), "", "nor must a malformed one")

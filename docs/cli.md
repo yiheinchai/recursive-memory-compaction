@@ -65,10 +65,16 @@ Start here when RMC seems inert.
 Families, node counts, episode counts, total vs apex-served tokens, and a table
 of each family's apex with its level, cost and success rate.
 
-### `rmc tree [--family F] [-v]`
+### `rmc tree [--family F] [-v] [--recent] [--limit N]`
 The tree, indented from apex down to L0. `△` lines are delta manifest entries —
 what a compression dropped and which node still holds it. `-v` includes the
 first lines of each lesson body.
+
+`--recent` drops the family grouping and lists newest first, which is the view
+that answers "did what I just taught it actually land?" — the default grouping
+cannot, since a new lesson sorts wherever its family happens to sit.
+
+Every line carries an age.
 
 ### `rmc recall --prompt "..." [--json]`
 Exactly what would be injected for that prompt, and the model's stated reason for

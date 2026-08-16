@@ -711,10 +711,52 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return 0
 
 
+def _age(stamp: str) -> str:
+    """How long ago, in the shortest form that is still honest."""
+    from datetime import datetime, timezone
+
+    if not stamp:
+        return ""
+    try:
+        when = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return ""
+    secs = (datetime.now(timezone.utc) - when).total_seconds()
+    if secs < 90:
+        return "just now"
+    for size, unit in ((3600, "m"), (86400, "h"), (86400 * 7, "d")):
+        if secs < size:
+            step = {"m": 60, "h": 3600, "d": 86400}[unit]
+            return f"{int(secs // step)}{unit} ago"
+    return f"{int(secs // 86400)}d ago"
+
+
 def cmd_tree(args: argparse.Namespace) -> int:
     store = need_store(args)
     if store is None:
         return 1
+
+    # "What did it just learn?" is a different question from "what shape is the
+    # store?", and family-ordered output cannot answer it — the newest lesson
+    # lands wherever its family sorts, looking exactly like one from last month.
+    if getattr(args, "recent", False):
+        nodes = sorted(
+            store.nodes(),
+            key=lambda n: (n.updated or n.created or ""),
+            reverse=True,
+        )[: args.limit]
+        if not nodes:
+            print(dim("no lessons yet"))
+            return 0
+        for node in nodes:
+            title = node.title or dim(f"(untitled — {node.family})")
+            print(
+                f"  {dim(_age(node.updated or node.created)):>12}  {bold(node.id)} "
+                f"L{node.level} {node.tokens:>4d}tok  {dim('[' + node.family + ']')} {title[:52]}"
+            )
+        print()
+        return 0
+
     families = [args.family] if args.family else store.families()
     if not families:
         print(dim("no lessons yet"))
@@ -741,10 +783,14 @@ def _print_node(store: Store, node, *, prefix: str, args, seen: set[str] | None 
     flag = {"active": "", "demoted": yellow(" demoted"), "superseded": dim(" superseded")}.get(
         node.status, ""
     )
-    title = node.title or node.family
+    # An untitled node used to render as the bare family name, which reads as a
+    # broken row rather than as missing data.
+    title = node.title or dim("(untitled)")
+    age = _age(node.updated or node.created)
     print(
         f"{prefix}{bold(node.id)} L{node.level} {node.tokens:>4d}tok "
-        f"{dim(f'use={node.stats.attempts} ok={node.stats.posterior:.0%}')}{flag}  {title[:44]}"
+        f"{dim(f'use={node.stats.attempts} ok={node.stats.posterior:.0%}')}"
+        f"{dim(' ' + age) if age else ''}{flag}  {title[:44]}"
     )
     if args.verbose:
         for line in node.body.splitlines()[:3]:
@@ -1173,6 +1219,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("tree", help="visualise the lesson tree")
     p.add_argument("--family")
     p.add_argument("--verbose", "-v", action="store_true")
+    p.add_argument("--recent", action="store_true",
+                   help="newest first, across families — what did it just learn")
+    p.add_argument("--limit", type=int, default=15)
     p.set_defaults(func=cmd_tree)
 
     p = sub.add_parser("trace", help="agent's-eye view: every stage of a recall")
