@@ -132,7 +132,10 @@ class Store:
         if not gitignore.exists():
             # Sessions and telemetry are machine-local noise; nodes and episodes
             # are the artefact worth committing and sharing across a team.
-            gitignore.write_text("sessions/\nevents.jsonl\n*.lock\n", encoding="utf-8")
+            gitignore.write_text(
+                "sessions/\nevents.jsonl\nbackground.log\n*-cache.json\n*.lock\n",
+                encoding="utf-8",
+            )
         return store
 
     @classmethod
