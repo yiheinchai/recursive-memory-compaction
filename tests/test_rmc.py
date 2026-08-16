@@ -1043,6 +1043,33 @@ class TestPlacement(StoreCase):
         result = apply(self.store, decision, Node(id="n_x", family="retry", body="b"))
         self.assertIn(apex.id, result.patched)
 
+    def test_a_refinement_never_overwrites_an_unrelated_sibling(self) -> None:
+        """Folding must follow the matched lesson's own lineage, not pick the
+        family's best-scoring node. Getting this wrong destroys the victim's
+        body while leaving its title and id intact — two nodes, one text."""
+        from rmc.placement import apply, decide
+
+        target = self.seed()  # n_seed, family "retry"
+        bystander = self.add_node(
+            id="n_other", family="retry", body="An unrelated lesson that must survive."
+        )
+        bystander.stats.attempts, bystander.stats.successes = 9, 9  # best posterior
+        self.store.save_node(bystander)
+        self.store.invalidate()
+
+        decision = decide(
+            self.store,
+            self.reconciler("refines", merged_body=self.BODY + " Cap by deadline."),
+            body="Cap retries by the caller's deadline.",
+            family_hint="retry",
+        )
+        apply(self.store, decision, Node(id="n_new", family="retry", body="ignored"))
+
+        self.assertIn("deadline", self.store.get(target.id).body)
+        self.assertEqual(
+            self.store.get("n_other").body, "An unrelated lesson that must survive."
+        )
+
     def test_contradiction_disputes_both_and_asks_a_question(self) -> None:
         from rmc.placement import apply, decide, open_conflicts
 

@@ -366,7 +366,19 @@ def _fold(store: Store, placement: Placement, result: PlacementResult) -> Placem
     target = placement.target
     assert target is not None
 
-    base = store.base_node(target.family) or target
+    # Fold into the matched lesson's *own* most detailed form — walk down its
+    # lineage, never sideways.
+    #
+    # This used to call store.base_node(target.family), which returns the
+    # best-scoring level-0 node anywhere in the family. When a family holds
+    # several unrelated lessons that is a different node entirely, and the
+    # refinement overwrote its body: the victim kept its own title and id while
+    # its content was silently replaced by another lesson's. Two nodes, one
+    # text, and the destroyed lesson unrecoverable from the store.
+    base = target
+    for candidate in store.descendants(target):
+        if candidate.level < base.level:
+            base = candidate
     addition = placement.merged_body.strip()
     if addition:
         base.body = addition
