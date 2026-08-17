@@ -46,6 +46,11 @@ class Pack:
     skipped: list[str] = field(default_factory=list)  # still fresh in context
     refreshed: list[str] = field(default_factory=list)  # reminded, not repeated
     tokens: int = 0
+    # The judge could not answer. An empty pack then means memory is broken,
+    # not that nothing applied — and the two must never look the same to a user
+    # deciding whether RMC works.
+    degraded: bool = False
+    error: str = ""
 
     def __bool__(self) -> bool:
         return bool(self.text.strip())
@@ -84,24 +89,33 @@ def select_lessons(
         # nothing to ask about.
         return WalkResult()
 
-    # Second structural gate, and the one that matters most in practice: if the
-    # whole store fits in the context budget there is nothing to *choose*, so
-    # asking which lessons to pick is pure waste — a model call, and the latency
-    # of one, spent selecting from a set we can afford entirely.
+    # A brand-new store skips the decision, and only a brand-new one.
     #
-    # This is not a heuristic standing in for judgement. It is the observation
-    # that judgement is only needed under scarcity, and early on there is none.
-    # Relevance filtering starts mattering when the tree outgrows the budget,
-    # and that is exactly when it switches on.
-    pack_budget = int(store.config.get("recall.max_pack_tokens", 1200))
-    total = sum(n.tokens for n in roots)
-    if total <= pack_budget and not store.config.get("recall.always_judge", False):
+    # This gate used to be a token budget (1200), justified as "judgement is
+    # only needed under scarcity, and early on there is none". The cost half of
+    # that was wrong: across 57 prompts on a store that fit the budget, 15,917
+    # of ~17,800 injected tokens were never used, and re-judging exactly those
+    # served sets kept every lesson that had borne on the work while dropping
+    # 55% of the noise. Context that fits is not context that is free — an
+    # unrelated lesson spends attention, and the relevance prompt itself says it
+    # "can actively mislead".
+    #
+    # The latency half was right, and does not go away: this runs inside a hook
+    # that blocks the user's prompt, at ~5s of CLI startup alone and ~34s on the
+    # model that routes well. So the gate survives, sized by *count* rather than
+    # tokens — what it waves through should be a few lines, not a page. Above
+    # this, the noise is worth five seconds; at or below it, it is not.
+    #
+    # Scarcity was never the reason to choose. Latency is, and it is a worse
+    # reason — see EXPERIMENTS.md §4.4, which records this as unresolved.
+    ceiling = int(store.config.get("recall.filter_above", 3))
+    if len(roots) <= ceiling:
         result = WalkResult(selected=roots)
         for node in roots:
             result.picks[node.id] = Pick(
                 id=node.id,
                 verdict="relevant",
-                why=f"whole store is {total} tokens, under the {pack_budget} budget — served without filtering",
+                why=f"only {len(roots)} lesson(s) stored — served without a routing call",
             )
         return result
 
@@ -115,6 +129,12 @@ def select_lessons(
         budget=budget,
         max_depth=int(store.config.get("recall.max_depth", 2)),
     )
+
+    # An empty pack has two very different causes and they must not look alike
+    # to the caller: nothing was relevant, or nothing answered.
+    if judge.failures and not result.selected:
+        result.failed = True
+        result.error = judge.last_error
 
     # Prefer confident hits; fall back to the maybes only if there is room.
     confident = [n for n in result.selected if result.picks.get(n.id, Pick(n.id)).verdict == "relevant"]
@@ -159,6 +179,9 @@ def recall_pack(
 
     selection = select_lessons(store, adapter, prompt)
     pack.reasons = {n.id: selection.why(n.id) for n in selection.selected}
+    pack.degraded, pack.error = selection.failed, selection.error
+    if pack.degraded:
+        store.log("recall-degraded", error=pack.error[:200])
 
     seen = already_served or {}
     fresh_for = int(store.config.get("recall.stays_fresh_turns", 8))

@@ -179,6 +179,7 @@ def observe(
     unused = [n for n in nodes if n not in used_nodes]
 
     for node in used_nodes:
+        node.stats.shown += 1
         node.stats.attempts += 1
         if outcome.corrected or outcome.label == "failure":
             node.stats.failures += 1
@@ -190,7 +191,12 @@ def observe(
 
     if unused:
         # Not a mark against the lesson — a mark against retrieval, which served
-        # something the work never needed.
+        # something the work never needed. Recorded on the node all the same,
+        # because the next selection is the only place that fact can be acted
+        # on, and until now it lived solely in an event log nothing read.
+        for node in unused:
+            node.stats.shown += 1
+            store.save_node(node)
         store.log("unused", session=session_id, nodes=[n.id for n in unused])
 
     family = family_hint or (nodes[0].family if nodes else "")

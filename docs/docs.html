@@ -260,9 +260,10 @@ rmc doctor</pre>
       <tr><td><code>agent</code></td><td><code>claude</code></td><td>default backend</td></tr>
       <tr><td><code>recall.enabled</code></td><td><code>true</code></td><td>inject lessons at all</td></tr>
       <tr><td><code>recall.strategy</code></td><td><code>delta-patch</code></td><td><code>delta-patch</code>, <code>delta-jump</code>, or <code>stepwise</code></td></tr>
+      <tr><td><code>recall.filter_above</code></td><td><code>3</code></td><td>lessons below which recall serves everything without a routing call</td></tr>
+      <tr><td><code>recall.model</code></td><td><code>null</code></td><td>model for routing; null means the same as everything else (smaller models measured worse &mdash; see EXPERIMENTS.md)</td></tr>
       <tr><td><code>recall.max_pack_tokens</code></td><td><code>1200</code></td><td>ceiling on injected context</td></tr>
       <tr><td><code>recall.max_families</code></td><td><code>3</code></td><td>lesson families served per prompt</td></tr>
-      <tr><td><code>recall.always_judge</code></td><td><code>false</code></td><td>filter for relevance even when the whole store fits the budget</td></tr>
       <tr><td><code>recall.timeout_s</code></td><td><code>20</code></td><td>bound on the routing call, kept under the hook deadline</td></tr>
       <tr><td><code>recall.judge_calls</code></td><td><code>2</code></td><td>model calls the relevance walk may spend</td></tr>
       <tr><td><code>recall.max_depth</code></td><td><code>2</code></td><td>how far down the tree the walk may look</td></tr>

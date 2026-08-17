@@ -408,18 +408,56 @@ def judge_for(store, route):
 
 
 class TestRecall(StoreCase):
-    def force_judging(self) -> None:
-        """Opt into relevance filtering — tiny stores skip it by design."""
-        self.store.config.set("recall.always_judge", True)
+    def setUp(self) -> None:
+        super().setUp()
+        # These fixtures hold two or three lessons, which is exactly the range
+        # the brand-new-store bypass covers. Turn it off: what is under test is
+        # the decision, not the shortcut around it.
+        self.store.config.set("recall.filter_above", 0)
 
-    def test_everything_is_served_when_it_all_fits_in_the_budget(self) -> None:
-        """Under the budget there is nothing to choose, so nothing is asked."""
+    def test_a_store_past_the_bypass_is_filtered(self) -> None:
+        """Fitting the budget was never a reason to skip choosing.
+
+        This used to serve everything unfiltered whenever the store fit, on the
+        reasoning that judgement is only needed under scarcity. Measured on a
+        real store that always fit: 15,917 of ~17,800 injected tokens went
+        unused, and asking the judge about exactly those sets kept every lesson
+        that had mattered while dropping 55% of the noise. Context that fits is
+        not context that is free.
+        """
         self.add_node(id="n_a", family="retry", body="Retry idempotent calls.")
         self.add_node(id="n_b", family="graphql", body="Batch queries.")
         log: list = []
-        pack = recall_pack(self.store, "anything at all", counting_router({"picks": []}, log))
+        adapter = counting_router({"picks": [{"id": "n_a", "verdict": "relevant"}]}, log)
+        pack = recall_pack(self.store, "retry the call", adapter)
+        self.assertEqual(len(log), 1, "a small store still gets a decision")
+        self.assertEqual(pack.served, ["n_a"], "the unrelated lesson is not free just because it fits")
+
+    def test_a_brand_new_store_skips_the_routing_call(self) -> None:
+        """The one case where serving blind beats deciding.
+
+        Not because the noise is free — it is not — but because a routing call
+        costs ~5s of CLI startup inside a hook that blocks the user's prompt,
+        and three lessons served blind is a few lines. The gate is sized so that
+        what it waves through stays small.
+        """
+        self.store.config.set("recall.filter_above", 3)
+        self.add_node(id="n_a", family="retry", body="Retry idempotent calls.")
+        self.add_node(id="n_b", family="graphql", body="Batch queries.")
+        log: list = []
+        pack = recall_pack(self.store, "anything", counting_router({"picks": []}, log))
         self.assertEqual(sorted(pack.served), ["n_a", "n_b"])
-        self.assertEqual(log, [], "must not spend a call choosing from what it can afford")
+        self.assertEqual(log, [], "no model call while the store is this small")
+
+    def test_the_bypass_closes_as_soon_as_the_store_grows(self) -> None:
+        self.store.config.set("recall.filter_above", 3)
+        for i in range(4):
+            self.add_node(id=f"n_{i}", family=f"f{i}", body=f"Lesson {i}.")
+        log: list = []
+        adapter = counting_router({"picks": [{"id": "n_0", "verdict": "relevant"}]}, log)
+        pack = recall_pack(self.store, "the first thing", adapter)
+        self.assertEqual(len(log), 1)
+        self.assertEqual(pack.served, ["n_0"])
 
     def test_filtering_switches_on_once_the_store_outgrows_the_budget(self) -> None:
         self.store.config.set("recall.max_pack_tokens", 20)
@@ -432,7 +470,6 @@ class TestRecall(StoreCase):
         self.assertEqual(pack.served, ["n_a"])
 
     def test_serves_what_the_model_selects(self) -> None:
-        self.force_judging()
         self.add_node(id="n_r", family="retry", title="Retry", body="Retry idempotent calls.", level=2)
         self.add_node(id="n_g", family="graphql", title="GraphQL", body="Batch queries.", level=1)
         adapter = router({"picks": [{"id": "n_r", "verdict": "relevant", "why": "same subject"}]})
@@ -444,7 +481,6 @@ class TestRecall(StoreCase):
         self.assertEqual(pack.reasons["n_r"], "same subject")
 
     def test_nothing_selected_means_nothing_injected(self) -> None:
-        self.force_judging()
         self.add_node(id="n_r", family="retry", body="Retry idempotent calls.")
         pack = recall_pack(self.store, "what colour should the logo be", router({"picks": []}))
         self.assertFalse(pack)
@@ -462,7 +498,12 @@ class TestRecall(StoreCase):
         reachable = {n.id for n in self.store.apexes()}
         self.assertEqual(reachable, {"n_a", "n_b", "n_c"})
 
-        pack = recall_pack(self.store, "deploy staging", router({"picks": []}))
+        keeps = router({"picks": [
+            {"id": "n_a", "verdict": "relevant"},
+            {"id": "n_b", "verdict": "relevant"},
+            {"id": "n_c", "verdict": "relevant"},
+        ]})
+        pack = recall_pack(self.store, "deploy staging", keeps)
         self.assertEqual(sorted(pack.served), ["n_a", "n_b", "n_c"])
 
     def test_compressed_nodes_outrank_their_sources(self) -> None:
@@ -481,7 +522,6 @@ class TestRecall(StoreCase):
         self.assertEqual(log, [], "no lessons means no question to ask")
 
     def test_conflict_is_surfaced_with_the_lesson(self) -> None:
-        self.force_judging()
         self.add_node(
             id="n_c",
             family="db",
@@ -498,7 +538,6 @@ class TestRecall(StoreCase):
         self.assertEqual(pack.conflicts, ["n_c"])
 
     def test_previously_rescued_claims_are_reattached(self) -> None:
-        self.force_judging()
         self.add_node(id="n_p", family="f", body="Short.", dropped=[Delta("the missing bit", "parameter")])
         self.store.log("rescue", node="n_p", claim="the missing bit")
         pack = recall_pack(
@@ -1959,6 +1998,40 @@ class TestWidthDrivenConsolidation(StoreCase):
         self.assertEqual(len(tried), 3)
 
 
+class TestAnEmptyPackSaysWhy(StoreCase):
+    """Nothing relevant and nothing answering are opposite facts.
+
+    They produce an identical empty pack. Before relevance filtering ran on
+    every prompt this barely mattered — a small store was served unfiltered, so
+    an outage was visible as lessons vanishing. Now a backend that is down is
+    indistinguishable from a quiet day, and the user concludes RMC does not
+    work rather than that it is broken.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.store.config.set("recall.filter_above", 0)
+        self.add_node(id="n_a", family="f", title="Retry", body="Retry idempotent calls.")
+
+    def test_a_judge_that_answers_nothing_relevant_is_not_an_outage(self) -> None:
+        pack = recall_pack(self.store, "unrelated work", router({"picks": []}))
+        self.assertFalse(pack.degraded)
+        self.assertEqual(pack.served, [])
+
+    def test_a_judge_that_cannot_answer_is_reported(self) -> None:
+        from rmc.hooks import recall_notice
+
+        broken = MockAdapter(router=lambda prompt, schema: None)
+        pack = recall_pack(self.store, "any work", broken)
+        self.assertTrue(pack.degraded)
+        self.assertIn("could not reach the recall judge", recall_notice(pack))
+
+    def test_the_outage_is_logged_where_a_report_can_find_it(self) -> None:
+        broken = MockAdapter(router=lambda prompt, schema: None)
+        recall_pack(self.store, "any work", broken)
+        self.assertTrue(list(self.store.read_events("recall-degraded", limit=5)))
+
+
 class TestReInjection(StoreCase):
     """A lesson already in context should not be paid for twice — but "present"
     and "still attended to" are different, so there are three cases."""
@@ -1970,7 +2043,8 @@ class TestReInjection(StoreCase):
         )
 
     def pack(self, **kw):
-        return recall_pack(self.store, "do the thing", router({"picks": []}), **kw)
+        keeps = router({"picks": [{"id": "n_r", "verdict": "relevant"}]})
+        return recall_pack(self.store, "do the thing", keeps, **kw)
 
     def test_first_sight_serves_the_full_lesson(self) -> None:
         pack = self.pack(already_served={}, turn=1)

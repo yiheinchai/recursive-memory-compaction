@@ -991,6 +991,87 @@ def cmd_hook(args: argparse.Namespace) -> int:
     return dispatch(args.event)
 
 
+def cmd_eval_recall(args: argparse.Namespace) -> int:
+    """Score the one stage that was never scored.
+
+    Compression replays its episodes, a merge reproduces its children, a delta
+    earns its way back by rescuing a failure. Recall decides what enters the
+    user's context on every prompt and was checked against nothing — so the
+    number everyone quotes for it has never been anything but an assertion.
+    """
+    import json as _json
+
+    from . import eval_recall
+
+    store = need_store(args)
+    if store is None:
+        return 1
+    adapter = make_adapter(store, args)
+
+    report = eval_recall.run(store, adapter, limit=args.limit)
+    if not report.scores:
+        print(dim("no episodes with both a prompt and a recorded outcome yet"))
+        print(dim("recall cannot be scored until some work has been done with lessons in play"))
+        return 0
+
+    print(report.to_markdown())
+
+    runs = store.root / "evals"
+    if args.against:
+        prior = runs / f"{args.against}.json"
+        if not prior.exists():
+            print(f"\n{red('no saved run named')} {args.against}")
+            return 1
+        before = eval_recall.Report()
+        before.__dict__.update(_rehydrate(_json.loads(prior.read_text(encoding="utf-8"))))
+        print()
+        print(eval_recall.compare(before, report))
+
+    if args.save:
+        runs.mkdir(parents=True, exist_ok=True)
+        (runs / f"{args.save}.json").write_text(
+            _json.dumps(
+                {
+                    "scores": [
+                        {
+                            "episode": s.episode,
+                            "prompt": s.prompt,
+                            "kept": sorted(s.kept),
+                            "used": sorted(s.used),
+                            "served": sorted(s.served),
+                            "tokens": s.tokens,
+                        }
+                        for s in report.scores
+                    ],
+                    "skipped": report.skipped,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        print(f"\nsaved as {green(args.save)} — compare a later run with --against {args.save}")
+    return 0
+
+
+def _rehydrate(raw: dict) -> dict:
+    from .eval_recall import EpisodeScore
+
+    return {
+        "scores": [
+            EpisodeScore(
+                episode=s["episode"],
+                prompt=s.get("prompt", ""),
+                kept=set(s.get("kept") or []),
+                used=set(s.get("used") or []),
+                served=set(s.get("served") or []),
+                tokens=s.get("tokens") or {},
+            )
+            for s in raw.get("scores") or []
+        ],
+        "skipped": list(raw.get("skipped") or []),
+    }
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     """Write a defect report. Deliberately does not file it.
 
@@ -1246,6 +1327,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--verbose", "-v", action="store_true")
     add_agent_flags(p)
     p.set_defaults(func=cmd_eval)
+
+    p = sub.add_parser(
+        "eval-recall",
+        help="does recall serve the right lessons? measure precision against what was used",
+    )
+    p.add_argument("--limit", type=int, default=0, help="episodes to score; 0 is all")
+    p.add_argument("--save", metavar="NAME", help="store this run so a later one can be compared to it")
+    p.add_argument("--against", metavar="NAME", help="compare this run to a saved one")
+    add_agent_flags(p)
+    p.set_defaults(func=cmd_eval_recall)
 
     p = sub.add_parser("tree", help="visualise the lesson tree")
     p.add_argument("--family")

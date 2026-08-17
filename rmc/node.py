@@ -78,6 +78,12 @@ class Delta:
 
 @dataclass
 class Stats:
+    # Times this lesson was put in front of the model. `attempts` counts the
+    # subset that actually bore on the work, so `shown - attempts` is what it
+    # has cost in context for nothing — the only record a lesson keeps of its
+    # own retrieval history, and the thing the selector needs in order to stop
+    # repeating a bad pick.
+    shown: int = 0
     attempts: int = 0
     successes: int = 0
     failures: int = 0
@@ -87,6 +93,7 @@ class Stats:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "shown": self.shown,
             "attempts": self.attempts,
             "successes": self.successes,
             "failures": self.failures,
@@ -99,6 +106,10 @@ class Stats:
     def from_dict(cls, raw: Any) -> "Stats":
         raw = raw or {}
         return cls(
+            # Older stores have no `shown`. Falling back to `attempts` says
+            # "every time it was served it was used", which is the reading that
+            # does not punish a lesson for missing history.
+            shown=int(raw.get("shown") or raw.get("attempts") or 0),
             attempts=int(raw.get("attempts") or 0),
             successes=int(raw.get("successes") or 0),
             failures=int(raw.get("failures") or 0),

@@ -22,10 +22,41 @@ DEFAULTS: dict[str, Any] = {
         "judge_calls": 2,  # model calls the relevance walk may spend
         "max_depth": 2,  # how far down the tree the walk may look
         "max_expansions": 3,
-        # When every stored lesson fits in max_pack_tokens there is nothing to
-        # choose between, so recall serves them all without asking. Set this to
-        # force relevance filtering even then.
-        "always_judge": False,
+        # Apexes below which recall serves everything without asking.
+        #
+        # There used to be no count here, only a token budget, justified as
+        # "judgement is only needed under scarcity". That was wrong about cost:
+        # measured over 57 prompts on a store that fit the budget, 15,917 of
+        # ~17,800 injected tokens went unused, and judging those same sets kept
+        # every lesson that mattered while dropping 55% of the noise. Context
+        # that fits is not context that is free.
+        #
+        # It was right about latency, which is the part that cannot be argued
+        # away: a routing call costs ~5s of CLI startup alone and ~34s on the
+        # model that routes well, in a hook that blocks the user's prompt. So a
+        # gate stays — but a small one, sized so that what it lets through is a
+        # few lines rather than a page. Three lessons served blind is cheaper
+        # than five seconds of waiting; twenty is not.
+        "filter_above": 3,
+        # Model for the routing decision. Null means "same as everything else",
+        # and that is the measured right answer despite looking wasteful.
+        #
+        # Choosing which of two dozen one-line summaries bear on a prompt looks
+        # like a classification job a small model should win, and it blocks the
+        # user's prompt, so the incentive to downgrade it is strong. `rmc
+        # eval-recall` says don't:
+        #
+        #     model      precision  recall  noise tok
+        #     default        48%     100%      7,146
+        #     sonnet         35%      81%      9,781
+        #     haiku          35%      75%      8,818
+        #
+        # Both small models serve *more* noise and drop useful lessons. Since
+        # serving everything unfiltered has 100% recall by construction, a cheap
+        # router is strictly worse than no router at all — it costs latency,
+        # loses lessons, and does not even save context. Set this only with an
+        # eval run to back it.
+        "model": None,
         # Turns for which an already-injected lesson counts as still present and
         # attended to. Inside it, a repeat is skipped; beyond it, the lesson is
         # refreshed with its one-line gist rather than repeated in full. Context

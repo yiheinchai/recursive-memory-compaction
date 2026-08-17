@@ -38,6 +38,16 @@ from .util import truncate
 # schemas
 # --------------------------------------------------------------------------- #
 
+def criteria_version() -> str:
+    """Fingerprint of the prompts that define a judgement.
+
+    Cheap, and it makes every cached verdict self-invalidating: edit a prompt
+    and the old answers become unreachable rather than silently authoritative.
+    """
+    material = (RELEVANCE + RELATED).encode("utf-8")
+    return hashlib.sha256(material).hexdigest()[:8]
+
+
 RELEVANCE_SCHEMA = {
     "type": "object",
     "required": ["picks"],
@@ -190,6 +200,8 @@ class Judge:
         # its output discarded.
         self.timeout = timeout
         self.calls = 0
+        self.failures = 0
+        self.last_error = ""
 
     # ------------------------------------------------------------- plumbing
     def _cache_path(self):
@@ -220,9 +232,29 @@ class Judge:
         except Exception:
             pass
 
-    @staticmethod
-    def key(*parts: str) -> str:
-        return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()[:16]
+    def key(self, *parts: str) -> str:
+        """Cache key for one judgement, including the criteria that produced it.
+
+        Keying only on the question and the candidates makes the cache outlive
+        the standard it was answered against: sharpen the relevance prompt and
+        every previously-asked question keeps returning the old verdict, so the
+        change looks like it did nothing. That is not hypothetical — the first
+        A/B run of the recall eval came back byte-identical to its baseline
+        after a full prompt rewrite, and the rewrite had never been used.
+
+        The backend and model belong in the key for the same reason. Switching
+        the routing model and re-running the eval returned numbers identical to
+        the previous model's, down to the token — the second model was never
+        asked anything. A cached judgement is reusable only while both the
+        criteria and the judge behind it hold.
+
+        Same failure as the nudge backoff, which went stale for the same reason
+        and was fixed the same way.
+        """
+        who = f"{getattr(self.adapter, 'name', '?')}:{getattr(self.adapter, 'model', None) or 'default'}"
+        return hashlib.sha256(
+            "\x1f".join((criteria_version(), who, *parts)).encode("utf-8")
+        ).hexdigest()[:16]
 
     def ask(
         self,
@@ -246,6 +278,14 @@ class Judge:
         )
         self.calls += 1
         if not run.ok or not run.data:
+            # Counted, because "the model said nothing is relevant" and "the
+            # model never answered" produce the same empty list and mean
+            # opposite things. Since relevance filtering became unconditional,
+            # a backend that is down or slow would otherwise switch memory off
+            # in complete silence — the worst way for this to fail, because the
+            # user concludes RMC does not work rather than that it is broken.
+            self.failures += 1
+            self.last_error = (run.error or "no parseable answer")[:200]
             return None
         if cache_key:
             self._store_cache(cache_key, run.data)
@@ -689,6 +729,10 @@ class WalkResult:
     picks: dict[str, Pick] = field(default_factory=dict)
     calls: int = 0
     depth_reached: int = 0
+    # Set when the judge could not answer. Distinguishes an empty pack that is
+    # a decision from one that is an outage.
+    failed: bool = False
+    error: str = ""
 
     def why(self, node_id: str) -> str:
         pick = self.picks.get(node_id)

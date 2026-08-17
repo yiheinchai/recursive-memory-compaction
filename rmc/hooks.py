@@ -88,7 +88,10 @@ def on_user_prompt_submit(payload: dict[str, Any]) -> int:
         return 0
 
     adapter = get_adapter(
-        str(store.config.get("agent", "claude")), model=store.config.get("model")
+        str(store.config.get("agent", "claude")),
+        # The routing model, which is deliberately not the working model: this
+        # call blocks the user's prompt.
+        model=store.config.get("recall.model") or store.config.get("model"),
     )
     if not adapter.available():
         return 0
@@ -187,6 +190,15 @@ def recall_notice(pack) -> str:
     # one number is why "2 lessons" could show up with a single lesson visible:
     # a full body is ~400 tokens of lesson, a refresher is a ~20-token reminder
     # line, and a skip is nothing at all because the text is already in context.
+    # Silence is the one thing this line must never be ambiguous about. Now
+    # that relevance filtering runs on every prompt, a backend that is down
+    # produces exactly the same empty pack as a prompt nothing applies to — and
+    # the user reading the first as the second concludes RMC does not work.
+    if getattr(pack, "degraded", False):
+        detail = (getattr(pack, "error", "") or "").strip().splitlines()
+        why = f" — {detail[0][:60]}" if detail else ""
+        return f"RMC · could not reach the recall judge, no lessons loaded{why}"
+
     refreshed = len(getattr(pack, "refreshed", []))
     skipped = len(getattr(pack, "skipped", []))
     count = len(pack.served) - refreshed
