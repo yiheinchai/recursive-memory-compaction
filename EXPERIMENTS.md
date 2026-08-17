@@ -270,7 +270,54 @@ decomposition; four judge interventions; three routing models.
   Whether merging can hold apex count flat against capture is the open question
   and §3.4 suggests it currently cannot.
 
-## 8. Reproducing
+---
+
+## 8. Open problem: routing cost is currently linear in lessons
+
+Everything above is measured on a 29-node store. The scaling argument is not,
+and it is the one that decides whether the design holds.
+
+**The arithmetic.** Routing costs ~55 tok per apex, and §3.4 shows apex count
+tracks node count at roughly 1:1 because 60% of captures mint a new family.
+
+| lessons | apexes (at today's ratio) | routing tok / prompt |
+|---|---|---|
+| 29 | 24 | 1,311 |
+| 500 | ~410 | ~23k |
+| 5,000 | ~4,100 | ~225k |
+
+At 5,000 lessons the candidate list alone approaches a full context window, so
+the selector cannot be shown everything and something must decide what even
+reaches it. That decision is the same problem one level up, and solving it with
+a heuristic would abandon the property the whole design rests on.
+
+**The intended answer is that merging holds apex count flat** — capture adds,
+consolidation removes, and the top layer reaches a steady state whose width is
+set by how many genuinely distinct subjects the user works on rather than by how
+many lessons they have accumulated. That is the claim. It is currently false in
+practice: §3.1 removes ~2 apexes per pass while §3.4 adds them faster. Whether
+the steady state exists at all is unmeasured and is the single most important
+open question here.
+
+**A partial answer that does not depend on the steady state.** The candidate
+list is nearly identical between consecutive prompts — the same apex layer,
+re-sent every time, with only the question changing. That is exactly the shape
+prompt caching rewards: send the candidate list as a stable prefix and vary only
+the question, and repeat routing calls read the prefix at cache rates rather
+than paying for it again. Forking a warm session rather than spawning a cold
+`claude -p` would keep that prefix hot across selection runs.
+
+This does not make routing sublinear — the prefix still has to fit — but it
+changes the constant by roughly an order of magnitude, and it composes with
+whatever fixes the width. It also attacks §4.4 from the other side: a fork
+skips the ~5s CLI startup that currently dominates recall latency, which is the
+reason filtering is bypassed on small stores at all.
+
+Neither is implemented. Both belong in the same piece of work, since they are
+the same observation — that the expensive part of routing is re-establishing
+context that never changed.
+
+## 9. Reproducing
 
 ```
 rmc status                                  # store shape, routing cost, precision
