@@ -19,7 +19,14 @@ DEFAULTS: dict[str, Any] = {
         "strategy": "delta-patch",  # delta-patch | delta-jump | stepwise
         "max_pack_tokens": 1200,
         "max_families": 3,  # how many lessons to inject per prompt
-        "judge_calls": 2,  # model calls the relevance walk may spend
+        # Model calls the walk may spend *descending*. The first pass over the
+        # top level is not drawn from this — it is sized by how many chunks the
+        # apex layer needs, because a chunk skipped there is a lesson that can
+        # never be retrieved.
+        "judge_calls": 2,
+        # Lessons shown to the model in one question. Wide levels are split
+        # across several; this is about answer quality, not budget.
+        "fanout": 12,
         "max_depth": 2,  # how far down the tree the walk may look
         "max_expansions": 3,
         # Apexes below which recall serves everything without asking.
@@ -38,6 +45,20 @@ DEFAULTS: dict[str, Any] = {
         # few lines rather than a page. Three lessons served blind is cheaper
         # than five seconds of waiting; twenty is not.
         "filter_above": 3,
+        # Candidate-list size above which routing seeds a reusable conversation
+        # instead of re-sending the list every prompt. Providers serve an
+        # identical prefix from cache at roughly a tenth of the price, but only
+        # within one conversation — and seeding costs an extra round trip, so
+        # below this the trick loses money. It is set for where the design has
+        # to work rather than where it is: at 5,000 lessons the list runs to
+        # ~225k tokens per prompt and re-sending it is not survivable.
+        "warm_prefix_above_tokens": 2000,
+        # Smallest prefix a provider will open a cache entry for. Below it,
+        # seeding writes nothing and every fork misses — so when warming is on,
+        # candidate chunks are widened until they clear this. Roughly 1024 for
+        # the larger models and 2048 for the smallest; 1200 leaves margin
+        # without making the questions much wider than they need to be.
+        "min_cacheable_tokens": 1200,
         # Model for the routing decision. Null means "same as everything else",
         # and that is the measured right answer despite looking wasteful.
         #

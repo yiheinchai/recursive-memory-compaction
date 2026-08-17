@@ -407,6 +407,130 @@ def judge_for(store, route):
 # --------------------------------------------------------------------------- #
 
 
+class TestWarmRoutingPrefix(StoreCase):
+    """The candidate list is identical between prompts; only the question moves.
+
+    Re-sending it every time is affordable at 1,311 tokens and fatal at the
+    ~225k the same layer would reach at 5,000 lessons. Providers cache an
+    identical prefix, but only within one conversation, so the list is seeded
+    once and each prompt branches a fork from it.
+    """
+
+    def router(self):
+        from rmc.router import Router
+
+        return Router(self.store)
+
+    def seed(self, r, key, *, cached=58000, created=4000, now=0):
+        r.session_for(key, now=now)
+        r.record(cached_in=cached, created=created, prefix_tokens=created,
+                 prefix_hash=key, seeded=True, now=now)
+
+    def test_the_first_call_seeds_and_the_next_branches(self) -> None:
+        r = self.router()
+        first = r.session_for("hash-a", now=1000)
+        self.assertFalse(first.resume, "nothing to branch from yet")
+        r.record(cached_in=0, prefix_tokens=4000, prefix_hash="hash-a",
+                 seeded=True, now=1000)
+        second = r.session_for("hash-a", now=1010)
+        self.assertTrue(second.resume)
+        self.assertEqual(second.id, first.id, "same conversation, so the prefix matches")
+
+    def test_each_chunk_keeps_its_own_conversation(self) -> None:
+        """A wide apex layer is judged in chunks and each is a stable prefix.
+
+        One shared session would be reseeded on every chunk and hit nothing,
+        which is what the first version did.
+        """
+        r = self.router()
+        self.seed(r, "chunk-1", now=0)
+        self.seed(r, "chunk-2", now=1)
+        a = r.session_for("chunk-1", now=2)
+        b = r.session_for("chunk-2", now=3)
+        self.assertTrue(a.resume and b.resume)
+        self.assertNotEqual(a.id, b.id)
+
+    def test_the_host_system_prompt_is_not_counted_as_our_hit(self) -> None:
+        """The host sends a ~58k system prompt that is cached no matter what we
+        do. Counting it reports 100% warm while delivering nothing."""
+        r = self.router()
+        self.seed(r, "hash-a", cached=58000, created=4000, now=0)
+        self.assertFalse(r.record(cached_in=58004, prefix_tokens=4000,
+                                  prefix_hash="hash-a", now=1))
+        self.assertTrue(r.record(cached_in=62000, prefix_tokens=4000,
+                                 prefix_hash="hash-a", now=2))
+
+    def test_warmth_is_judged_per_conversation_not_globally(self) -> None:
+        """A single global baseline drifts. Take the maximum and one unusually
+        warm seed poisons it into reporting permanent misses — which happened:
+        a stale 65,372 against a real 57,558 made every genuine hit negative."""
+        r = self.router()
+        self.seed(r, "big", cached=65000, created=20000, now=0)
+        self.seed(r, "small", cached=57000, created=4000, now=1)
+        self.assertTrue(
+            r.record(cached_in=61000, prefix_tokens=4000, prefix_hash="small", now=2),
+            "judged against its own seed, not against the other conversation's",
+        )
+
+    def test_a_changed_candidate_list_reseeds(self) -> None:
+        """A different prefix cannot hit the cache, and branching from a stale
+        one would answer using lessons that no longer exist."""
+        r = self.router()
+        first = r.session_for("hash-a", now=1000)
+        r.record(cached_in=9000, prefix_tokens=4000, now=1000)
+        second = r.session_for("hash-b", now=1005)
+        self.assertFalse(second.resume)
+        self.assertNotEqual(second.id, first.id)
+
+    def test_a_hit_across_a_long_gap_widens_the_window(self) -> None:
+        """Cache TTLs are not published per request, so the window is learned
+        from what the provider actually served rather than written down."""
+        r = self.router()
+        r.session_for("hash-a", now=0)
+        before = r.state.ttl_s
+        r.record(cached_in=8000, prefix_tokens=4000, now=before * 0.95)
+        self.assertGreater(r.state.ttl_s, before)
+
+    def test_a_miss_inside_the_window_narrows_it(self) -> None:
+        r = self.router()
+        r.session_for("hash-a", now=0)
+        r.record(cached_in=8000, prefix_tokens=4000, now=10)
+        wide = r.state.ttl_s
+        r.record(cached_in=0, prefix_tokens=4000, now=10 + wide * 0.5)
+        self.assertLess(r.state.ttl_s, wide)
+
+    def test_a_stale_prefix_is_reseeded_rather_than_branched(self) -> None:
+        r = self.router()
+        r.session_for("hash-a", now=0)
+        r.record(cached_in=8000, prefix_tokens=4000, now=1)
+        later = r.session_for("hash-a", now=1 + r.state.ttl_s + 1)
+        self.assertFalse(later.resume)
+
+    def test_a_trickle_of_cached_tokens_is_not_a_hit(self) -> None:
+        """The system prompt is cached regardless. Counting that as success
+        would report a warm prefix while the part worth caching missed every
+        time."""
+        r = self.router()
+        r.session_for("hash-a", now=0)
+        self.assertFalse(r.record(cached_in=200, prefix_tokens=4000, now=1))
+        self.assertTrue(r.record(cached_in=3000, prefix_tokens=4000, now=2))
+
+    def test_what_was_learned_survives_a_reseed(self) -> None:
+        """The conversation expires; what we found out about how long
+        conversations stay warm does not."""
+        r = self.router()
+        r.session_for("hash-a", now=0)
+        r.record(cached_in=8000, prefix_tokens=4000, now=1)
+        learned, hits = r.state.ttl_s, r.state.hits
+        r.session_for("hash-b", now=2)
+        self.assertEqual(r.state.ttl_s, learned)
+        self.assertEqual(r.state.hits, hits)
+
+    def test_a_corrupt_state_file_never_blocks_a_prompt(self) -> None:
+        (self.store.root / "router.json").write_text("{not json", encoding="utf-8")
+        self.assertTrue(self.router().session_for("hash-a", now=0).id)
+
+
 class TestRecall(StoreCase):
     def setUp(self) -> None:
         super().setUp()

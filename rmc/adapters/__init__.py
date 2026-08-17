@@ -27,6 +27,16 @@ class AgentResult:
     error: str = ""
     tokens_in: int = 0
     tokens_out: int = 0
+    # Input tokens the provider served from its prompt cache. Reported
+    # separately from tokens_in because it is the only observable that says
+    # whether a warm-prefix strategy is actually working — cache TTLs are not
+    # published per-request, so warmth has to be measured after the fact rather
+    # than predicted.
+    cached_in: int = 0
+    # Input tokens the provider wrote *into* the cache on this call. On a
+    # seeding call this is how much of our own prefix it stored, which is the
+    # amount a later fork has to read back for the trick to have worked.
+    created_in: int = 0
     duration_s: float = 0.0
     backend: str = ""
     raw: str = ""
@@ -34,6 +44,25 @@ class AgentResult:
     @property
     def tokens(self) -> int:
         return self.tokens_in + self.tokens_out
+
+
+@dataclass
+class Session:
+    """A conversation to start, or to branch a one-off question from.
+
+    Repeated routing calls differ only in the question: the candidate list in
+    front of it is the same apex layer every time. Sending it fresh on every
+    prompt pays full price for text that never changed, which is precisely what
+    a provider prompt cache exists to avoid — but only if the prefix arrives as
+    the same conversation rather than as a new one.
+
+    `start` seeds that conversation once. `resume` branches a throwaway child
+    from it, so the shared prefix stays exactly where it was and the transcript
+    never grows with questions nobody will ask again.
+    """
+
+    id: str
+    resume: bool = False
 
 
 class Adapter(Protocol):
@@ -48,6 +77,7 @@ class Adapter(Protocol):
         schema: dict[str, Any] | None = None,
         tools: bool = False,
         timeout: int = 180,
+        session: "Session | None" = None,
     ) -> AgentResult: ...
 
     def available(self) -> bool: ...

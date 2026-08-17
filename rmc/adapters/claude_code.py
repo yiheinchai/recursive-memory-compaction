@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import AgentResult, extract_json, schema_instruction
+from . import AgentResult, Session, extract_json, schema_instruction
 from ._proc import run_cmd, which
 
 # Tools a meta-call (compress / diagnose / judge) has no business touching.
@@ -43,13 +43,24 @@ class ClaudeCodeAdapter:
         schema: dict[str, Any] | None = None,
         tools: bool = False,
         timeout: int = 180,
+        session: Session | None = None,
     ) -> AgentResult:
         if not self.available():
             return AgentResult(ok=False, error=f"{self.binary} not on PATH", backend=self.name)
 
         full_prompt = prompt + (schema_instruction(schema) if schema else "")
 
-        argv = [self.binary, "-p", "--output-format", "json", "--no-session-persistence"]
+        argv = [self.binary, "-p", "--output-format", "json"]
+        if session is None:
+            # Nothing to reuse, so leave nothing behind.
+            argv.append("--no-session-persistence")
+        elif session.resume:
+            # Branch a throwaway child: the question is answered against the
+            # stored prefix without being appended to it, so the next call sees
+            # the same conversation and the same cache entry.
+            argv += ["--resume", session.id, "--fork-session"]
+        else:
+            argv += ["--session-id", session.id]
         if self.model:
             argv += ["--model", self.model]
         if system:
@@ -73,7 +84,7 @@ class ClaudeCodeAdapter:
                 raw=out,
             )
 
-        text, tin, tout = _parse_envelope(out)
+        text, tin, tout, cached, created = _parse_envelope(out)
         data = extract_json(text) if schema else None
         if schema and data is None:
             return AgentResult(
@@ -82,6 +93,8 @@ class ClaudeCodeAdapter:
                 error="model did not return parseable JSON",
                 tokens_in=tin,
                 tokens_out=tout,
+                cached_in=cached,
+                created_in=created,
                 duration_s=dur,
                 backend=self.name,
                 raw=out[:4000],
@@ -92,13 +105,15 @@ class ClaudeCodeAdapter:
             data=data,
             tokens_in=tin,
             tokens_out=tout,
+            cached_in=cached,
+            created_in=created,
             duration_s=dur,
             backend=self.name,
             raw=out[:4000],
         )
 
 
-def _parse_envelope(stdout: str) -> tuple[str, int, int]:
+def _parse_envelope(stdout: str) -> tuple[str, int, int, int, int]:
     """Pull the assistant text and token usage out of ``--output-format json``.
 
     Falls back to treating stdout as plain text, so a change to the envelope
@@ -106,11 +121,11 @@ def _parse_envelope(stdout: str) -> tuple[str, int, int]:
     """
     stdout = (stdout or "").strip()
     if not stdout:
-        return "", 0, 0
+        return "", 0, 0, 0, 0
     try:
         payload = json.loads(stdout)
     except Exception:
-        return stdout, 0, 0
+        return stdout, 0, 0, 0, 0
 
     if isinstance(payload, list):  # stream-json transcript
         text_parts, usage = [], {}
@@ -122,10 +137,16 @@ def _parse_envelope(stdout: str) -> tuple[str, int, int]:
                 usage = entry.get("usage") or usage
             elif entry.get("usage"):
                 usage = entry["usage"]
-        return "\n".join(text_parts).strip(), _tok(usage, "input"), _tok(usage, "output")
+        return (
+            "\n".join(text_parts).strip(),
+            _tok(usage, "input"),
+            _tok(usage, "output"),
+            _cached(usage, "cache_read_input_tokens"),
+            _cached(usage, "cache_creation_input_tokens"),
+        )
 
     if not isinstance(payload, dict):
-        return stdout, 0, 0
+        return stdout, 0, 0, 0, 0
 
     text = payload.get("result")
     if not isinstance(text, str):
@@ -137,7 +158,21 @@ def _parse_envelope(stdout: str) -> tuple[str, int, int]:
         else:
             text = stdout
     usage = payload.get("usage") or {}
-    return (text or "").strip(), _tok(usage, "input"), _tok(usage, "output")
+    return (
+        (text or "").strip(),
+        _tok(usage, "input"),
+        _tok(usage, "output"),
+        _cached(usage, "cache_read_input_tokens"),
+        _cached(usage, "cache_creation_input_tokens"),
+    )
+
+
+def _cached(usage: Any, key: str) -> int:
+    """One of the provider's cache counters, or zero if it did not report it."""
+    if not isinstance(usage, dict):
+        return 0
+    value = usage.get(key)
+    return value if isinstance(value, int) else 0
 
 
 def _tok(usage: Any, side: str) -> int:

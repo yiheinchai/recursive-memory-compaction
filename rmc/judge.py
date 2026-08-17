@@ -29,10 +29,10 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
-from .adapters import Adapter
+from .adapters import Adapter, Session
 from .node import Node
 from .store import Store
-from .util import truncate
+from .util import count_tokens, truncate
 
 # --------------------------------------------------------------------------- #
 # schemas
@@ -44,7 +44,7 @@ def criteria_version() -> str:
     Cheap, and it makes every cached verdict self-invalidating: edit a prompt
     and the old answers become unreachable rather than silently authoritative.
     """
-    material = (RELEVANCE + RELATED).encode("utf-8")
+    material = (RELEVANCE + WARM_RELEVANCE + RELATED).encode("utf-8")
     return hashlib.sha256(material).hexdigest()[:8]
 
 
@@ -81,6 +81,42 @@ RELEVANCE_SCHEMA = {
         }
     },
 }
+
+SEED = """RMC:candidates
+
+Below is the set of remembered lessons this project has accumulated. Questions
+about which of them apply to a given piece of work will follow, one at a time.
+
+Read them now. Reply with the single word READY and nothing else.
+
+<<<LESSONS
+{candidates}
+LESSONS>>>
+"""
+
+
+WARM_RELEVANCE = """RMC:relevance
+
+Decide which of the lessons above apply to the piece of work below. Same rules
+as always:
+
+  - `relevant`  — knowing this would change how the work is done.
+  - `maybe`     — same general area, but you cannot tell from the summary alone
+                  whether it applies. Set `descend: true` if there is more
+                  detail available and seeing it would settle the question.
+  - `unrelated` — it would only add noise.
+
+Be strict. An irrelevant lesson costs the reader attention and can actively
+mislead. Superficial word overlap is not relevance: a lesson about retrying
+HTTP calls is unrelated to a request to retry a failed CI job.
+
+Judge what the work actually needs, not what it superficially mentions.
+
+<<<WORK
+{question}
+WORK>>>
+"""
+
 
 RELEVANCE = """RMC:relevance
 
@@ -202,6 +238,15 @@ class Judge:
         self.calls = 0
         self.failures = 0
         self.last_error = ""
+        # Optional: keeps the candidate list warm across prompts. Absent for
+        # one-off judgements, where there is no prefix worth preserving.
+        self.router = None
+        # The chunk hashes worth keeping warm: the apex layer, split the same
+        # way the walk splits it. Those are identical on every prompt. A walk
+        # also asks about the children it descends into, and those sets differ
+        # per question, so warming them would reseed on every call and turn the
+        # optimisation into pure overhead. The caller names the stable set.
+        self.warm_prefixes: set[str] = set()
 
     # ------------------------------------------------------------- plumbing
     def _cache_path(self):
@@ -263,6 +308,10 @@ class Judge:
         *,
         cache_key: str | None = None,
         timeout: int | None = None,
+        session: Any = None,
+        prefix_tokens: int = 0,
+        prefix_hash: str = "",
+        router: Any = None,
     ) -> dict[str, Any] | None:
         """One structured judgement. Returns None if the model could not answer."""
         if cache_key:
@@ -275,7 +324,16 @@ class Judge:
             timeout=timeout
             or self.timeout
             or int(self.store.config.get("limits.agent_timeout_s", 180)),
+            **({"session": session} if session is not None else {}),
         )
+        if router is not None:
+            # Whether the warm prefix actually held is only knowable from what
+            # came back, so it is recorded even when the answer was unusable.
+            router.record(
+                cached_in=run.cached_in,
+                prefix_tokens=prefix_tokens,
+                prefix_hash=prefix_hash,
+            )
         self.calls += 1
         if not run.ok or not run.data:
             # Counted, because "the model said nothing is relevant" and "the
@@ -292,15 +350,75 @@ class Judge:
         return run.data
 
     # ------------------------------------------------------------- relevance
+    def _warm(self, rendered: str):
+        """Seed or reuse the conversation holding the candidate list.
+
+        Seeding costs one extra call the first time and whenever the apex layer
+        changes. It is worth it only because the list is re-asked about many
+        times between changes; if lessons churned every prompt this would be
+        pure overhead, which is why the prefix hash drives the decision.
+        """
+        digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()[:16]
+        if digest not in self.warm_prefixes:
+            return None, 0, ""  # a descent set: asked once, never worth seeding
+
+        session = self.router.session_for(digest)
+        if not session.resume:
+            seed = self.adapter.run(
+                SEED.format(candidates=rendered),
+                timeout=self.timeout
+                or int(self.store.config.get("limits.agent_timeout_s", 180)),
+                session=session,
+            )
+            self.calls += 1
+            if not seed.ok:
+                return None, 0, ""  # could not seed; ask the ordinary way
+            # The seeding call is not a result to score — it is how this
+            # conversation's two reference readings are taken: what was cached
+            # before our prefix existed, and how much of ours got written.
+            self.router.record(
+                cached_in=seed.cached_in,
+                created=seed.created_in,
+                prefix_tokens=count_tokens(rendered),
+                prefix_hash=digest,
+                seeded=True,
+            )
+            session = Session(id=session.id, resume=True)
+        return session, count_tokens(rendered), digest
+
     def relevance(self, question: str, candidates: list[Node]) -> list[Pick]:
-        """Which of these lessons bear on this work?"""
+        """Which of these lessons bear on this work?
+
+        The candidate list is the same on every prompt and the question is not,
+        so when a router is supplied the list is seeded once into a conversation
+        and each prompt branches a fork from it. At today's size that saves
+        little; the reason it exists is that the list grows with the store and
+        re-sending it every prompt is what makes routing unaffordable at scale.
+        """
         if not candidates:
             return []
         rendered = "\n\n".join(_render(node) for node in candidates)
+        session = prefix_tokens = digest = None
+        if self.router is not None:
+            session, prefix_tokens, digest = self._warm(rendered)
+
+        # When the conversation already holds the candidates, the question must
+        # not carry them again. Repeating them defeats the entire point — the
+        # copy in the prompt is new text at full price, and it is the copy the
+        # model reads, so the cached one is paid for and ignored.
+        prompt = (
+            WARM_RELEVANCE.format(question=truncate(question, 3000))
+            if session is not None
+            else RELEVANCE.format(question=truncate(question, 3000), candidates=rendered)
+        )
         data = self.ask(
-            RELEVANCE.format(question=truncate(question, 3000), candidates=rendered),
+            prompt,
             RELEVANCE_SCHEMA,
             cache_key=self.key("relevance", question.strip(), *(n.id for n in candidates)),
+            session=session,
+            prefix_tokens=prefix_tokens or 0,
+            prefix_hash=digest or "",
+            router=self.router if session is not None else None,
         )
         if not data:
             return []
@@ -769,33 +887,46 @@ def walk(
     for depth in range(max_depth):
         if not frontier or budget.exhausted:
             break
-        # Structural gate, not a judgement: showing the model 200 summaries at
-        # once degrades its answer, so a wide level is judged in chunks.
-        level = [n for n in frontier if n.id not in seen][:fanout]
-        if not level:
+        pending = [n for n in frontier if n.id not in seen]
+        if not pending:
             break
-        seen.update(n.id for n in level)
 
-        if not budget.take():
-            break
-        picks = judge.relevance(question, level)
-        result.calls += 1
-        result.depth_reached = depth
-        by_id = {n.id: n for n in level}
+        # Showing the model two hundred summaries at once degrades its answer,
+        # so a wide level is judged in chunks — but *every* chunk, not the first
+        # one. This used to read `[:fanout]` and drop the remainder on the
+        # floor: with 26 apexes and a fanout of 12, fourteen lessons could never
+        # be retrieved on any prompt, ever, and nothing reported it. Precision
+        # measured over the reachable dozen looked perfectly healthy.
+        #
+        # The budget still bounds the work; that is the difference. Running out
+        # of budget is a decision to stop looking, recorded and recoverable,
+        # while truncation was a silent hole in the store.
         nxt: list[Node] = []
+        for start in range(0, len(pending), fanout):
+            chunk = pending[start : start + fanout]
+            if not budget.take():
+                # Unexamined nodes stay on the frontier, so the tail below keeps
+                # them rather than discarding them unseen.
+                nxt.extend(pending[start:])
+                break
+            seen.update(n.id for n in chunk)
+            picks = judge.relevance(question, chunk)
+            result.calls += 1
+            result.depth_reached = depth
+            by_id = {n.id: n for n in chunk}
 
-        for pick in picks:
-            result.picks[pick.id] = pick
-            node = by_id.get(pick.id)
-            if node is None or not pick.positive:
-                continue
-            children = expand(node) if pick.descend else []
-            if children:
-                # The model said the summary was too abstract to judge from, so
-                # look at the detail rather than guessing.
-                nxt.extend(children)
-            else:
-                result.selected.append(node)
+            for pick in picks:
+                result.picks[pick.id] = pick
+                node = by_id.get(pick.id)
+                if node is None or not pick.positive:
+                    continue
+                children = expand(node) if pick.descend else []
+                if children:
+                    # The model said the summary was too abstract to judge from,
+                    # so look at the detail rather than guessing.
+                    nxt.extend(children)
+                else:
+                    result.selected.append(node)
 
         frontier = nxt
 

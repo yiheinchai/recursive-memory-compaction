@@ -22,7 +22,7 @@ from typing import Any, Callable
 
 from .adapters import Adapter, AgentResult
 from .config import Config
-from .judge import Budget, Judge, Pick, WalkResult, walk
+from .judge import Budget, Judge, Pick, WalkResult, _render, walk
 from .node import Node
 from .prompts import DIAGNOSE, DIAGNOSE_SCHEMA, REPLAY
 from .selection import Candidate, Diagnosis, select
@@ -119,8 +119,50 @@ def select_lessons(
             )
         return result
 
-    budget = budget or Budget(max_calls=int(store.config.get("recall.judge_calls", 2)))
+    # The top level must be judged in full, whatever it costs. It is the only
+    # level where every lesson is a candidate, so a chunk left unexamined there
+    # is a lesson that cannot be retrieved at all — which is what `judge_calls:
+    # 2` against 26 apexes and a fanout of 12 actually meant. `judge_calls` now
+    # buys *descent*, on top of a complete first pass.
+    #
+    # Both terms are counts, so the harness owns them.
+    fanout = int(store.config.get("recall.fanout", 12))
+    min_cacheable = int(store.config.get("recall.min_cacheable_tokens", 1200))
+    first_pass = max(1, -(-len(roots) // fanout))
+    budget = budget or Budget(
+        max_calls=first_pass + int(store.config.get("recall.judge_calls", 2))
+    )
     judge = Judge(store, adapter, timeout=int(store.config.get("recall.timeout_s", 20)))
+
+    # Keep the candidate list warm across prompts once it is large enough that
+    # re-sending it costs more than seeding it once. Below that the seed call is
+    # pure overhead — the list is cheap and the extra round trip is not.
+    warm_above = int(store.config.get("recall.warm_prefix_above_tokens", 2000))
+    apex_render = "\n\n".join(_render(n) for n in roots)
+    if count_tokens(apex_render) >= warm_above:
+        import hashlib
+
+        from .router import Router
+
+        judge.router = Router(store)
+
+        # Providers only open a new cache entry for a prefix above a minimum
+        # size — around a thousand tokens. A chunk of 12 summaries is ~660, so
+        # seeding it writes nothing and every fork reads back the host's system
+        # prompt and none of ours. Measured: `ours_cached: 4` on nine calls out
+        # of ten. Widening the chunk until it clears the minimum is what makes
+        # the mechanism function at all, and chunk width is a count.
+        per = max(1, count_tokens(apex_render) // max(1, len(roots)))
+        fanout = max(fanout, -(-min_cacheable // per))
+
+        # Named chunk by chunk, exactly as the walk will split them, so each
+        # question lands on the conversation already holding its candidates.
+        judge.warm_prefixes = {
+            hashlib.sha256(
+                "\n\n".join(_render(n) for n in roots[i : i + fanout]).encode("utf-8")
+            ).hexdigest()[:16]
+            for i in range(0, len(roots), fanout)
+        }
     result = walk(
         judge,
         prompt,
@@ -128,6 +170,7 @@ def select_lessons(
         expand=store.children,
         budget=budget,
         max_depth=int(store.config.get("recall.max_depth", 2)),
+        fanout=fanout,
     )
 
     # An empty pack has two very different causes and they must not look alike

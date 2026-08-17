@@ -313,9 +313,66 @@ whatever fixes the width. It also attacks §4.4 from the other side: a fork
 skips the ~5s CLI startup that currently dominates recall latency, which is the
 reason filtering is bypassed on small stores at all.
 
-Neither is implemented. Both belong in the same piece of work, since they are
-the same observation — that the expensive part of routing is re-establishing
-context that never changed.
+### 8.1 The warm prefix, implemented and measured
+
+Built. The candidate list is seeded into a conversation once and each prompt
+branches a `--resume --fork-session` child from it, so the fork answers against
+the stored prefix without appending to it.
+
+**It works, with conditions.** A controlled test with a 21,272-token prefix:
+
+```
+seed          cache_creation 21,272   cache_read 57,558   (system prompt only)
+resume+fork   cache_creation     23   cache_read 78,830   (= 57,558 + 21,272)
+```
+
+The entire prefix came back from cache. Integrating it surfaced four things
+that each silently reduced the benefit to zero:
+
+1. **The fork was re-sending the candidate list in the question.** The cached
+   copy is then paid for and ignored, because the copy the model reads is the
+   new one in the prompt. The warm path needs its own prompt that asks the
+   question alone.
+2. **Warmth cannot be measured with one global baseline.** The host sends a
+   ~58k-token system prompt that is cached regardless, dwarfing our prefix, so
+   "were any tokens read from cache?" reports a hit on every call including cold
+   ones. Worse, a max-based baseline drifts: a stale 65,372 against a real
+   57,558 turned every genuine hit negative. Each conversation is now scored
+   against the two readings from its own seeding call.
+3. **One session cannot hold a chunked list.** A wide apex layer is judged in
+   chunks of `fanout`; a single session is reseeded on every chunk and hits
+   nothing. One conversation per chunk.
+4. **A prefix below the provider's minimum cacheable size is never cached at
+   all.** Chunks of 12 summaries are ~660 tokens, under the ~1024 minimum, so
+   seeding wrote nothing: `ours_cached: 4` on nine calls in ten. Widening chunks
+   until they clear the minimum took it to **50% warm, 25,869 prefix tokens read
+   from cache**.
+
+Each of these fails *quietly* — the mechanism appears to run, the logs look
+plausible, and nothing is saved. Only the per-conversation measurement
+distinguishes them.
+
+At this store size the saving is small and the mechanism stays off below
+`recall.warm_prefix_above_tokens`. Its value is entirely at scale, which is
+where the design has to hold.
+
+### 8.2 Found while wiring it: half the store was unreachable
+
+The relevance walk read `level = [n for n in frontier if n.id not in seen][:fanout]`
+and never revisited the remainder. With 26 apexes and a fanout of 12,
+**14 lessons could not be retrieved on any prompt, ever** — and every precision
+figure above was computed over the reachable dozen while looking perfectly
+healthy.
+
+Two fixes: a wide level is now judged in every chunk rather than the first, and
+the call budget is sized so the top level always completes (`judge_calls` buys
+*descent* on top of a complete first pass). A chunk skipped for budget is a
+recorded decision; truncation was a silent hole.
+
+*The general point: a retrieval metric computed over the candidates the system
+chose to consider cannot see candidates it never considered. Coverage has to be
+checked separately from precision, and the eval as built would never have found
+this.*
 
 ## 9. Reproducing
 
