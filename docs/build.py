@@ -330,6 +330,82 @@ def search_index() -> str:
     return json.dumps(records, separators=(",", ":"))
 
 
+def config_reference() -> str:
+    """The settings table, read out of rmc/config.py rather than retyped.
+
+    A hand-written config table is correct on the day it is written. This one
+    was not: it advertised `dream.min_new_episodes: 3` for weeks after the
+    default became 1, and a reader tuning against it would have been reasoning
+    about a system that no longer existed.
+
+    The comments in config.py are already the explanation — they say why each
+    default is what it is — so they are the documentation, and the only way for
+    the two to disagree now is for someone to delete the comment.
+    """
+    source = (HERE.parent / "rmc" / "config.py").read_text(encoding="utf-8")
+    body = source[source.index("DEFAULTS"):source.index("\ndef ")]
+
+    rows: list[tuple[str, str, str, str]] = []
+    section = ""
+    note: list[str] = []
+    for raw in body.splitlines():
+        line = raw.strip()
+        if line.startswith("#"):
+            note.append(line.lstrip("# ").strip())
+            continue
+        opened = re.match(r'"([a-z_]+)":\s*\{$', line)
+        if opened:
+            section, note = opened.group(1), []
+            continue
+        if line in ("},", "}"):
+            note = []
+            continue
+        pair = re.match(r'"([a-z_0-9]+)":\s*(.+?),(?:\s*#\s*(.*))?$', line)
+        if pair:
+            key, value, trailing = pair.group(1), pair.group(2).rstrip(","), pair.group(3)
+            why = " ".join(note).strip() or (trailing or "").strip()
+            rows.append((f"{section}.{key}" if section else key, value, why, section))
+            note = []
+            continue
+        note = []
+
+    out = ['<div class="scroll"><table>',
+           "<tr><th>Setting</th><th>Default</th><th>What it is for</th></tr>"]
+    for key, value, why, _ in rows:
+        out.append(
+            f"<tr><td><code>{html.escape(key)}</code></td>"
+            f"<td><code>{html.escape(_yaml(value))}</code></td>"
+            f"<td>{_prose(why)}</td></tr>"
+        )
+    out.append("</table></div>")
+    return "\n".join(out)
+
+
+def _yaml(value: str) -> str:
+    """Show the default the way it is written in the file people will edit.
+
+    The source is Python and the store is YAML, so `True` and `None` would send
+    a reader to type something the parser does not accept.
+    """
+    literal = {"True": "true", "False": "false", "None": "null"}
+    value = value.strip()
+    if value in literal:
+        return literal[value]
+    if len(value) > 1 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
+
+
+def _prose(text: str) -> str:
+    """Comment text as it was written: the markdown conventions in config.py
+    are load-bearing, and rendering them literally reads as a typo."""
+    out = html.escape(text)
+    out = re.sub(r"`([^`]+)`", r"<code>\1</code>", out)
+    out = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", out)
+    out = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", out)
+    return out
+
+
 def load(page: Page) -> str:
     chunks = []
     for name in page.sections:
@@ -339,6 +415,13 @@ def load(page: Page) -> str:
     extra = FRAGMENTS / f"_{page.slug}.html"
     if extra.exists():
         chunks.append(extra.read_text(encoding="utf-8"))
+    if page.slug == "configuration":
+        chunks.append(
+            "<h2>Every setting</h2>"
+            "<p>Generated from <code>rmc/config.py</code> when the docs are "
+            "built, so it cannot drift from the code the way a retyped table "
+            "does — and did.</p>" + config_reference()
+        )
     return "\n\n".join(chunks)
 
 

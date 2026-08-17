@@ -5,52 +5,7 @@
       environment variable: <code>recall.max_pack_tokens</code> →
       <code>RMC_RECALL_MAX_PACK_TOKENS</code>.
     </p>
-    <div class="scroll">
-    <table>
-      <tr><th>Key</th><th>Default</th><th>Meaning</th></tr>
-      <tr><td><code>agent</code></td><td><code>claude</code></td><td>default backend</td></tr>
-      <tr><td><code>recall.enabled</code></td><td><code>true</code></td><td>inject lessons at all</td></tr>
-      <tr><td><code>recall.strategy</code></td><td><code>delta-patch</code></td><td><code>delta-patch</code>, <code>delta-jump</code>, or <code>stepwise</code></td></tr>
-      <tr><td><code>recall.filter_above</code></td><td><code>3</code></td><td>lessons below which recall serves everything without a routing call</td></tr>
-      <tr><td><code>recall.model</code></td><td><code>null</code></td><td>model for routing; null means the same as everything else (smaller models measured worse &mdash; see EXPERIMENTS.md)</td></tr>
-      <tr><td><code>recall.max_pack_tokens</code></td><td><code>1200</code></td><td>ceiling on injected context</td></tr>
-      <tr><td><code>recall.max_families</code></td><td><code>3</code></td><td>lesson families served per prompt</td></tr>
-      <tr><td><code>recall.timeout_s</code></td><td><code>20</code></td><td>bound on the routing call, kept under the hook deadline</td></tr>
-      <tr><td><code>recall.judge_calls</code></td><td><code>2</code></td><td>model calls the relevance walk may spend</td></tr>
-      <tr><td><code>recall.max_depth</code></td><td><code>2</code></td><td>how far down the tree the walk may look</td></tr>
-      <tr><td><code>recall.max_expansions</code></td><td><code>3</code></td><td>descents before escalating to L0</td></tr>
-      <tr><td><code>selection.w_judge</code></td><td><code>0.60</code></td><td>weight on the model's usefulness ranking</td></tr>
-      <tr><td><code>selection.w_prior</code></td><td><code>0.28</code></td><td>weight on the observed rescue rate</td></tr>
-      <tr><td><code>selection.w_cost</code></td><td><code>0.12</code></td><td>penalty on token cost</td></tr>
-      <tr><td><code>selection.explore</code></td><td><code>posterior</code></td><td><code>ucb</code> to keep probing rare branches</td></tr>
-      <tr><td><code>compaction.min_successes</code></td><td><code>2</code></td><td>successful recalls before compressing</td></tr>
-      <tr><td><code>compaction.max_ratio</code></td><td><code>0.75</code></td><td>candidate must be ≤75% of the original</td></tr>
-      <tr><td><code>compaction.threshold</code></td><td><code>1.0</code></td><td>required replay pass-rate</td></tr>
-      <tr><td><code>compaction.regression_k</code></td><td><code>5</code></td><td>episodes replayed per validation</td></tr>
-      <tr><td><code>compaction.max_level</code></td><td><code>6</code></td><td>deepest compression level</td></tr>
-      <tr><td><code>learning.min_tool_calls</code></td><td><code>8</code></td><td>below this a session is ignored</td></tr>
-      <tr><td><code>learning.nudge_enabled</code></td><td><code>true</code></td><td>reflect after a substantial turn</td></tr>
-      <tr><td><code>learning.nudge_mode</code></td><td><code>background</code></td><td><code>background</code>, <code>fork</code>, <code>block</code>, <code>off</code></td></tr>
-      <tr><td><code>learning.nudge_after_tool_calls</code></td><td><code>12</code></td><td>activity that makes a turn worth a thought</td></tr>
-      <tr><td><code>learning.nudge_after_turns</code></td><td><code>3</code></td><td>human turns that do the same</td></tr>
-      <tr><td><code>learning.min_surprises</code></td><td><code>2</code></td><td>failed tool calls that also do</td></tr>
-      <tr><td><code>learning.nudge_cooldown_s</code></td><td><code>900</code></td><td>minimum gap between asks</td></tr>
-      <tr><td><code>learning.nudge_backoff_after</code></td><td><code>3</code></td><td>consecutive fruitless nudges before backing off</td></tr>
-      <tr><td><code>dream.enabled</code></td><td><code>true</code></td><td>run whole-store consolidation at all</td></tr>
-      <tr><td><code>dream.interval_s</code></td><td><code>86400</code></td><td>minimum gap between dreams</td></tr>
-      <tr><td><code>dream.min_new_episodes</code></td><td><code>1</code></td><td>new multi-lesson episodes required before dreaming</td></tr>
-      <tr><td><code>dream.max_apexes</code></td><td><code>12</code></td><td>top-level lessons before width alone triggers a dream</td></tr>
-      <tr><td><code>dream.limit</code></td><td><code>2</code></td><td>merges <em>accepted</em> per pass</td></tr>
-      <tr><td><code>dream.max_attempts</code></td><td><code>8</code></td><td>candidates <em>tried</em> per pass</td></tr>
-      <tr><td><code>compaction.min_co_use</code></td><td><code>1</code></td><td>episodes using two lessons together before they are candidates</td></tr>
-      <tr><td><code>compaction.max_merge_group</code></td><td><code>5</code></td><td>lessons one merge may swallow</td></tr>
-      <tr><td><code>compaction.merge_ratio</code></td><td><code>0.9</code></td><td>a parent must be this fraction of its children&rsquo;s combined size</td></tr>
-      <tr><td><code>placement.consult</code></td><td><code>true</code></td><td>ask a model how new knowledge relates to old</td></tr>
-      <tr><td><code>placement.surface_conflicts</code></td><td><code>true</code></td><td>raise unresolved contradictions during recall</td></tr>
-      <tr><td><code>privacy.redact</code></td><td><code>true</code></td><td>scrub secrets before writing</td></tr>
-      <tr><td><code>limits.agent_timeout_s</code></td><td><code>180</code></td><td>per spawned agent call</td></tr>
-    </table>
-    </div>
+    
 
     <h3>Ablations</h3>
     <p><code>recall.strategy</code> exists so the descent policy can be measured rather than asserted:</p>
