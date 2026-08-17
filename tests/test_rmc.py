@@ -2072,10 +2072,10 @@ class TestDreamSchedule(StoreCase):
         self.assertTrue(logs, "the dream must leave a record")
         text = logs[0].read_text()
         self.assertIn("before", text)
-        self.assertIn("tokens served at apex", text)
+        self.assertIn("routing tokens per prompt", text)
         # Before/after is the point: it shows what changed, not just what ran.
         self.assertIn("nodes", report.before)
-        self.assertIn("apex_tokens", report.after)
+        self.assertIn("routing_tokens", report.after)
 
     def test_a_refused_merge_is_recorded_with_its_reason(self) -> None:
         from rmc.compact import dream, dream_logs

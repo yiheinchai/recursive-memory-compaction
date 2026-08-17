@@ -104,8 +104,13 @@ def cmd_status(args: argparse.Namespace) -> int:
     if nodes:
         total = sum(n.tokens for n in nodes)
         apex = [n for n in nodes if n.is_apex and n.status == "active"]
-        apex_tokens = sum(n.tokens for n in apex)
-        print(f"  tokens     {total} stored, {apex_tokens} served at apex")
+        from .judge import _render
+        from .util import count_tokens
+
+        # What recall pays every prompt is the one-line render of each apex, not
+        # the bodies — it never sends a body to decide what to send.
+        routing = sum(count_tokens(_render(n)) for n in apex)
+        print(f"  tokens     {total} stored, {routing} routed per prompt")
         deepest = max(n.level for n in nodes)
         print(f"  max level  {deepest}")
     _print_reflection_stats(store)

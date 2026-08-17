@@ -760,9 +760,9 @@ class DreamReport:
             parts.append(f"{len(self.merged)} merged")
         if self.rejected:
             parts.append(f"{len(self.rejected)} rejected")
-        delta = self.after.get("apex_tokens", 0) - self.before.get("apex_tokens", 0)
+        delta = self.after.get("routing_tokens", 0) - self.before.get("routing_tokens", 0)
         if delta:
-            parts.append(f"{delta:+d} tokens served at apex")
+            parts.append(f"{delta:+d} routing tokens per prompt")
         return ", ".join(parts)
 
     def to_markdown(self) -> str:
@@ -775,8 +775,8 @@ class DreamReport:
             "|---|---|---|",
             f"| nodes | {self.before.get('nodes', 0)} | {self.after.get('nodes', 0)} |",
             f"| apexes | {self.before.get('apexes', 0)} | {self.after.get('apexes', 0)} |",
-            f"| tokens served at apex | {self.before.get('apex_tokens', 0)} "
-            f"| {self.after.get('apex_tokens', 0)} |",
+            f"| routing tokens per prompt | {self.before.get('routing_tokens', 0)} "
+            f"| {self.after.get('routing_tokens', 0)} |",
             "",
             f"Examined {self.groups_considered} merge group(s); "
             f"wrote {self.gists_filled} gist(s).",
@@ -792,13 +792,23 @@ class DreamReport:
 
 
 def _census(store: Store) -> dict[str, int]:
-    """The numbers a dream should be judged on. Apex tokens is the one that
-    matters: it is what recall pays on every prompt."""
+    """The numbers a dream should be judged on.
+
+    `routing_tokens` is the one that matters: it is what recall actually pays on
+    every prompt. This used to report the sum of apex *bodies*, which is not a
+    cost anyone pays — recall never sends a body to decide what to send. It
+    sends the same one-line render the relevance walk reads, about 55 tokens per
+    apex against ~400 for a body, so the reported figure ran 7x high and made
+    every dream look like it had saved or cost far more than it did.
+    """
+    from .judge import _render
+
     apexes = store.apexes()
     return {
         "nodes": len(store.nodes()),
         "apexes": len(apexes),
-        "apex_tokens": sum(n.tokens for n in apexes),
+        "routing_tokens": sum(count_tokens(_render(n)) for n in apexes),
+        "apex_body_tokens": sum(n.tokens for n in apexes),
     }
 
 
@@ -973,8 +983,8 @@ def dream(
         merged=len(report.merged),
         rejected=len(report.rejected),
         gists=report.gists_filled,
-        apex_tokens_before=report.before.get("apex_tokens", 0),
-        apex_tokens_after=report.after.get("apex_tokens", 0),
+        routing_tokens_before=report.before.get("routing_tokens", 0),
+        routing_tokens_after=report.after.get("routing_tokens", 0),
         episodes_seen=len(
             [e for e in store.episodes() if e.outcome == "success" and len(e.used or []) > 1]
         ),
