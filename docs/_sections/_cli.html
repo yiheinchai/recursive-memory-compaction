@@ -1,0 +1,159 @@
+<p>All commands accept <code>--agent {claude,codex,mock}</code> and <code>--model</code> where they spawn an agent. The store is found by walking up from the working directory to the nearest <code>.rmc/</code>. If <code>~/.rmc</code> also exists it is layered underneath as a <b>global</b> store: lessons from both are recalled, and new lessons are written to the project one. Editing a global lesson writes back to it rather than forking a local copy. <code>RMC_HOME</code> overrides the lookup entirely — use it to target the global store directly, e.g. <code>RMC_HOME=~/.rmc rmc add ...</code> for something that should follow you across every repo.</p>
+<h2>Setup</h2>
+<h3><code>rmc init [path]</code></h3>
+<p>Create a store. <code>--force</code> re-creates missing subdirectories, <code>--agent</code> sets the default backend.</p>
+<h3><code>rmc install</code></h3>
+<p>Wire RMC into the host agent(s).</p>
+<div class='scroll'><table>
+<tr><th>Flag</th><th>Meaning</th></tr>
+<tr><td>`--target claude\</td><td>codex`</td><td>repeatable; defaults to <code>claude</code></td></tr>
+<tr><td>`--scope project\</td><td>user`</td><td>this repo (default) or globally</td></tr>
+<tr><td><code>--dry-run</code></td><td>print what would be written, write nothing</td></tr>
+</table></div>
+<p>Also puts the <code>rmc</code> command on PATH, by symlinking <code>bin/rmc</code> into <code>~/.local/bin</code>. Hooks never need this — they invoke the package by absolute path — so without it RMC runs fine while <code>rmc status</code> reports command not found. <code>--no-link</code> skips it.</p>
+<p>Bootstrap it from a clone with <code>./bin/rmc install</code>; every suggestion this command prints uses an absolute path, because advice that begins &quot;run <code>rmc</code>&quot; is no use to someone who does not have it.</p>
+<h3><code>rmc uninstall</code></h3>
+<p>Remove only RMC-tagged hooks. Lessons are left in place.</p>
+<h3><code>rmc report [--about &quot;...&quot;] [--expected &quot;...&quot;] [--days N]</code></h3>
+<p>Writes a redacted defect report to <code>.rmc/reports/</code> and prints it, along with the <code>gh issue create</code> command that would file it. <b>It sends nothing.</b> RMC makes no network calls and that is a guarantee, so the transport is your own <code>gh</code>, run deliberately.</p>
+<p>It contains counts, timings and non-default settings — the things that localise a defect to one stage — plus whatever you write in <code>--about</code>. It never contains lesson text, prompts, transcripts or paths from your machine, and everything passes through the redactor on the way out.</p>
+<p>Reflectors are told to run this when they find a defect in RMC itself, and then to *ask* whether you want it filed. They never file it themselves.</p>
+<h3><code>rmc doctor</code></h3>
+<p>Which backends are on PATH, whether a store exists, whether hooks are wired. Start here when RMC seems inert.</p>
+<h2>Inspection</h2>
+<h3><code>rmc status</code></h3>
+<p>Families, node counts, episode counts, total vs apex-served tokens, and a table of each family&#x27;s apex with its level, cost and success rate.</p>
+<h3><code>rmc tree [--family F] [-v] [--recent] [--limit N]</code></h3>
+<p>The tree, indented from apex down to L0. <code>△</code> lines are delta manifest entries — what a compression dropped and which node still holds it. <code>-v</code> includes the first lines of each lesson body.</p>
+<p><code>--recent</code> drops the family grouping and lists newest first, which is the view that answers &quot;did what I just taught it actually land?&quot; — the default grouping cannot, since a new lesson sorts wherever its family happens to sit.</p>
+<p>Every line carries an age.</p>
+<h3><code>rmc recall --prompt &quot;...&quot; [--json]</code></h3>
+<p>Exactly what would be injected for that prompt, and the model&#x27;s stated reason for each. The tool for answering &quot;why did it think that?&quot; — the answer is a sentence, not a score.</p>
+<p>Reads stdin if <code>--prompt</code> is omitted.</p>
+<h3><code>rmc trace --prompt &quot;...&quot; [--after TRANSCRIPT]</code></h3>
+<p>The agent&#x27;s-eye view. Walks every stage of a recall and prints the result of each: the apex lessons put in front of the model, its verdict and reason for every one (including the branches it judged irrelevant and therefore never opened), the <b>verbatim</b> block that lands in the agent&#x27;s context, what you see in Claude Code while it happens, and how the model&#x27;s turn then begins.</p>
+<p><code>--after</code> continues into the other half: the facts parsed out of a finished session, and what the model made of them — outcome, whether you had to steer, and what was worked out by trial.</p>
+<p>Use it when you want to know exactly what RMC is doing to your prompts. It edits what the model sees, and that should never be something you take on trust.</p>
+<h3><code>rmc conflicts [--family F]</code></h3>
+<p>Lessons that contradict each other, with the question that would settle each. These are also raised inside the recall pack, so you normally meet them while working rather than by running this.</p>
+<h3><code>rmc resolve &lt;node-id&gt; [--drop]</code></h3>
+<p>Settle a conflict: keep this lesson (default) or archive it. Clears the disputed state on that node.</p>
+<h3><code>rmc events [--kind K] [--limit N]</code></h3>
+<p>Raw telemetry as JSONL. Useful kinds: <code>inject</code>, <code>observe</code>, <code>rescue</code>, <code>mint</code>, <code>placement</code>, <code>conflict</code>, <code>conflict-resolved</code>, <code>compaction</code>, <code>merge</code>, <code>repair</code>, <code>error</code>.</p>
+<h2>The loop</h2>
+<h3><code>rmc add [body] [--family F] [--title T] [--tags a,b]</code></h3>
+<p>Teach RMC something <b>now</b>, without waiting for the session to end. Reads stdin if no body is given. The lesson is reconciled against what is already known before being stored, so it may be folded into an existing lesson, set alongside one, or reported as a contradiction with the question that would settle it.</p>
+<p>This is the live path. The transcript sweep at session end is a safety net for what nobody noticed in the moment; this is for the moment itself, and the lesson is available to the very next prompt in the same conversation.</p>
+<p><code>--no-reconcile</code> stores it without the consistency check.</p>
+<p>Deciding and writing happen under a lock, so concurrent reflectors cannot both conclude &quot;new&quot; about the same lesson. A writer waits for the lock rather than skipping.</p>
+<h3><code>rmc observe --transcript PATH [--served ids] [--session id]</code></h3>
+<p>Judge a finished session and fold the result into the tree: update node stats, file the episode, and work out which dropped detail any correction was about. Costs one judgement, skipped entirely for sessions too small to teach anything. Normally invoked by the <code>SessionEnd</code> hook.</p>
+<h3><code>rmc learn --transcript PATH [--session id]</code></h3>
+<p>Ask a model whether the session contained a reusable lesson, and mint a level-0 node if so. Deliberately conservative — &quot;nothing captured&quot; is the common and correct outcome.</p>
+<h3><code>rmc dream [--gists]</code></h3>
+<p>Whole-store consolidation: backfill gists, then merge lessons that keep being used together. Runs automatically from <code>absorb</code> at most once per <code>dream.interval_s</code> and only with <code>dream.min_new_episodes</code> of new evidence.</p>
+<div class='scroll'><table>
+<tr><th>Flag</th><th>Meaning</th></tr>
+<tr><td><code>--due</code></td><td>say whether a dream is due, and why not</td></tr>
+<tr><td><code>--list</code></td><td>merge candidates from co-use, change nothing</td></tr>
+<tr><td><code>--log [all]</code></td><td>read the last dream&#x27;s report, or list every one</td></tr>
+<tr><td><code>--limit N</code></td><td>merge groups attempted per pass (default 2)</td></tr>
+<tr><td><code>--dry-run</code></td><td>generate and validate, write nothing</td></tr>
+</table></div>
+<p>Every pass writes a report to <code>.rmc/dreams/&lt;timestamp&gt;.md</code> recording what was examined, what merged, what was refused and why, and the before/after of nodes, apexes and tokens served at apex.</p>
+<p><code>--gists</code> runs only the routing-view backfill, ignoring the dream gate. New lessons get a title and gist at capture time, but a store that predates that has lessons the relevance walk cannot see properly — and waiting for a dream is not a fix, since it is gated on elapsed time *and* new episodes.</p>
+<h3><code>rmc compact</code></h3>
+<p>Compress lessons and regression-test the result.</p>
+<div class='scroll'><table>
+<tr><th>Flag</th><th>Meaning</th></tr>
+<tr><td><code>--list</code></td><td>show what is eligible and why, run nothing</td></tr>
+<tr><td><code>--due</code></td><td>process the queue (default)</td></tr>
+<tr><td><code>--node ID</code></td><td>compress one specific node</td></tr>
+<tr><td><code>--merge FAMILY</code></td><td>generalise sibling lessons into one</td></tr>
+<tr><td><code>--limit N</code></td><td>how many to process (default 1)</td></tr>
+<tr><td><code>--dry-run</code></td><td>generate and validate, but do not write</td></tr>
+</table></div>
+<p>A node is eligible when it is an active apex, below <code>compaction.max_level</code>, has at least <code>compaction.min_successes</code> successful recalls, is past its cooldown, and <b>has recorded episodes to validate against</b>. A node with no episodes is left alone on purpose: compressing with no way to check the result is worse than not compressing.</p>
+<p>Rejection is normal and informative — the failing episodes become <code>preserve:</code> hints for the next attempt.</p>
+
+<h3><code>rmc eval-recall [--save NAME] [--against NAME] [--limit N]</code></h3>
+<p>
+  Score retrieval against what actually got used. Each recorded episode is
+  replayed against exactly the candidates it was served, and the judge's picks
+  are compared with <code>episode.used</code>. Precision and recall are always
+  printed together — precision alone is maximised by serving nothing.
+</p>
+<p>
+  <code>--save</code> stores the run under a name; <code>--against</code>
+  compares the current run to a saved one. That pair is how any change to
+  routing gets an A/B rather than an opinion.
+</p>
+
+<h3><code>rmc tune [--rounds N] [--dry-run] [--history]</code></h3>
+<p>
+  Let RMC propose an improvement to its own retrieval criteria, measure it, and
+  keep it only if precision and recall are both at least as good. Every attempt
+  is recorded, including the rejected ones, and fed back into the next proposal.
+  See <a href="tuning.html">Self-tuning</a>.
+</p>
+
+<h3><code>rmc migrate [--path DIR] [--apply] [--limit N]</code></h3>
+<p>
+  Convert a Claude skills library into lessons. Plans by default; nothing is
+  written without <code>--apply</code>, and nothing is ever deleted. See
+  <a href="migrate.html">Migrate from Claude skills</a>.
+</p>
+
+<h2>Configuration</h2>
+<h3><code>rmc config [key] [value]</code></h3>
+<p>No arguments dumps everything. One argument reads a dotted key. Two arguments set it.</p>
+<p>Any key can be overridden per-run by an environment variable: <code>recall.max_pack_tokens</code> → <code>RMC_RECALL_MAX_PACK_TOKENS</code>.</p>
+<div class='scroll'><table>
+<tr><th>Key</th><th>Default</th><th>Meaning</th></tr>
+<tr><td><code>agent</code></td><td><code>claude</code></td><td>default backend</td></tr>
+<tr><td><code>recall.enabled</code></td><td><code>true</code></td><td>inject lessons at all</td></tr>
+<tr><td><code>recall.strategy</code></td><td><code>delta-patch</code></td><td><code>delta-patch</code>, <code>delta-jump</code>, or <code>stepwise</code></td></tr>
+<tr><td><code>recall.max_pack_tokens</code></td><td><code>1200</code></td><td>ceiling on injected context</td></tr>
+<tr><td><code>recall.max_families</code></td><td><code>3</code></td><td>lesson families served per prompt</td></tr>
+<tr><td><code>recall.timeout_s</code></td><td><code>20</code></td><td>bound on the routing call, kept under the hook deadline</td></tr>
+<tr><td><code>recall.judge_calls</code></td><td><code>2</code></td><td>model calls the relevance walk may spend</td></tr>
+<tr><td><code>recall.max_depth</code></td><td><code>2</code></td><td>how far down the tree the walk may look</td></tr>
+<tr><td><code>recall.max_expansions</code></td><td><code>3</code></td><td>descents before escalating to L0</td></tr>
+<tr><td><code>selection.w_judge</code></td><td><code>0.60</code></td><td>weight on the model&#x27;s usefulness ranking</td></tr>
+<tr><td><code>selection.w_prior</code></td><td><code>0.28</code></td><td>weight on the observed rescue rate</td></tr>
+<tr><td><code>selection.w_cost</code></td><td><code>0.12</code></td><td>penalty on token cost</td></tr>
+<tr><td><code>selection.explore</code></td><td><code>posterior</code></td><td><code>ucb</code> to keep probing rare branches</td></tr>
+<tr><td><code>compaction.min_successes</code></td><td><code>2</code></td><td>successful recalls before compressing</td></tr>
+<tr><td><code>compaction.max_ratio</code></td><td><code>0.75</code></td><td>candidate must be ≤75% of the original</td></tr>
+<tr><td><code>compaction.threshold</code></td><td><code>1.0</code></td><td>required replay pass-rate</td></tr>
+<tr><td><code>compaction.regression_k</code></td><td><code>5</code></td><td>episodes replayed per validation</td></tr>
+<tr><td><code>compaction.max_level</code></td><td><code>6</code></td><td>deepest compression level</td></tr>
+<tr><td><code>learning.min_tool_calls</code></td><td><code>8</code></td><td>below this a session is ignored</td></tr>
+<tr><td><code>learning.nudge_enabled</code></td><td><code>true</code></td><td>reflect after a substantial turn</td></tr>
+<tr><td><code>learning.nudge_mode</code></td><td><code>background</code></td><td><code>background</code> — a detached process reflects on the transcript digest; <code>fork</code> — reflect inside a fork of the live session, full context, ~0.1× tokens via cache reads; <code>block</code> — interrupt the agent to reflect in place; <code>off</code> — wait for session end</td></tr>
+<tr><td><code>learning.nudge_after_tool_calls</code></td><td><code>12</code></td><td>activity that makes a turn worth a thought</td></tr>
+<tr><td><code>learning.nudge_after_turns</code></td><td><code>3</code></td><td>human turns that do the same</td></tr>
+<tr><td><code>learning.min_surprises</code></td><td><code>2</code></td><td>failed tool calls that also do</td></tr>
+<tr><td><code>learning.nudge_cooldown_s</code></td><td><code>900</code></td><td>minimum gap between asks</td></tr>
+<tr><td><code>learning.nudge_backoff_after</code></td><td><code>3</code></td><td>consecutive fruitless nudges before backing off</td></tr>
+<tr><td><code>dream.enabled</code></td><td><code>true</code></td><td>run whole-store consolidation at all</td></tr>
+<tr><td><code>dream.interval_s</code></td><td><code>86400</code></td><td>minimum gap between dreams</td></tr>
+<tr><td><code>dream.min_new_episodes</code></td><td><code>3</code></td><td>new multi-lesson episodes required before dreaming</td></tr>
+<tr><td><code>dream.limit</code></td><td><code>2</code></td><td>merge groups attempted per pass</td></tr>
+<tr><td><code>placement.consult</code></td><td><code>true</code></td><td>ask a model how new knowledge relates to old</td></tr>
+<tr><td><code>placement.judge_calls</code></td><td><code>2</code></td><td>model calls the relatedness walk may spend</td></tr>
+<tr><td><code>placement.max_depth</code></td><td><code>2</code></td><td>how far down the walk may look</td></tr>
+<tr><td><code>placement.surface_conflicts</code></td><td><code>true</code></td><td>raise unresolved contradictions during recall</td></tr>
+<tr><td><code>signals.min_confidence</code></td><td><code>0.5</code></td><td>floor for acting on an outcome</td></tr>
+<tr><td><code>privacy.redact</code></td><td><code>true</code></td><td>scrub secrets before writing</td></tr>
+<tr><td><code>limits.agent_timeout_s</code></td><td><code>180</code></td><td>per spawned agent call</td></tr>
+</table></div>
+<h3>Ablations</h3>
+<p><code>recall.strategy</code> exists so the descent policy can be measured rather than asserted:</p>
+<pre>rmc config recall.strategy stepwise      # baseline: walk children, ignore deltas
+rmc config recall.strategy delta-jump    # replace apex with the holder node
+rmc config recall.strategy delta-patch   # default: apex + matched claims only</pre>
+<h2>Hooks</h2>
+<h3><code>rmc hook &lt;event&gt;</code></h3>
+<p>Reads a JSON payload on stdin. Events: <code>user-prompt-submit</code>, <code>stop</code> (per turn), <code>session-end</code> (at teardown). Always exits 0. No-ops when <code>RMC_CHILD</code> or <code>RMC_DISABLE</code> is set.</p>
+<p>You should not need to call this yourself.</p>

@@ -1,30 +1,7 @@
 <h2 id="commands">Commands</h2>
-<div class="scroll">
-<table>
-  <tr><th>Command</th><th>What it does</th></tr>
-  <tr><td><code>rmc install [--scope user] [--no-link]</code></td><td>Wire the hooks; also puts <code>rmc</code> on PATH</td></tr>
-  <tr><td><code>rmc uninstall</code></td><td>Remove only what RMC added</td></tr>
-  <tr><td><code>rmc doctor</code></td><td>Backends, store, hook wiring, PATH</td></tr>
-  <tr><td><code>rmc status</code></td><td>Families, levels, precision, capture miss rate</td></tr>
-  <tr><td><code>rmc tree [--recent] [--family F] [-v]</code></td><td>The graph; <code>--recent</code> is newest-first across families</td></tr>
-  <tr><td><code>rmc recall --prompt "…"</code></td><td>What would be injected, and why</td></tr>
-  <tr><td><code>rmc trace --prompt "…"</code></td><td>Every stage, ending in the verbatim block</td></tr>
-  <tr><td><code>rmc add "…" [--family F]</code></td><td>Teach it now, reconciled against what is known</td></tr>
-  <tr><td><code>rmc conflicts</code> / <code>rmc resolve &lt;id&gt; [--drop]</code></td><td>List and settle contradictions</td></tr>
-  <tr><td><code>rmc compact</code></td><td>Attempt compressions that are due</td></tr>
-  <tr><td><code>rmc dream [--list] [--due] [--log] [--gists]</code></td><td>Whole-store consolidation; <code>--gists</code> fills missing routing views</td></tr>
-  <tr><td><code>rmc eval</code></td><td>Replay held-out work against every level of a lesson</td></tr>
-  <tr><td><code>rmc eval-recall [--save N] [--against N]</code></td><td>Score retrieval against what was actually used; A/B two configurations</td></tr>
-  <tr><td><code>rmc tune [--rounds N] [--history]</code></td><td>Let RMC propose and measure its own retrieval improvements</td></tr>
-  <tr><td><code>rmc migrate [--path D] [--apply]</code></td><td>Convert an existing Claude skills library into lessons</td></tr>
-  <tr><td><code>rmc report --about "…"</code></td><td>A redacted defect report. Sends nothing.</td></tr>
-  <tr><td><code>rmc events --kind K</code></td><td>Raw telemetry</td></tr>
-  <tr><td><code>rmc config [key] [value]</code></td><td>Read or set any setting</td></tr>
-</table>
-</div>
+
 <p>
   Any config key can be overridden per-run by an environment variable:
   <code>recall.max_pack_tokens</code> → <code>RMC_RECALL_MAX_PACK_TOKENS</code>.
-  Full reference:
-  <a href="https://github.com/yiheinchai/rmc/blob/main/docs/cli.md">docs/cli.md</a>.
+
 </p>

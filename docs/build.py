@@ -243,7 +243,11 @@ def on_this_page(body: str) -> str:
     out = ['<aside class="onpage"><div class="grp">On this page</div><nav>']
     for level, ident, label in items:
         text = re.sub(r"<[^>]+>", "", label).replace("&nbsp;", " ").strip()
-        out.append(f'<a class="l{level}" href="#{ident}">{text}</a>')
+        # A command signature is the right heading and the wrong nav entry:
+        # `rmc report [--about "..."] [--expected "..."] [--days N]` wraps to
+        # three lines in a 208px column and buries the name it exists to show.
+        text = re.sub(r"\s*[\[<].*$", "", text).strip() or text
+        out.append(f'<a class="l{level}" href="#{ident}">{html.escape(text)}</a>')
     out.append("</nav></aside>")
     return "\n".join(out)
 
