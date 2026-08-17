@@ -52,6 +52,16 @@ COMPRESS_SCHEMA = {
             ),
         },
         "title": {"type": "string"},
+        "family": {
+            "type": "string",
+            "description": (
+                "Only when merging lessons from different families: a short "
+                "kebab-case name, two or three words, for the subject they turn "
+                "out to share. It becomes a real family others can join, so name "
+                "the subject and not this particular lesson — 'dogfooding', not "
+                "'check-behaviour-instead-of-asserting-it'."
+            ),
+        },
         "gist": {
             "type": "string",
             "description": (
@@ -167,8 +177,19 @@ You are merging sibling lessons into one more abstract lesson that covers all of
 them. Find the shared procedure and state it once; keep any divergence that
 would change what an agent does.
 
+Write at most {budget} tokens — roughly {words} words. This is not a formatting
+preference. The merged lesson replaces its children at the top of the store,
+where everything is enumerated on every single prompt, so a merge that is not
+substantially shorter than the lessons it covers makes every future prompt more
+expensive and will be rejected. Two lessons restated one after the other is not
+a merge. If you cannot find a shared procedure that fits the budget, say so in
+`body` in one line rather than padding — being told these two do not belong
+together is a useful answer.
+
 Everything dropped must be declared in `dropped`, with the claim written so it
-can be re-injected verbatim as a patch.
+can be re-injected verbatim as a patch. The children are kept in full
+underneath, so dropping a specific loses nothing — it is recoverable by descent
+whenever it turns out to matter.
 
 <<<LESSON
 {body}

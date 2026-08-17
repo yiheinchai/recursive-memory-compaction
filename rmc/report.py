@@ -50,6 +50,7 @@ SAFE_CONFIG = (
     "compaction.threshold",
     "dream.interval_s",
     "dream.min_new_episodes",
+    "dream.max_apexes",
 )
 
 

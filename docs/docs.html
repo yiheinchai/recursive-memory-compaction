@@ -286,8 +286,13 @@ rmc doctor</pre>
       <tr><td><code>learning.nudge_backoff_after</code></td><td><code>3</code></td><td>consecutive fruitless nudges before backing off</td></tr>
       <tr><td><code>dream.enabled</code></td><td><code>true</code></td><td>run whole-store consolidation at all</td></tr>
       <tr><td><code>dream.interval_s</code></td><td><code>86400</code></td><td>minimum gap between dreams</td></tr>
-      <tr><td><code>dream.min_new_episodes</code></td><td><code>3</code></td><td>new multi-lesson episodes required before dreaming</td></tr>
-      <tr><td><code>dream.limit</code></td><td><code>2</code></td><td>merge groups attempted per pass</td></tr>
+      <tr><td><code>dream.min_new_episodes</code></td><td><code>1</code></td><td>new multi-lesson episodes required before dreaming</td></tr>
+      <tr><td><code>dream.max_apexes</code></td><td><code>12</code></td><td>top-level lessons before width alone triggers a dream</td></tr>
+      <tr><td><code>dream.limit</code></td><td><code>2</code></td><td>merges <em>accepted</em> per pass</td></tr>
+      <tr><td><code>dream.max_attempts</code></td><td><code>8</code></td><td>candidates <em>tried</em> per pass</td></tr>
+      <tr><td><code>compaction.min_co_use</code></td><td><code>1</code></td><td>episodes using two lessons together before they are candidates</td></tr>
+      <tr><td><code>compaction.max_merge_group</code></td><td><code>5</code></td><td>lessons one merge may swallow</td></tr>
+      <tr><td><code>compaction.merge_ratio</code></td><td><code>0.9</code></td><td>a parent must be this fraction of its children&rsquo;s combined size</td></tr>
       <tr><td><code>placement.consult</code></td><td><code>true</code></td><td>ask a model how new knowledge relates to old</td></tr>
       <tr><td><code>placement.surface_conflicts</code></td><td><code>true</code></td><td>raise unresolved contradictions during recall</td></tr>
       <tr><td><code>privacy.redact</code></td><td><code>true</code></td><td>scrub secrets before writing</td></tr>
@@ -806,14 +811,28 @@ accept iff pass_rate &gt;= 1.0  and  tokens &lt;= 0.75 × original</pre>
     <p>
       Dreaming is not a reaction to a session, so no session event is its
       natural occasion. It runs on <b>elapsed time gated by new evidence</b>: at
-      most once per <code>dream.interval_s</code> (24h), and only when at least
-      <code>dream.min_new_episodes</code> (3) new successful multi-lesson
-      episodes have accumulated since the last pass. Dreaming over an unchanged
-      store only re-asks questions already answered and cached.
+      most once per <code>dream.interval_s</code> (24h), and then on either of
+      two signals.
     </p>
     <p>
-      Both halves of that gate are structural — a clock reading and a count — so
-      neither belongs to the model. It is invoked from <code>absorb</code>, the
+      <b>Co-use</b> is the strong one — lessons repeatedly used together on work
+      that succeeded. But recall serves about one lesson per prompt, so episodes
+      using two at once are rare, and a store can run for a month without
+      producing a single co-use group. On its own it leaves the long tail flat.
+    </p>
+    <p>
+      <b>Width</b> is the fallback. Every top-level lesson is enumerated on every
+      prompt, so once there are more than <code>dream.max_apexes</code> (12), the
+      model is asked to group them whether or not they have ever met. Weaker
+      evidence, but not unchecked: the merged parent still has to reproduce every
+      child&rsquo;s episodes, and still has to come in under
+      <code>compaction.merge_ratio</code> of their combined size &mdash; a parent
+      no smaller than what it stands in front of makes every prompt more
+      expensive, which is the opposite of why you merged.
+    </p>
+    <p>
+      All of those gates are structural &mdash; a clock reading and three counts &mdash; so
+      none belongs to the model. It is invoked from <code>absorb</code>, the
       detached end-of-session pipeline, because that is the one place that
       already runs off the main thread, already holds a lock, and is already
       allowed to spend calls. Most sessions skip it in a line.

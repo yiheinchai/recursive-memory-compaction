@@ -805,7 +805,10 @@ class TestMultipleParents(StoreCase):
         first_parent = compressed.new_node.id
         self.assertEqual(self.store.get("n_leaf").parents, [first_parent])
 
-        # Now merge the leaf sideways with an unrelated sibling.
+        # Now merge the leaf sideways with an unrelated sibling. The pair is
+        # deliberately lopsided and has nothing to compress, so the size gate is
+        # lifted — what is under test here is parentage, not economy.
+        self.store.config.set("compaction.merge_ratio", 2.0)
         other = self.add_node(id="n_side", family="f", level=0, body="Another lesson. @a")
         merged = merge_nodes(self.store, adapter, [self.store.get("n_leaf"), other])
         self.assertTrue(merged.accepted, merged.reason)
@@ -1561,11 +1564,27 @@ class TestCoUse(StoreCase):
             served=served if served is not None else used, used=used,
         )
 
-    def test_one_co_occurrence_is_not_evidence(self) -> None:
+    def test_one_co_occurrence_nominates_a_pair(self) -> None:
+        """Two lessons used together in one episode is already uncommon —
+        recall serves about one lesson per prompt. Requiring it twice made the
+        signal unreachable, and nomination is cheap: the model still has to
+        agree they are one procedure, and the merge still has to reproduce both
+        their episodes."""
         from rmc.compact import co_use_groups
 
         self.co_used("e1", ["n_a", "n_b"])
+        groups = co_use_groups(self.store)
+        self.assertEqual([sorted(n.id for n in nodes) for nodes, _ in groups],
+                         [["n_a", "n_b"]])
+
+    def test_the_co_use_floor_is_configurable(self) -> None:
+        from rmc.compact import co_use_groups
+
+        self.store.config.set("compaction.min_co_use", 2)
+        self.co_used("e1", ["n_a", "n_b"])
         self.assertEqual(co_use_groups(self.store), [])
+        self.co_used("e2", ["n_a", "n_b"])
+        self.assertEqual(len(co_use_groups(self.store)), 1)
 
     def test_repeated_co_use_becomes_a_merge_candidate(self) -> None:
         from rmc.compact import co_use_groups
@@ -1619,6 +1638,325 @@ class TestCoUse(StoreCase):
         found = {frozenset(n.id for n in nodes) for nodes, _ in co_use_groups(self.store)}
         self.assertIn(frozenset({"n_a", "n_b", "n_c"}), found)
         self.assertIn(frozenset({"n_a", "n_c"}), found, "pairs recur under other companions")
+
+
+class TestAMergeMustPayForItself(StoreCase):
+    """The apex layer is what recall enumerates on every prompt, so a parent
+    bigger than the children it stands in front of makes every prompt more
+    expensive — the opposite of why we merged.
+
+    This went unchecked: merge computed the ratio, printed it in its own accept
+    message ("merged 2 lessons at 102% of combined size"), and accepted anyway.
+    Compression had the equivalent gate from the start; merging never did.
+    """
+
+    def pair(self, reply_body: str):
+        a = self.add_node(id="n_a", family="f", level=0, body="First lesson with detail. @a")
+        b = self.add_node(id="n_b", family="f", level=0, body="Second lesson with detail. @b")
+        for ident, node in (("e1", "n_a"), ("e2", "n_b")):
+            self.add_episode(ident, "f", f"work on {node}", served=[node])
+            got = self.store.get(node)
+            got.covers_tasks = [ident]
+            self.store.save_node(got)
+        self.store.invalidate()
+        adapter = MockAdapter(router=lambda prompt, schema: {
+            "body": reply_body, "title": "Parent", "gist": "a parent", "dropped": [],
+        })
+        return [self.store.get("n_a"), self.store.get("n_b")], adapter
+
+    def test_a_parent_no_smaller_than_its_children_is_refused(self) -> None:
+        from rmc.compact import merge_nodes
+
+        nodes, adapter = self.pair(
+            "First lesson with detail. @a Second lesson with detail. @b "
+            "And some further words that make this no cheaper than the two apart."
+        )
+        result = merge_nodes(self.store, adapter, nodes)
+        self.assertFalse(result.accepted)
+        self.assertIn("does not pay for itself", result.reason)
+
+    def test_a_parent_that_actually_abstracts_goes_on_to_replay(self) -> None:
+        from rmc.compact import merge_nodes
+
+        nodes, adapter = self.pair("Both lessons. @a @b")
+        result = merge_nodes(self.store, adapter, nodes)
+        self.assertLess(result.after_tokens, result.before_tokens)
+        self.assertIn("pass-rate", result.reason, "the size gate let it through to replay")
+
+    def test_the_size_gate_runs_before_replay(self) -> None:
+        """Replay is the expensive check. No point paying for it to validate a
+        parent that could not be kept whatever it says."""
+        from rmc.compact import merge_nodes
+
+        nodes, adapter = self.pair(
+            "First lesson with detail. @a Second lesson with detail. @b "
+            "And some further words that make this no cheaper than the two apart."
+        )
+        result = merge_nodes(self.store, adapter, nodes)
+        self.assertEqual(result.replays, [])
+
+
+class TestConfigIsOverridesOnly(StoreCase):
+    """A store must not be frozen at the defaults of the day it was created.
+
+    The file wins the merge, so anything written into it shadows the default
+    forever. Writing the whole tree therefore means a store silently keeps
+    months-old numbers and nothing surfaces it — which is exactly what happened
+    here with `compaction.max_ratio` and `min_successes`.
+    """
+
+    def path(self):
+        return self.store.root / "config.yaml"
+
+    def test_saving_writes_only_what_was_chosen(self) -> None:
+        from rmc.config import Config
+
+        self.store.config.set("compaction.min_successes", 4)
+        self.store.config.save(self.path())
+        written = yamlish.load(self.path().read_text())
+        self.assertEqual(written.get("compaction"), {"min_successes": 4})
+        self.assertNotIn("recall", written, "an untouched section is not a choice")
+
+    def test_a_value_equal_to_the_default_is_not_recorded(self) -> None:
+        from rmc.config import DEFAULTS
+
+        self.store.config.set("compaction.max_ratio", DEFAULTS["compaction"]["max_ratio"])
+        self.store.config.save(self.path())
+        written = yamlish.load(self.path().read_text())
+        self.assertNotIn("compaction", written)
+
+    def test_a_later_default_reaches_an_existing_store(self) -> None:
+        """The whole point: improve a default, and stores that never chose
+        otherwise pick it up."""
+        from rmc.config import Config
+
+        self.store.config.set("compaction.min_successes", 4)
+        self.store.config.save(self.path())
+        reloaded = Config.load(self.path())
+        self.assertEqual(reloaded.get("compaction.min_successes"), 4, "the choice survives")
+        self.assertEqual(
+            reloaded.get("compaction.max_ratio"),
+            Config().get("compaction.max_ratio"),
+            "everything else follows the current default",
+        )
+
+    def test_an_explicit_choice_survives_a_round_trip(self) -> None:
+        from rmc.config import Config
+
+        self.store.config.set("agent", "codex")
+        self.store.config.save(self.path())
+        self.assertEqual(Config.load(self.path()).get("agent"), "codex")
+
+
+class TestWidthDrivenConsolidation(StoreCase):
+    """The long tail has to consolidate without ever having been co-used.
+
+    Co-use needs two lessons used in one episode, twice. Recall serves about one
+    lesson per prompt, so a store can accumulate a hundred one-off lessons and
+    never produce a single co-use group — while every one of those apexes is
+    enumerated on every prompt. Width is the second trigger, and it is a count,
+    so the harness owns it; which apexes are the same procedure stays a
+    judgement the model makes.
+    """
+
+    def widen(self, n: int, family: str = "deploy") -> None:
+        for i in range(n):
+            self.add_node(id=f"n_{family}_{i}", family=family, body=f"lesson {i}")
+
+    def test_width_alone_makes_a_dream_due(self) -> None:
+        from rmc.compact import dream_due
+
+        self.widen(13)
+        due, why = dream_due(self.store)
+        self.assertTrue(due, why)
+        self.assertIn("apexes", why)
+
+    def test_many_families_are_the_same_flat_layer_as_one(self) -> None:
+        """Thirteen families of one apex cost the router exactly what one
+        family of thirteen costs — so the gate cannot be per-family."""
+        from rmc.compact import dream_due
+
+        for i in range(13):
+            self.add_node(id=f"n_{i}", family=f"family_{i}", body=f"lesson {i}")
+        due, why = dream_due(self.store)
+        self.assertTrue(due, why)
+
+    def test_a_narrow_store_with_no_co_use_is_not_due(self) -> None:
+        from rmc.compact import dream_due
+
+        self.widen(3)
+        due, why = dream_due(self.store)
+        self.assertFalse(due)
+        self.assertIn("within", why)
+
+    def test_a_child_does_not_count_toward_width(self) -> None:
+        from rmc.compact import dream_due
+
+        self.widen(13)
+        for i in range(1, 13):
+            child = self.store.get(f"n_deploy_{i}")
+            child.parents = ["n_deploy_0"]
+            self.store.save_node(child)
+        self.store.invalidate()
+        due, why = dream_due(self.store)
+        self.assertFalse(due, why)
+
+    def test_dream_asks_the_model_across_families(self) -> None:
+        """The peer set is the apex layer, not one family — otherwise the
+        thirteen-singleton store has nothing any pass can reach."""
+        import rmc.compact as compact
+
+        for i in range(13):
+            self.add_node(id=f"n_{i}", family=f"family_{i}", body=f"lesson {i}")
+        seen: list[list[str]] = []
+
+        def spy(store, family=None, adapter=None, *, peers=None):
+            seen.append(sorted(n.id for n in (peers or [])))
+            return []
+
+        original = compact.merge_candidates
+        compact.merge_candidates = spy
+        try:
+            compact.dream(self.store, MockAdapter(), dry_run=True)
+        finally:
+            compact.merge_candidates = original
+
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(len(seen[0]), 13, "every apex was a candidate, whatever its family")
+
+    def test_a_narrow_layer_is_left_alone(self) -> None:
+        import rmc.compact as compact
+
+        self.widen(4)
+        called = []
+        original = compact.merge_candidates
+        compact.merge_candidates = lambda *a, **k: called.append(1) or []
+        try:
+            compact.dream(self.store, MockAdapter(), dry_run=True)
+        finally:
+            compact.merge_candidates = original
+        self.assertEqual(called, [], "nothing to pay for, nothing to consolidate")
+
+    def test_the_coldest_apexes_go_first(self) -> None:
+        """A lesson that keeps getting used is earning its place at the top;
+        one nothing has touched is pure routing tax."""
+        from rmc.compact import _coldest
+
+        self.widen(3)
+        hot = self.store.get("n_deploy_0")
+        hot.stats.attempts = 9
+        self.store.save_node(hot)
+        self.store.invalidate()
+        order = [n.id for n in _coldest(self.store, self.store.apexes())]
+        self.assertEqual(order[-1], "n_deploy_0")
+
+    def test_one_pass_asks_about_a_bounded_slice(self) -> None:
+        """Judging costs a call per anchor, so a huge store cannot have all of
+        it considered every night."""
+        from rmc.compact import _coldest
+
+        self.widen(60)
+        self.assertEqual(len(_coldest(self.store, self.store.apexes())), 24)
+
+    def test_an_over_wide_group_is_not_attempted(self) -> None:
+        """One episode that used nine lessons nominates all nine. Attempting
+        that spends the whole ration on the least likely candidate."""
+        import rmc.compact as compact
+
+        self.widen(9, "deploy")
+        peers = [self.store.get(f"n_deploy_{i}") for i in range(9)]
+        self.add_episode("e1", "x", "work",
+                         served=[n.id for n in peers], used=[n.id for n in peers])
+        attempts: list[int] = []
+
+        def merge(store, adapter, nodes, dry_run=False):
+            attempts.append(len(nodes))
+            return compact.CompactionResult(node_id=nodes[0].id, accepted=False, reason="test")
+
+        original = (compact.merge_nodes, compact.merge_candidates)
+        compact.merge_nodes = merge
+        compact.merge_candidates = lambda *a, **k: []
+        try:
+            compact.dream(self.store, MockAdapter(), limit=4, dry_run=True)
+        finally:
+            compact.merge_nodes, compact.merge_candidates = original
+
+        self.assertTrue(attempts, "the pairs underneath are still candidates")
+        self.assertTrue(all(n <= 5 for n in attempts), attempts)
+
+    def spy_merges(self, verdicts, *, limit=2, groups=6):
+        """Run a dream whose every merge answers from `verdicts`, and report
+        which groups it tried."""
+        import rmc.compact as compact
+
+        self.widen(13, "deploy")
+        peers = [self.store.get(f"n_deploy_{i}") for i in range(13)]
+        pairs = [[peers[i], peers[i + 1]] for i in range(0, groups * 2, 2)]
+        tried: list[list[str]] = []
+        answers = list(verdicts)
+
+        def candidates(store, family=None, adapter=None, *, peers=None):
+            return pairs
+
+        def merge(store, adapter, nodes, dry_run=False):
+            tried.append([n.id for n in nodes])
+            ok = answers.pop(0) if answers else False
+            return compact.CompactionResult(
+                node_id=nodes[0].id, accepted=ok, reason="test",
+                new_node=nodes[0] if ok else None,
+            )
+
+        original = (compact.merge_candidates, compact.merge_nodes)
+        compact.merge_candidates, compact.merge_nodes = candidates, merge
+        try:
+            compact.dream(self.store, MockAdapter(), limit=limit, dry_run=True)
+        finally:
+            compact.merge_candidates, compact.merge_nodes = original
+        return tried
+
+    def test_accepted_merges_are_rationed(self) -> None:
+        """Rewriting the tree is the irreversible thing, so it is the one
+        rationed tightly."""
+        tried = self.spy_merges([True, True, True, True], limit=2)
+        self.assertEqual(len(tried), 2)
+
+    def test_a_rejection_does_not_spend_the_ration(self) -> None:
+        """Two rejections used to end a pass with thirty-four candidates
+        untried — the store stayed flat and the log said work had been done."""
+        tried = self.spy_merges([False, False, True, True], limit=2)
+        self.assertEqual(len(tried), 4, "kept looking past the rejections")
+
+    def test_one_lesson_does_not_soak_up_the_whole_pass(self) -> None:
+        """A single episode that used nine lessons nominates all thirty-six of
+        their pairs, and every pair of one node sorts together — so a pass
+        would re-ask about the same lesson against eight partners."""
+        import rmc.compact as compact
+
+        self.widen(9, "deploy")
+        peers = [self.store.get(f"n_deploy_{i}") for i in range(9)]
+        self.add_episode("e1", "x", "work",
+                         served=[n.id for n in peers], used=[n.id for n in peers])
+        tried: list[list[str]] = []
+
+        def merge(store, adapter, nodes, dry_run=False):
+            tried.append([n.id for n in nodes])
+            return compact.CompactionResult(node_id=nodes[0].id, accepted=False, reason="test")
+
+        original = (compact.merge_nodes, compact.merge_candidates)
+        compact.merge_nodes = merge
+        compact.merge_candidates = lambda *a, **k: []
+        try:
+            compact.dream(self.store, MockAdapter(), limit=2, dry_run=True)
+        finally:
+            compact.merge_nodes, compact.merge_candidates = original
+
+        flat = [i for pair in tried for i in pair]
+        self.assertEqual(len(flat), len(set(flat)), f"a lesson was asked about twice: {tried}")
+
+    def test_looking_is_still_bounded(self) -> None:
+        self.store.config.set("dream.max_attempts", 3)
+        tried = self.spy_merges([False] * 6, limit=2)
+        self.assertEqual(len(tried), 3)
 
 
 class TestReInjection(StoreCase):
@@ -1683,6 +2021,7 @@ class TestDreamSchedule(StoreCase):
     def test_not_due_without_new_evidence(self) -> None:
         from rmc.compact import dream_due
 
+        self.store.config.set("dream.min_new_episodes", 3)
         self.seed_evidence(1)
         due, why = dream_due(self.store)
         self.assertFalse(due)
@@ -1691,7 +2030,17 @@ class TestDreamSchedule(StoreCase):
     def test_due_once_enough_has_accumulated(self) -> None:
         from rmc.compact import dream_due
 
+        self.store.config.set("dream.min_new_episodes", 3)
         self.seed_evidence(3)
+        due, why = dream_due(self.store)
+        self.assertTrue(due, why)
+
+    def test_a_single_multi_lesson_episode_is_enough_by_default(self) -> None:
+        """Over a month of real use this store produced one such episode. A
+        floor of three meant co-use could never fire on its own."""
+        from rmc.compact import dream_due
+
+        self.seed_evidence(1)
         due, why = dream_due(self.store)
         self.assertTrue(due, why)
 

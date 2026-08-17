@@ -82,7 +82,7 @@ def due_nodes(store: Store) -> list[Node]:
     """
     if not store.config.get("compaction.enabled", True):
         return []
-    min_successes = int(store.config.get("compaction.min_successes", 2))
+    min_successes = int(store.config.get("compaction.min_successes", 1))
     max_level = int(store.config.get("compaction.max_level", 6))
     cooldown = int(store.config.get("compaction.cooldown_s", 900))
     now = time.time()
@@ -441,6 +441,7 @@ def merge_nodes(
 
     config = store.config
     threshold = float(config.get("compaction.merge_threshold", 1.0))
+    max_ratio = float(config.get("compaction.merge_ratio", 0.9))
     k = int(config.get("compaction.regression_k", 5))
 
     episodes: list[Episode] = []
@@ -466,6 +467,12 @@ def merge_nodes(
             body=combined,
             covers="\n".join(f"- {truncate(e.prompt, 240)}" for e in episodes),
             preserve="\n".join(f"- {p}" for p in preserve) or "(none)",
+            # Naming the budget is what makes it reachable. Without a number the
+            # compressor writes a thorough lesson covering both children and
+            # lands at 100–115% of their combined size every time — correct, and
+            # useless, because it costs more at the apex than what it replaced.
+            budget=int(before * max_ratio),
+            words=int(before * max_ratio * 0.75),
         ),
         schema=COMPRESS_SCHEMA,
         timeout=int(config.get("limits.agent_timeout_s", 180)),
@@ -481,6 +488,20 @@ def merge_nodes(
     result.after_tokens = count_tokens(body)
     dropped = [Delta.from_dict(d) for d in (run.data.get("dropped") or []) if d]
     result.dropped = dropped
+
+    # A parent that is not smaller than the children it stands in front of has
+    # not abstracted them, it has concatenated them — and the apex layer, which
+    # is what recall enumerates on every prompt, gets *more* expensive. This was
+    # unchecked: merge computed the ratio, printed it in its own accept message,
+    # and accepted regardless. Two merges here landed at 102% and 100% of
+    # combined size and added 809 tokens to every prompt.
+    if result.ratio > max_ratio:
+        result.reason = (
+            f"merge landed at {result.ratio:.0%} of combined size, above {max_ratio:.0%} — "
+            "a parent that big does not pay for itself at the apex"
+        )
+        store.log("merge", nodes=[n.id for n in nodes], accepted=False, reason=result.reason)
+        return result
 
     result.replays = validate(store, adapter, body, episodes, cwd=cwd)
     if result.pass_rate < threshold:
@@ -509,7 +530,11 @@ def merge_nodes(
         family=(
             nodes[0].family
             if len({n.family for n in nodes}) == 1
-            else _slug(str(run.data.get("family") or run.data.get("title") or "general"))
+            # A family is a name others can join, so it has to stay short. When
+            # the compressor gives none, falling back to the slugged title makes
+            # a family of one, spelled as a sentence.
+            else _slug(str(run.data.get("family") or "").strip())
+            or _shared_family(nodes)
         ),
         body=body,
         level=max(n.level for n in nodes) + 1,
@@ -532,7 +557,18 @@ def merge_nodes(
     return result
 
 
-def co_use_groups(store: Store, *, min_shared: int = 2) -> list[tuple[list[Node], int]]:
+def _shared_family(nodes: list[Node]) -> str:
+    """A name for a cross-family parent when the compressor did not give one.
+
+    The children's own families are the honest fallback — they were assigned by
+    a model that had the lesson in front of it, and joining two of them at least
+    names real subjects.
+    """
+    names = sorted({n.family for n in nodes if n.family})
+    return "-".join(names[:2]) if names else "general"
+
+
+def co_use_groups(store: Store, *, min_shared: int | None = None) -> list[tuple[list[Node], int]]:
     """Lessons repeatedly served *together* on work that then succeeded.
 
     This is the evidence that two lessons belong under one abstraction, and it
@@ -546,6 +582,11 @@ def co_use_groups(store: Store, *, min_shared: int = 2) -> list[tuple[list[Node]
     an observed outcome, not a stand-in for a judgement. Whether a group shares
     a generalisable procedure is still the model's call.
     """
+    floor = (
+        int(store.config.get("compaction.min_co_use", 1))
+        if min_shared is None
+        else min_shared
+    )
     counts: dict[frozenset[str], int] = {}
     for episode in store.episodes():
         if episode.outcome != "success":
@@ -573,7 +614,7 @@ def co_use_groups(store: Store, *, min_shared: int = 2) -> list[tuple[list[Node]
 
     out: list[tuple[list[Node], int]] = []
     for key, seen in counts.items():
-        if seen < min_shared:
+        if seen < floor:
             continue
         nodes = [store.get(i) for i in key]
         nodes = [n for n in nodes if n is not None and n.status == "active"]
@@ -584,17 +625,28 @@ def co_use_groups(store: Store, *, min_shared: int = 2) -> list[tuple[list[Node]
 
 
 def merge_candidates(
-    store: Store, family: str, adapter: Adapter | None = None
+    store: Store,
+    family: str | None = None,
+    adapter: Adapter | None = None,
+    *,
+    peers: list[Node] | None = None,
 ) -> list[list[Node]]:
-    """Sibling apexes that describe the same underlying procedure.
+    """Apexes that describe the same underlying procedure.
 
     Whether two lessons are the same procedure is a judgement, not a similarity
     score — "retry the HTTP call" and "re-enqueue the failed job" are one
     procedure with different vocabulary, while two lessons that both talk about
     timeouts may share nothing but the word. So the model decides; the harness
     only supplies the peer set and the same-level constraint.
+
+    `family` narrows the peer set to one family, which is what `rmc compact
+    --merge <family>` wants. Pass `peers` to supply the set directly — dream
+    does, because a family is itself a model-assigned label and the apex layer
+    is what actually costs something to route over.
     """
-    peers = [n for n in store.family_nodes(family) if n.status == "active" and n.is_apex]
+    if peers is None:
+        pool = store.family_nodes(family) if family else store.nodes()
+        peers = [n for n in pool if n.status == "active" and n.is_apex]
     if len(peers) < 2 or adapter is None:
         return []
 
@@ -703,7 +755,7 @@ class DreamReport:
         parts = []
         if self.gists_filled:
             parts.append(f"{self.gists_filled} gist(s) written")
-        parts.append(f"{self.groups_considered} co-use group(s) considered")
+        parts.append(f"{self.groups_considered} merge group(s) considered")
         if self.merged:
             parts.append(f"{len(self.merged)} merged")
         if self.rejected:
@@ -726,7 +778,7 @@ class DreamReport:
             f"| tokens served at apex | {self.before.get('apex_tokens', 0)} "
             f"| {self.after.get('apex_tokens', 0)} |",
             "",
-            f"Examined {self.groups_considered} co-use group(s); "
+            f"Examined {self.groups_considered} merge group(s); "
             f"wrote {self.gists_filled} gist(s).",
             "",
         ]
@@ -774,9 +826,21 @@ def dream_due(store: Store) -> tuple[bool, str]:
             seen_at_last = int(event.get("episodes_seen") or 0)
     fresh = len(usable) - seen_at_last
     minimum = int(store.config.get("dream.min_new_episodes", 3))
-    if fresh < minimum:
-        return False, f"only {fresh} new multi-lesson episode(s) since last dream, need {minimum}"
-    return True, f"{fresh} new multi-lesson episode(s)"
+    if fresh >= minimum:
+        return True, f"{fresh} new multi-lesson episode(s)"
+
+    # Co-use needs two lessons used in one episode, twice. Recall serves about
+    # one lesson per prompt, so that evidence is rare by construction — and
+    # gating the whole pass on it means a store can never consolidate no matter
+    # how wide it gets. Width is the other reason to dream, and it is a count.
+    width = len(store.apexes())
+    ceiling = int(store.config.get("dream.max_apexes", 12))
+    if width > ceiling:
+        return True, f"{width} apexes to route over, above {ceiling}"
+    return False, (
+        f"only {fresh} new multi-lesson episode(s) since last dream (need {minimum}), "
+        f"and {width} apexes is within the {ceiling} the router can afford"
+    )
 
 
 def dream(
@@ -792,32 +856,111 @@ def dream(
     back and asks what the store as a whole should look like — the offline pass
     that keeps a long tail from staying flat.
 
-    It builds abstraction from **co-use**: lessons that have repeatedly been
-    served together on work that then succeeded are evidence of a shared idea,
-    and merging them creates a parent that answers for all of them at once. That
-    parent is what makes retrieval scale — one judgement at the top prunes
-    everything beneath it — so the index is not a separate structure that can
-    drift, it is the tree, grown from what actually got used.
+    It builds abstraction on two signals, in order of how much they prove.
+
+    **Co-use** is the strong one: lessons repeatedly served together on work
+    that then succeeded are evidence of a shared idea, and it comes from what
+    actually happened. But it only ever reaches lessons that get used together,
+    and recall serves about one lesson per prompt — so on its own it leaves the
+    long tail exactly where the design says it must not be, flat at the top.
+
+    **Width** is the fallback: once a family has more apexes than routing can
+    afford — and every apex is enumerated on every prompt — the model is asked
+    to group them whether or not they have ever met. Weaker evidence, but not
+    unchecked: `merge_nodes` replays the children's own episodes and refuses a
+    parent that cannot reproduce them.
+
+    Either way the parent is what makes retrieval scale — one judgement at the
+    top prunes everything beneath it — so the index is not a separate structure
+    that can drift, it is the tree, grown in place.
     """
     report = DreamReport(started=utcnow(), before=_census(store))
 
     if not dry_run:
         report.gists_filled = _backfill_gists(store, adapter)
 
-    groups = co_use_groups(store)
+    # A merge has to reproduce every child's episodes at full pass-rate, and the
+    # odds of that fall off fast with arity — while the prompt grows linearly.
+    # One episode that used nine lessons nominates all nine as a single group;
+    # attempting it spends the pass's whole ration on the least likely
+    # candidate, when the pairs underneath it are right there and each of them
+    # can land. So the harness caps how wide one attempt may be. How many
+    # lessons is a count; which of them belong together is still the model's.
+    widest = int(store.config.get("compaction.max_merge_group", 5))
+
+    # Two budgets, because the two things being spent are not alike. An accepted
+    # merge rewrites the tree and is the thing worth rationing; a rejection is
+    # one model call, and the size gate now runs before replay so a bad
+    # candidate is cheap to find out about. Counting them together meant two
+    # rejections ended a pass with thirty-four candidates untried — the store
+    # stayed flat and the log said the work had been done.
+    attempts = int(store.config.get("dream.max_attempts", 8))
+    spent = 0
+
+    groups = [g for g in co_use_groups(store) if len(g[0]) <= widest]
     report.groups_considered = len(groups)
 
-    for nodes, seen in groups[:limit]:
+    # One attempt per lesson per pass. With the co-use floor at one, a single
+    # episode that used nine lessons nominates all thirty-six of their pairs —
+    # and the ordering puts every pair of one node consecutively, so a pass
+    # spends its whole attempt budget re-asking about the same lesson against
+    # eight different partners. Breadth first: if a lesson does not merge with
+    # its best-evidenced partner, the next pass can try the others.
+    touched: set[str] = set()
+
+    for nodes, seen in groups:
+        if len(report.merged) >= limit or spent >= attempts:
+            break
+        if any(n.id in touched for n in nodes):
+            continue
         # A group already sharing a parent has been consolidated before.
         shared = set.intersection(*(set(n.parents) for n in nodes)) if nodes else set()
         if shared:
             continue  # already consolidated under a common parent
+        touched.update(n.id for n in nodes)
+        spent += 1
         result = merge_nodes(store, adapter, nodes, dry_run=dry_run)
         label = f"{'+'.join(n.id for n in nodes)} (co-used {seen}x)"
         if result.accepted:
             report.merged.append(f"{label} -> {result.new_node.id if result.new_node else 'dry-run'}")
         else:
             report.rejected.append(f"{label}: {result.reason[:120]}")
+
+    # Second pass: an apex layer too wide to route over cheaply.
+    #
+    # Co-use only ever reaches the lessons that get used together, and recall
+    # serves about one lesson per prompt — so the long tail never qualifies and
+    # stays flat at the top, where every apex is enumerated on every prompt.
+    # Width needs no usage evidence, and the parent it produces is still a real
+    # generalisation the model has to stand behind: merge_nodes replays the
+    # children's own episodes and refuses a parent that cannot reproduce them.
+    #
+    # The peer set is the whole apex layer, not one family. Family is a label
+    # the model assigned at capture; thirteen families holding one apex each is
+    # the same flat layer as one family holding thirteen, and costs the router
+    # exactly as much. merge_nodes has always allowed a merge to span families —
+    # it names the cross-cutting parent when it does.
+    #
+    # The split holds: the harness counts apexes and decides how many to look at
+    # in one pass, the model decides which of them are the same procedure.
+    ceiling = int(store.config.get("dream.max_apexes", 12))
+    apexes = store.apexes()
+    if len(report.merged) < limit and spent < attempts and len(apexes) > ceiling:
+        for group in merge_candidates(store, adapter=adapter, peers=_coldest(store, apexes)):
+            if len(report.merged) >= limit or spent >= attempts:
+                break
+            if len(group) > widest:
+                group = group[:widest]
+            report.groups_considered += 1
+            spent += 1
+            result = merge_nodes(store, adapter, group, dry_run=dry_run)
+            label = f"{'+'.join(n.id for n in group)} ({len(apexes)} apexes wide)"
+            if result.accepted:
+                report.merged.append(
+                    f"{label} -> {result.new_node.id if result.new_node else 'dry-run'}"
+                )
+            else:
+                report.rejected.append(f"{label}: {result.reason[:120]}")
 
     store.invalidate()
     report.after = _census(store)
@@ -837,6 +980,18 @@ def dream(
         ),
     )
     return report
+
+
+def _coldest(store: Store, apexes: list[Node], limit: int = 24) -> list[Node]:
+    """The slice of the apex layer to ask about in one pass.
+
+    Judging costs a call per anchor, so a store of a thousand apexes cannot have
+    all of them considered every night. Cold ones go first: a lesson that keeps
+    getting used is earning the top of the tree, while one nothing has touched
+    is pure routing tax. That is an ordering over counts, so the harness may
+    decide it — what it must not decide is which of them mean the same thing.
+    """
+    return sorted(apexes, key=lambda n: (n.stats.attempts, n.stats.last_used or ""))[:limit]
 
 
 def _write_dream_log(store: Store, report: DreamReport) -> Path:
