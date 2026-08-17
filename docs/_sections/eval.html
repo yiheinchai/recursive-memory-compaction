@@ -1,0 +1,35 @@
+<h2 id="eval">Evaluation</h2>
+    <p>
+      RMC's claim is falsifiable, so <code>rmc eval</code> tries to falsify it:
+      replay held-out episodes against every level of a lesson and see whether
+      the shorter forms still transfer.
+    </p>
+    <ul>
+      <li><b>A control arm.</b> Every case also runs with no lesson at all.
+        Without it you measure the model's prior, not the lesson.</li>
+      <li><b>A ceiling arm.</b> The original L0 sets what full detail achieves,
+        so a low score at L2 can be told apart from a lesson that never helped.</li>
+      <li><b>Held-out episodes.</b> Compression is <i>accepted</i> by replaying
+        episodes; scoring it on those same episodes measures memorisation. The
+        split is deterministic and the compressor never sees the test half.</li>
+      <li><b>Blind grading.</b> The grader sees the task, the known-good outcome
+        and a candidate — never the lesson, and never which arm produced it.</li>
+      <li><b>Repeats.</b> A single sample per arm is a coin toss.</li>
+    </ul>
+    <p>
+      The headline result is not a number but a <b>curve</b>: transfer against
+      tokens, across levels. The thesis holds if transfer stays flat while
+      tokens fall, and is refuted if transfer degrades with depth. Nothing in
+      the eval path writes to the store — an eval that mutates what it measures
+      is measuring itself.
+    </p>
+    <p>
+      <a href="https://github.com/yiheinchai/rmc/blob/main/evals/README.md">RMC-Bench</a>
+      is a hand-written set for procedural memory under compression, organised
+      around the four ways it can fail: transfer, retention, retrieval and cost.
+      Every case names the <b>trap</b> — the specific wrong thing a good model
+      does by default — because a case whose control passes should be deleted,
+      not celebrated.
+    </p>
+
+    <!-- ==================================================== privacy -->

@@ -1,0 +1,70 @@
+<h2 id="recall">01 &nbsp;Recall</h2>
+    <p>
+      Runs on <code>UserPromptSubmit</code>. Produces the block injected above
+      your prompt.
+    </p>
+
+    <h3>Two structural gates first</h3>
+    <p>Neither is a judgement, so neither costs a call:</p>
+    <ul>
+      <li><b>Empty store</b> — nothing to recall, nothing to ask.</li>
+      <li><b>Everything fits</b> — if the whole store is under
+        <code>recall.max_pack_tokens</code>, there is no <i>choice</i> to make,
+        so all of it is served unfiltered. Relevance filtering switches on
+        exactly when the store outgrows the budget.</li>
+    </ul>
+    <p>
+      The second gate matters more than it sounds. Without it, recall spent a
+      model call deciding which two of two lessons to load, and blew the hook's
+      deadline doing it. With it, recall returns in ~0.1s until the store is
+      genuinely large.
+    </p>
+
+    <h3>The walk</h3>
+    <p>Once filtering is needed, the model decides — walking abstract to concrete:</p>
+    <ul>
+      <li>Start from the <b>apexes</b> (nodes with no parent). They are the most
+        compressed things in the store, so the whole top level fits in one question.</li>
+      <li>Each candidate is rendered as one line: id, title, and a <b>gist</b> —
+        never the body. Sending 700 characters per lesson to <i>choose</i> which
+        lessons to send is the scaling bug that eats the context it was meant to protect.</li>
+      <li>The model returns <code>relevant</code> / <code>maybe</code> /
+        <code>unrelated</code> per candidate, plus <code>descend</code> when a
+        summary is too abstract to judge from.</li>
+      <li>Only <code>descend</code> branches are opened. A branch judged
+        unrelated is never walked.</li>
+      <li>Bounded by <code>recall.judge_calls</code> and
+        <code>recall.max_depth</code>. Anything unresolved when the budget runs
+        out is served rather than dropped.</li>
+    </ul>
+
+    <h3>Three tiers of re-injection</h3>
+    <p>
+      A lesson already in context should not be paid for twice — but
+      <i>present</i> and <i>still attended to</i> are different things, since
+      attention over long context decays and an early injection ends up in the
+      middle, where models attend least.
+    </p>
+    <div class="scroll">
+    <table>
+      <tr><th>State</th><th>Action</th></tr>
+      <tr><td>never served</td><td>full body</td></tr>
+      <tr><td>served &lt; <code>stays_fresh_turns</code> ago (8)</td><td><b>skipped</b> — still fresh</td></tr>
+      <tr><td>served longer ago</td><td><b>refreshed</b> with its one-line gist, ~20 tokens</td></tr>
+    </table>
+    </div>
+    <p>
+      <code>PreCompact</code> clears the whole record, because compaction may
+      have deleted the text being tracked.
+    </p>
+
+    <h3>Also in the pack</h3>
+    <ul>
+      <li><b>Sticky patches</b> — dropped claims that previously rescued this
+        node get re-attached, rather than waiting for the same failure to recur.</li>
+      <li><b>Unresolved conflicts</b> — surfaced here, at the moment you are
+        thinking about the topic.</li>
+    </ul>
+
+
+    <!-- ================================================= 02 reflect -->

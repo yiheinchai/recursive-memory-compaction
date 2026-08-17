@@ -1,0 +1,54 @@
+<h2 id="start">Quickstart</h2>
+<p>
+  Python 3.10+ and either <code>claude</code> or <code>codex</code> on your PATH.
+  No third-party dependencies.
+</p>
+<pre>uv tool install rmc-memory
+rmc install --scope user
+rmc doctor</pre>
+<p>
+  That is the whole install. <code>rmc install</code> wires the hooks and RMC
+  runs in every repo you open — you do not drive it, you work normally. Drop
+  <code>--scope user</code> to limit it to one project.
+</p>
+<div class="note">
+  The distribution is <code>rmc-memory</code> because <code>rmc</code> was taken
+  on PyPI. The command it installs, and the package you import, are both
+  <code>rmc</code>. No uv? <code>pipx install rmc-memory</code>. Just trying it?
+  <code>uvx rmc-memory doctor</code>.
+</div>
+
+<h3>What you should see</h3>
+<p>Nothing, at first — the store is empty and RMC has nothing to say. Once it
+  has learned something, a line appears above your prompt:</p>
+<pre>⋯ RMC · 2 lessons · 512 tok — Retry policy, Cache TTLs
+⋯ RMC · 1 lesson · 118 tok — Retry policy  · 1 refreshed, 2 already in context</pre>
+<p>
+  It names what was loaded, because a count only proves RMC fired — the titles
+  are what let you notice it fired on the <b>wrong</b> lessons. The three states
+  differ: a lesson injected in full, a one-line refresher for one going stale,
+  and one skipped because it is still in your context. Only the first is a
+  lesson arriving.
+</p>
+<p>
+  Expect the first capture within a few sessions of real work. RMC learns from
+  corrections, so a session where nothing went wrong teaches it nothing.
+</p>
+
+<h3>As a Claude Code plugin instead</h3>
+<pre><span class="b">/plugin</span> marketplace add yiheinchai/rmc
+<span class="b">/plugin</span> install rmc@rmc</pre>
+
+<h3>Where your data lives</h3>
+<p>
+  Plain files: <code>.rmc/</code> in the project, <code>~/.rmc/</code> for
+  lessons that apply everywhere. Nodes and episodes are worth committing;
+  sessions, telemetry and caches are machine-local. Everything passes through
+  <code>redact.py</code> before it touches disk — API keys, tokens, private keys,
+  card numbers — biased toward over-redaction, since a mangled lesson is
+  recoverable and a leaked key is not.
+</p>
+<p>
+  <b>RMC makes no network calls.</b> Model calls go through whichever CLI you
+  already have, under your existing credentials.
+</p>

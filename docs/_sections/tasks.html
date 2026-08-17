@@ -1,0 +1,38 @@
+<h2 id="tasks">Everyday tasks</h2>
+<div class="scroll">
+<table>
+  <tr><th>You want to</th><th>Run</th></tr>
+  <tr><td>Teach it something now, without waiting for reflection</td>
+      <td><code>rmc add "…" --family retry</code></td></tr>
+  <tr><td>See what it just learned</td>
+      <td><code>rmc tree --recent</code></td></tr>
+  <tr><td>See everything it knows, by family</td>
+      <td><code>rmc tree</code> &nbsp;·&nbsp; <code>rmc tree -v</code> for bodies</td></tr>
+  <tr><td>See what a prompt would pull in</td>
+      <td><code>rmc recall --prompt "…"</code></td></tr>
+  <tr><td>See <i>why</i> it chose those</td>
+      <td><code>rmc trace --prompt "…"</code></td></tr>
+  <tr><td>Check how it is doing</td>
+      <td><code>rmc status</code></td></tr>
+  <tr><td>Settle a contradiction it flagged</td>
+      <td><code>rmc conflicts</code> then <code>rmc resolve &lt;id&gt;</code></td></tr>
+  <tr><td>Stop it interrupting to reflect</td>
+      <td><code>rmc config learning.nudge_mode off</code></td></tr>
+  <tr><td>Turn recall off but keep learning</td>
+      <td><code>rmc config recall.enabled false</code></td></tr>
+  <tr><td>Remove it entirely</td>
+      <td><code>rmc uninstall</code> — removes only what RMC added</td></tr>
+</table>
+</div>
+
+<h3>Reading <code>rmc status</code></h3>
+<pre>  precision  2/23 served lessons were used  (9%)
+  captures   19  (4 by a reflector, 15 by the session)
+  missed     79%  — the reflector is missing most of them</pre>
+<p>
+  <b>precision</b> is retrieval quality: of the lessons put in front of the
+  model, how many bore on the work. Low precision is a router problem, not a
+  memory problem.
+  <b>missed</b> is capture quality: a lesson the live session had to add by hand
+  is one the reflector saw the evidence for and did not take.
+</p>

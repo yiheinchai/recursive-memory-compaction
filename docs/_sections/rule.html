@@ -1,0 +1,40 @@
+<h2 id="rule">The governing rule</h2>
+    <div class="note"><b>The harness owns structure. The model owns meaning.</b></div>
+    <p>
+      The harness owns the graph, the traversal, budgets, caches, the schemas
+      answers must fit, and <i>whether to ask at all</i>. The model owns every
+      question about meaning, each behind a JSON schema, cached so nothing is
+      judged twice. There are exactly five semantic calls in the system
+      (<code>rmc/judge.py</code>):
+    </p>
+    <div class="scroll">
+    <table>
+      <tr><th>Call</th><th>Question</th></tr>
+      <tr><td><code>relevance</code></td><td>which remembered lessons bear on this prompt?</td></tr>
+      <tr><td><code>related</code></td><td>which existing lessons cover the same subject as this new one?</td></tr>
+      <tr><td><code>scope</code></td><td>does this lesson belong to this repo, or everywhere?</td></tr>
+      <tr><td><code>assess</code></td><td>how did this session go, and which lessons actually bore on it?</td></tr>
+      <tr><td><code>rank_repairs</code></td><td>which dropped detail explains this failure?</td></tr>
+    </table>
+    </div>
+    <p>
+      Plus four in the compression path: compress, merge, replay-probe, and the
+      replay judge.
+    </p>
+    <h3>What stays in code, and why that is not a violation</h3>
+    <p>
+      Counting an <i>observed outcome</i> is evidence — a success rate, a rescue
+      count, how often two lessons were used together on work that succeeded.
+      Computing how <i>alike</i> two texts are is a proxy standing in for a
+      judgement, and must be a model call. <b>The test is what question the
+      number answers, not where it came from.</b>
+    </p>
+    <p>
+      This was learned the hard way. Retrieval was originally Jaccard
+      similarity, contradictions were found with a <code>KEY=value</code> regex,
+      and session outcomes came from phrase banks with hand-tuned weights. All
+      of it looked structural and all of it was a lookup table wearing a
+      judgement's clothes.
+    </p>
+
+    <!-- ================================================== 01 recall -->

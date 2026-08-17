@@ -1,0 +1,53 @@
+<h2 id="trouble">When something looks wrong</h2>
+<p>Start with <code>rmc doctor</code>. It reports backends, store, hook wiring,
+  and whether the <code>rmc</code> command is on your PATH.</p>
+
+<div class="scroll">
+<table>
+  <tr><th>Symptom</th><th>Likely cause</th><th>Check / fix</th></tr>
+  <tr>
+    <td><code>rmc: command not found</code></td>
+    <td>The CLI is not on PATH. <b>Hooks are unaffected</b> — they invoke the
+        package by absolute path, so RMC is still running.</td>
+    <td><code>rmc install</code> links it; or symlink <code>bin/rmc</code> into
+        <code>~/.local/bin</code> yourself</td>
+  </tr>
+  <tr>
+    <td>Nothing is ever recalled</td>
+    <td>An empty store, or every match is already fresh in your context</td>
+    <td><code>rmc tree</code> for what exists; <code>rmc recall --prompt "…"</code>
+        for what a given prompt would pull</td>
+  </tr>
+  <tr>
+    <td>Nothing is ever learned</td>
+    <td>No backend, no substantial turns, or the reflection backoff has grown</td>
+    <td><code>rmc status</code> — look at <code>nudges</code> and the miss rate;
+        <code>rmc events --kind nudge</code> for when one last fired</td>
+  </tr>
+  <tr>
+    <td>Hooks never fire</td>
+    <td>Installed at project scope into a repo you do not work in — including
+        RMC's own clone</td>
+    <td><code>rmc doctor</code> shows where they are wired;
+        <code>rmc install --scope user</code> fixes it</td>
+  </tr>
+  <tr>
+    <td>The wrong lessons keep appearing</td>
+    <td>Recall over-serving, the weakest part of the system today</td>
+    <td><code>rmc trace --prompt "…"</code> shows the model's verdict and reason
+        for every candidate</td>
+  </tr>
+  <tr>
+    <td>A lesson is wrong or out of date</td>
+    <td>It was captured from a situation that has since changed</td>
+    <td><code>rmc conflicts</code>, then
+        <code>rmc resolve &lt;id&gt; --drop</code></td>
+  </tr>
+  <tr>
+    <td>A bug in RMC itself</td>
+    <td>—</td>
+    <td><code>rmc report --about "…"</code> writes a redacted report and prints
+        the <code>gh</code> command to file it. It sends nothing.</td>
+  </tr>
+</table>
+</div>

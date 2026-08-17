@@ -1,0 +1,38 @@
+<h2 id="descend">06 &nbsp;Descent</h2>
+    <p><i>When the compressed lesson fails, which child do you go to?</i></p>
+    <p>
+      Compression normally destroys the information you would need to invert it,
+      which is why the manifest is mandatory. Descent is then a ranking problem
+      over dropped claims, not a search over the graph:
+    </p>
+<pre>score = w_judge · model_usefulness + w_prior · rescue_rate − w_cost · tokens
+         (0.60)                       (0.28)                  (0.12)</pre>
+    <ul>
+      <li><b><code>model_usefulness</code></b> — one call ranks every candidate
+        0–1: <i>how likely is it that this detail being absent caused this
+        failure</i>. A judgement, so the model makes it. "Parse the body, not the
+        status code" is the fix for "treated HTTP 200 as success" while sharing
+        none of its words.</li>
+      <li><b><code>prior</code></b> — Laplace-smoothed rate at which this node has
+        actually rescued failures. Observed outcome, so it stays in code. Makes
+        descent a contextual bandit over the graph.</li>
+      <li><b><code>cost</code></b> — token count. A measurement.</li>
+    </ul>
+    <p>
+      With no judge available the first term is simply absent and ranking falls
+      back to "try what has worked, cheapest first" — degrading honestly rather
+      than substituting a metric that looks like judgement.
+    </p>
+    <p>
+      Strategies (<code>recall.strategy</code>): <code>delta-patch</code> (apex +
+      matched claims, default), <code>delta-jump</code> (swap in the holder
+      node), <code>stepwise</code> (walk children, ignore the manifest — the
+      ablation baseline).
+    </p>
+    <p>
+      Escalation: exhaust candidates → load the level-0 node, which is never
+      deleted. If that fails too, it is a genuine knowledge gap, not a
+      compression bug.
+    </p>
+
+    <!-- ==================================================== 07 dream -->

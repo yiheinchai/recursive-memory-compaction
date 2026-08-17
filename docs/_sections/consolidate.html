@@ -1,0 +1,53 @@
+<h2 id="consolidate">04 &nbsp;Consolidation</h2>
+    <p>New knowledge is reconciled with old before it is stored, never appended blindly.</p>
+
+    <h3>Scope, decided first</h3>
+    <p>
+      Where a lesson lands decides whether it can ever be found again. A lesson
+      about a vendor API filed under one repo is invisible from every other one,
+      so nothing downstream can rescue it — not recall, not co-use, not
+      dreaming.
+    </p>
+    <p>
+      So <code>scope</code> asks: does this depend on <i>this repository</i>, or
+      would it be true for anyone using these tools anywhere? Global lessons go
+      to <code>~/.rmc</code>, project lessons stay local. The error is
+      asymmetric: a global lesson filed locally is <b>lost</b>, a project lesson
+      filed globally is merely noise.
+    </p>
+
+    <h3>Then the relation</h3>
+    <p>
+      <code>related</code> walks the graph for lessons on the same subject, and
+      <code>reconcile</code> classifies:
+    </p>
+    <div class="scroll">
+    <table>
+      <tr><th>Relation</th><th>Action</th></tr>
+      <tr><td><code>duplicate</code></td><td>nothing stored; the hit is recorded</td></tr>
+      <tr><td><code>refines</code></td><td>fold into the matched lesson's own lineage, then patch its ancestors</td></tr>
+      <tr><td><code>contradicts</code></td><td>keep both, mark both <code>disputed</code>, attach a question</td></tr>
+      <tr><td><code>specialises</code></td><td>attach as a sibling; a merge may later generalise both</td></tr>
+      <tr><td><code>orthogonal</code></td><td>new family</td></tr>
+    </table>
+    </div>
+    <p>
+      <b>Refinement must reach the apex.</b> Folding detail into a level-0 node
+      leaves every ancestor missing it. Rather than invalidating working
+      compressions, the detail is registered as a rescue on each ancestor, so
+      recall re-attaches it immediately and <code>repair</code> folds it in
+      permanently once it proves necessary.
+    </p>
+    <p>
+      <b>Contradictions are never resolved silently.</b> Last-write-wins is how
+      a memory rots. Both lessons stay servable, and the question is raised at
+      recall time:
+    </p>
+<pre>&gt; Unresolved: Is 5434 the new permanent host port mapping, or was 5433
+&gt; only temporarily unavailable at the time?</pre>
+    <p>
+      <code>rmc conflicts</code> lists them,
+      <code>rmc resolve &lt;id&gt; [--drop]</code> settles them.
+    </p>
+
+    <!-- ================================================ 05 compress -->

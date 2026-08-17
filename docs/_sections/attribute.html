@@ -1,0 +1,62 @@
+<h2 id="attribute">03 &nbsp;Attribution</h2>
+    <p>
+      The question that drives everything downstream: <b>which served lessons
+      actually bore on the work?</b>
+    </p>
+    <p>
+      Serving is a retrieval decision; using is an outcome. Conflating them
+      breaks two things at once — an irrelevant lesson that happened to be
+      injected accrues a record of usefulness it never earned, and serving ten
+      lessons manufactures forty-five "co-use" pairs out of a single retrieval
+      decision.
+    </p>
+    <p>Two sources, best first:</p>
+    <ul>
+      <li><b>The in-session reflector.</b> The fork holds the real conversation,
+        so it can see a principle being applied and not merely a command being
+        run. It reports with <code>rmc used --session &lt;id&gt; --used &lt;ids&gt;
+        --unused &lt;ids&gt;</code>.</li>
+      <li><b>The digest judge.</b> <code>assess</code> is shown the served
+        lessons and the session digest. Weaker: influence on <i>reasoning</i> is
+        nearly invisible in a digest of commands, so it under-credits
+        principles. The digest now includes the agent's own reasoning for
+        exactly this reason.</li>
+    </ul>
+    <p>
+      Either way the prompt is strict and defaults to false: <i>being on-topic
+      is not being used; being read and found irrelevant is not being used;
+      having been served a lesson and then done the opposite means it was not
+      used.</i>
+    </p>
+    <p>
+      <b>A lesson served but unused is scored neither success nor failure.</b>
+      It has three possible causes and only the first is a retrieval problem:
+    </p>
+    <div class="scroll">
+    <table>
+      <tr><th>Cause</th><th>Meaning</th></tr>
+      <tr><td>irrelevant</td><td>recall over-served</td></tr>
+      <tr><td>redundant</td><td>the agent knew it anyway</td></tr>
+      <tr><td>relevant and ignored</td><td>the lesson isn't landing — a salience failure</td></tr>
+    </table>
+    </div>
+    <p><code>rmc status</code> reports <code>precision</code> (used ÷ served).</p>
+
+    <!-- ============================================= 04 consolidate -->
+
+<h3>And whether the reflector is catching anything at all</h3>
+<p>
+  A reflector capturing a lesson is the system working. The <i>live session</i>
+  capturing one means the evidence was sitting there and the reflector walked
+  past it, so a person had to notice. <code>RMC_CHILD</code> is set in every
+  spawned reflector, so this is observed rather than inferred: captures record
+  <code>by=reflector</code> or <code>by=session</code>, and
+  <code>rmc status</code> reports the miss rate.
+</p>
+<div class="note">
+  The metric this replaced counted captures that followed no nudge, and read a
+  high share as <i>the agent has outgrown the scaffolding</i>. A session where
+  the user asks "why did you not learn that?" and the agent then adds the lesson
+  by hand scored <b>perfectly</b> on it — the worst outcome the system can
+  produce, reported as its best.
+</div>

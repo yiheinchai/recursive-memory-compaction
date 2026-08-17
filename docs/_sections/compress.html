@@ -1,0 +1,60 @@
+<h2 id="compress">05 &nbsp;Compression</h2>
+    <p>
+      A node becomes eligible when it is an active apex, below
+      <code>max_level</code> (6), has at least <code>min_successes</code> (2)
+      recalls <b>that were attributed as used</b>, is past its cooldown, and
+      <b>has recorded episodes to validate against</b>. A node with no episodes
+      is left alone: compressing with no way to check the result is worse than
+      not compressing.
+    </p>
+
+    <h3>The manifest is mandatory</h3>
+    <p>Every compression must declare what it removed, as discrete claims:</p>
+<pre>dropped:
+  - claim: <span class="g">"Backoff constants are 100ms / 400ms / 1.6s, jitter ±25%"</span>
+    kind: parameter
+    holder: n_7f2a</pre>
+    <p>
+      A compression that does not record its losses cannot be descended, so the
+      lost detail is simply gone. A candidate that shrank materially while
+      declaring nothing is rejected as under-reported.
+    </p>
+    <p>
+      Deltas are <b>inherited</b> — an apex knows about detail several levels
+      below it without holding the text, which is what makes delta-jumping
+      possible.
+    </p>
+
+    <h3>Validation</h3>
+<pre>R = sample(regression episodes over the node's whole subtree, k=5)
+for each: fresh agent process, candidate lesson + the original prompt
+accept iff pass_rate &gt;= 1.0  and  tokens &lt;= 0.75 × original</pre>
+    <ul>
+      <li><b>Fresh process</b> — otherwise the main agent's memory of the verbose
+        lesson leaks in and every compression looks successful.</li>
+      <li><b>Subtree-wide</b> — validating only on the triggering episode is how
+        you get a beautifully compressed, useless tree.</li>
+      <li><b>Probe form</b> — replay asks <i>how would you approach this</i>, not
+        <i>do the work</i>. Asking for the work meant judging scaffolding
+        completeness and truncation artefacts rather than the lesson.</li>
+      <li><b>An unreadable judge is a failure</b>, never a pass, so an
+        infrastructure blip cannot promote a bad compression.</li>
+      <li><b>Rejections are informative</b> — failing episodes become
+        <code>preserve:</code> hints for the next attempt, so the compressor
+        converges instead of thrashing.</li>
+    </ul>
+
+    <h3>Merging and repair</h3>
+    <p>
+      Two or more lessons can become one abstract parent covering all of them.
+      Merges may span families, and a merge that would swallow one of its own
+      ancestors is refused — that would make the graph cyclic and every upward
+      walk non-terminating.
+    </p>
+    <p>
+      A delta that repeatedly rescues the same node is proof the compression cut
+      too deep, so it is folded permanently back into the body and dropped from
+      the manifest. The graph heals where it was over-cut.
+    </p>
+
+    <!-- ================================================== 06 descend -->

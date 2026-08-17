@@ -1,0 +1,122 @@
+<h2 id="reflect">02 &nbsp;Reflection</h2>
+    <p>
+      Runs on <code>Stop</code>, per turn. Its job is to <b>schedule
+      attention</b>, not to judge.
+    </p>
+    <p>
+      The occasion is structural — "did this turn have enough substance to be
+      worth a thought" — measured by <code>nudge_after_tool_calls</code> (12),
+      <code>nudge_after_turns</code> (3), or <code>min_surprises</code> (2 failed
+      tool calls), subject to <code>nudge_cooldown_s</code>.
+    </p>
+    <div class="note">
+      <b>The occasion is deliberately not "something failed."</b> An earlier
+      version triggered on failed tool calls, which sounds structural but is a
+      mechanical proxy for a semantic question, and it biases hard toward the
+      cheapest mistakes. Conceptual errors — believing a system works one way
+      when it does not — exit zero and pass their tests. During RMC's own
+      development the worst mistake ran green the whole way.
+    </div>
+
+    <h3>What it looks for</h3>
+<p>
+  Not "were you wrong about anything?" — that is a judgement the reflector has
+  to reach for, and it reliably answered <i>no</i> on sessions full of
+  corrections. The question is <b>where did the user have to steer you</b>,
+  which is evidence sitting in the transcript. It is the same split the rest of
+  RMC applies: count the observed outcome, judge only what needs judging.
+</p>
+<p>
+  A correction, a rejection, a "no, like this", a restated requirement, a
+  complaint about quality, a preference you did not know they held. Each is a
+  round of the user's time a better-informed agent would not have cost them.
+  For each, the reflector asks what it would have needed to know at the start,
+  and the answer is usually one of:
+</p>
+<div class="scroll">
+<table>
+  <tr><th>#</th><th>Kind</th><th>Why it leads</th></tr>
+  <tr><td>1</td><td>A standard or preference this user holds</td>
+      <td rowspan="3">The three most often missed, and the three that remove the
+      most future steering. They are not mistaken beliefs, so a taxonomy asking
+      only about wrongness cannot see them at all.</td></tr>
+  <tr><td>2</td><td>A method they expect applied</td></tr>
+  <tr><td>3</td><td>A quality bar</td></tr>
+  <tr><td>4</td><td>A false belief about a tool, language or platform</td>
+      <td>Counts <i>even though it surfaced as a bug</i>. The test is whether a
+      belief was wrong, not whether it arrived with an error message.</td></tr>
+  <tr><td>5</td><td>A false belief about this project</td><td>—</td></tr>
+  <tr><td>6</td><td>A modelling error</td><td>You represented something in a way
+      that is not true of it.</td></tr>
+</table>
+</div>
+<p>Then it filters on usefulness rather than worthiness:</p>
+<ul>
+  <li>would knowing this at the start have removed at least one round of steering?</li>
+  <li>does it apply to some task other than this exact file?</li>
+  <li>is it still true tomorrow?</li>
+</ul>
+
+<h3>Three things it does instead of capturing</h3>
+<ul>
+  <li><b>Already served, still ignored.</b> If the user had to say something that
+    was already in a lesson the agent was shown, that is not a gap in what is
+    known — it is a lesson that is not landing. The reflector names the node id
+    and captures nothing.</li>
+  <li><b>A capture it should have made.</b> If the conversation shows the agent
+    running <code>rmc add</code> itself, or the user asking why something was not
+    learned, an earlier pass missed it. The reflector works out what about these
+    criteria let it through and captures <i>that</i>, in the
+    <code>reflection</code> family.</li>
+  <li><b>A defect in RMC.</b> If what it found is a bug in the harness rather
+    than a lesson for the store, it runs <code>rmc report</code> and asks whether
+    you want it filed. It never files anything itself.</li>
+</ul>
+
+<div class="note">
+  Calibration is against the steering, not a general prior. A session where the
+  user never redirected the agent almost certainly teaches nothing. A session
+  where they redirected it repeatedly almost certainly does, and
+  <b>returning nothing from one of those is the check failing.</b>
+</div>
+
+<h3>The backoff, and why it is versioned</h3>
+<p>
+  Nudges that keep producing nothing lengthen the cooldown, up to a cap of one
+  hour. But "found nothing" and "there was nothing to find" are different
+  states, and a backoff that cannot tell them apart throttles hardest exactly
+  when the reflector is broken.
+</p>
+<p>
+  That happened here. Bad criteria produced six barren nudges, the cooldown grew
+  from 15 minutes to four hours, and rewriting the criteria did not release it —
+  so the fix could not run to prove itself. The criteria are now fingerprinted
+  and every nudge records the fingerprint it was issued under; a streak only
+  counts events sharing the current one, so changing a prompt resets it by
+  construction.
+</p>
+
+<h3>Where it runs — <code>learning.nudge_mode</code></h3>
+    <div class="scroll">
+    <table>
+      <tr><th>Mode</th><th>Reflector sees</th><th>Cost</th><th>Interrupts you</th></tr>
+      <tr><td><code>background</code> (default)</td><td>a transcript digest, ~3k tokens</td><td>one small call</td><td>no</td></tr>
+      <tr><td><code>fork</code></td><td>the whole session, inherited</td><td>~0.1× its tokens</td><td>no</td></tr>
+      <tr><td><code>block</code></td><td>the agent's own live context</td><td>none extra</td><td><b>yes</b>, one turn</td></tr>
+      <tr><td><code>off</code></td><td>—</td><td>none until session end</td><td>no</td></tr>
+    </table>
+    </div>
+    <p>
+      <code>fork</code> spawns <code>claude --resume &lt;id&gt;
+      --fork-session</code> detached. <code>--fork-session</code> allocates a new
+      id, so the live session is never written to. It is affordable because
+      prompt-cache reads bill at <b>0.1×</b> and the cache keys on prefix
+      <i>content</i>, not session identity — the fork hits what the live session
+      just wrote.
+    </p>
+    <p>
+      If nudges keep producing nothing, the cooldown backs off automatically
+      (<code>nudge_backoff_after</code>).
+    </p>
+
+    <!-- =============================================== 03 attribute -->

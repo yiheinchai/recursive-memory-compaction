@@ -1,0 +1,54 @@
+<h2 id="model">Data model</h2>
+
+    <h3>Node — one lesson at one level of abstraction</h3>
+<pre>id: n_7f2a91
+family: retry
+title: Retrying flaky services
+gist: Retry idempotent remote calls; S3 needs body parsing.   <span class="c"># the routing view</span>
+level: 3
+status: active            <span class="c"># active | superseded | demoted | disputed | archived</span>
+origin: compression       <span class="c"># reflection | compression | merge | manual</span>
+conflict: ""              <span class="c"># an unresolved contradiction, surfaced at recall</span>
+derived_from: [n_c41b, n_9de1]   <span class="c"># points DOWN, toward detail</span>
+parents: [n_aa01]                <span class="c"># points UP, toward abstraction</span>
+covers_tasks: [e_4f1a, e_9c22]   <span class="c"># the regression set</span>
+dropped: [...]                   <span class="c"># the delta manifest</span>
+preserve: [...]                  <span class="c"># hints from rejected compressions</span>
+stats: {attempts, successes, failures, expansions, rescues, last_used}</pre>
+    <div class="note">
+      <b>Both edges are lists, so this is a DAG, not a tree.</b> A lesson can be
+      abstracted in more than one direction: compressed vertically into a terser
+      form of itself, <i>and</i> merged sideways into a shared generalisation.
+      While the parent link was a single field, the second silently destroyed
+      the first.
+    </div>
+
+    <h3>Episode — a replayable regression test</h3>
+<pre>id: e_4f1a
+prompt: <span class="g">"add retry to the http client"</span>
+outcome: success
+served: [n_7f2a, n_c41b]   <span class="c"># what was injected</span>
+used:   [n_7f2a]           <span class="c"># what actually bore on the work</span>
+accepted_summary: <span class="g">"..."</span>    <span class="c"># what the agent ended up doing</span></pre>
+    <p>
+      This is the <b>ambient oracle</b>. Nobody writes YAML oracles for their own
+      repo, so instead RMC records what happened when work was accepted, and
+      later asks whether a compressed lesson still reproduces it.
+    </p>
+
+    <h3>Store layout</h3>
+<pre>.rmc/
+  config.yaml          <span class="c">settings</span>
+  nodes/&lt;family&gt;/*.md  <span class="c">the graph. Worth committing.</span>
+  episodes/*.json      <span class="c">the replay corpus. Worth committing.</span>
+  sessions/*.json      <span class="c">per-session scratch. Machine-local.</span>
+  events.jsonl         <span class="c">telemetry. Machine-local.</span>
+  judge-cache.json     <span class="c">cached judgements. Machine-local.</span></pre>
+    <p>
+      <b>Two scopes.</b> If <code>~/.rmc</code> exists it is layered under the
+      project store: both are recalled, new lessons are written to the project
+      one, and editing a global lesson writes back to it rather than forking a
+      local copy that drifts.
+    </p>
+
+    <!-- ======================================================== cli -->

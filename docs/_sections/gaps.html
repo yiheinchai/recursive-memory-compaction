@@ -1,0 +1,50 @@
+<h2 id="gaps">What it still gets wrong</h2>
+<p>
+  Stated plainly, because a system that only reports its wins is not credible
+  about the ones it has. Every number below comes from <code>rmc status</code>
+  on a real store rather than an estimate.
+</p>
+
+<h3>Recall over-serves</h3>
+<p>
+  Precision — lessons used divided by lessons served — is the weakest number in
+  the system. It injects things that turn out not to bear on the work. That is a
+  retrieval problem, not a memory problem: the store is fine and the router is
+  too eager. It is measured rather than hidden, and it is the number to watch.
+</p>
+
+<h3>Capture misses things a person would catch</h3>
+<p>
+  The reflector's criteria were rewritten once already, after seven consecutive
+  passes over a session containing eighteen rounds of correction returned
+  nothing. The new criteria are better founded — they trigger on observed
+  steering rather than judged wrongness — but they are a prompt, and a prompt is
+  a hypothesis. When the reflector misses something, that is a defect to file
+  with <code>rmc report</code>, not a fact of life.
+</p>
+
+<h3>Capture has no eval</h3>
+<p>
+  Recall, compression and descent all have ground truth in the loop: used
+  against served, replay pass-rate against a threshold, rescues against
+  attempts. <code>rmc eval</code> measures transfer, retention, retrieval and
+  cost — and every one of those takes the store as given. There is no axis for
+  <i>given this session, did the reflector find what was in it?</i>, so the
+  capture criteria are the one part of the pipeline that cannot regress
+  visibly.
+</p>
+
+<h3>Progressive disclosure</h3>
+<p>
+  Recall is one pass. There is no second retrieval mid-turn when the agent
+  discovers it needs more, and it cannot search the store itself — it sees only
+  what recall chose to inject.
+</p>
+
+<h3>Staleness over time</h3>
+<p>
+  Nothing tests a lesson going out of date. That needs a store with history
+  rather than a fixture, and the eval corpus is not yet large enough for a
+  result: a real one needs many more recorded episodes than one project
+  generates.
+</p>

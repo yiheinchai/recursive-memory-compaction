@@ -1,0 +1,300 @@
+/* Documentation chrome: three columns, a search dialog, and a colour scheme.
+   Layered on top of style.css, which owns the shared brand and prose styles. */
+
+:root{
+  --side-w: 250px;
+  --onpage-w: 208px;
+  --topbar-h: 61px;
+  --card: #fafafa;
+}
+
+/* Dark is a real requirement for a docs site, not a flourish: these pages get
+   read at 2am next to a terminal that is already dark.
+
+   The theme overrides style.css's own tokens rather than introducing a second
+   set. A parallel palette is how a site ends up half-inverted — every rule that
+   still reads the original name keeps its light value, which on a dark ground
+   is ink on ink. */
+:root[data-theme="dark"]{
+  --accent: #e8e8e8;
+  --accent-hover: #ffffff;
+  --plate: #17181a;
+  --ink: #e9e9ea;
+  --muted: #a6a8ad;
+  --faint: #74767c;
+  --rule: #2a2c30;
+  --paper: #0c0d0e;
+  --panel: #121315;
+  --card: #121315;
+}
+
+/* Aliases so this file can talk about intent rather than about which token
+   happened to be named first. */
+:root{
+  --line: var(--rule);
+  --bg: var(--paper);
+  --ink-2: var(--muted);
+  --ink-3: var(--faint);
+  --body-ink: #2a2a2a;
+  --code-bg: #f7f7f7;
+  --code-ink: #1a1a1a;
+  --code-comment: #8d8d8d;
+  --code-lit: #4a4a4a;
+  --code-cmd: #000;
+}
+:root[data-theme="dark"]{
+  --body-ink: #d7d8da;
+  --code-bg: #121315;
+  --code-ink: #dcdde0;
+  --code-comment: #6f727a;
+  --code-lit: #9aa0a8;
+  --code-cmd: #fff;
+}
+
+/* style.css writes body and code colours as literals rather than through its
+   own tokens, and a literal cannot be themed. Restated here as variables —
+   only the docs pages load this file, so the landing page keeps the light-only
+   treatment its diagrams are drawn for. */
+.prose p, .prose li{ color: var(--body-ink); }
+.prose pre{ background: var(--code-bg); color: var(--code-ink); }
+.prose pre .c{ color: var(--code-comment); }
+.prose pre .g{ color: var(--code-lit); }
+.prose pre .b{ color: var(--code-cmd); }
+.prose strong, .prose b{ color: var(--ink); }
+
+:root[data-theme="dark"] body{ background: var(--paper); color: var(--ink); }
+:root[data-theme="dark"] .nav{ background: rgba(12,13,14,.86); }
+:root[data-theme="dark"] .btn{ background: var(--ink); color: var(--paper); }
+:root[data-theme="dark"] .btn:hover{ background: #fff; }
+/* The mark is drawn as ink-on-plate, so both halves have to invert together or
+   it becomes a solid block. */
+:root[data-theme="dark"] .logo svg rect:first-child{ fill: var(--ink); }
+
+body{ background: var(--paper); color: var(--ink); }
+
+/* --------------------------------------------------------------- topbar */
+.nav{ position: sticky; top: 0; z-index: 40; backdrop-filter: saturate(180%) blur(12px); }
+.nav-in{ display: flex; align-items: center; gap: 14px; }
+.logo{ color: var(--ink); }
+
+.burger{
+  display: none; width: 34px; height: 34px; border: 1px solid var(--line);
+  border-radius: 7px; background: none; cursor: pointer; position: relative;
+}
+.burger::before, .burger::after{
+  content: ""; position: absolute; left: 9px; right: 9px; height: 1.5px;
+  background: var(--ink); transition: transform .16s ease;
+}
+.burger::before{ top: 12px; }
+.burger::after{ top: 19px; }
+.burger[aria-expanded="true"]::before{ transform: translateY(3.5px) rotate(45deg); }
+.burger[aria-expanded="true"]::after{ transform: translateY(-3.5px) rotate(-45deg); }
+
+.search-open{
+  /* `flex: 1` alone cannot shrink a flex item below its content width, so the
+     row stayed wider than the viewport and pushed the GitHub button off the
+     right edge. */
+  flex: 1; min-width: 0; max-width: 340px; display: flex; align-items: center; gap: 8px;
+  margin-left: 10px; padding: 7px 10px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--plate); color: var(--ink-3);
+  font: inherit; font-size: 13.5px; cursor: pointer; text-align: left;
+}
+.search-open:hover{ border-color: var(--ink-3); }
+.search-open span{ flex: 1; }
+kbd{
+  font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 11px;
+  border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px;
+  padding: 1px 5px; color: var(--ink-3); background: var(--bg);
+}
+.nav-links{ display: flex; align-items: center; gap: 18px; margin-left: auto; }
+.nav-links a{ color: var(--ink-2); }
+.nav-links a:hover{ color: var(--ink); }
+.nav-links a.btn{ color: var(--bg); }
+
+.theme{
+  width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 7px;
+  background: none; cursor: pointer; color: var(--ink-2); font-size: 14px;
+  line-height: 1; display: grid; place-items: center;
+}
+.theme::before{ content: "◐"; }
+.theme:hover{ color: var(--ink); border-color: var(--ink-3); }
+
+/* --------------------------------------------------------------- layout */
+.shell{
+  display: grid;
+  grid-template-columns: var(--side-w) minmax(0, 1fr) var(--onpage-w);
+  gap: 44px; max-width: 1320px; margin: 0 auto; padding: 0 28px 96px;
+  align-items: start;
+}
+/* A grid item defaults to min-width:auto, which resolves to its min-content
+   size — so one wide table pushes the column past its track however the track
+   is sized. */
+.shell > *{ min-width: 0; }
+
+.side, .onpage{
+  position: sticky; top: var(--topbar-h); max-height: calc(100vh - var(--topbar-h));
+  overflow-y: auto; padding: 30px 0 40px; font-size: 14px;
+}
+.side nav, .onpage nav{ display: flex; flex-direction: column; }
+.side a{
+  padding: 6px 12px; color: var(--ink-2); border-left: 2px solid transparent;
+  border-radius: 0 6px 6px 0; text-decoration: none;
+}
+.side a:hover{ color: var(--ink); background: var(--plate); }
+.side a.on{ color: var(--ink); font-weight: 600; border-left-color: var(--ink); background: var(--plate); }
+.grp{
+  font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--ink-3); margin: 22px 0 8px 12px;
+}
+.side .grp:first-child{ margin-top: 0; }
+
+.onpage{ font-size: 13px; }
+.onpage a{
+  padding: 4px 0 4px 12px; color: var(--ink-3); border-left: 2px solid var(--line);
+  text-decoration: none; line-height: 1.4;
+}
+.onpage a:hover{ color: var(--ink); }
+.onpage a.here{ color: var(--ink); border-left-color: var(--ink); }
+.onpage a.l3{ padding-left: 26px; font-size: 12.5px; }
+
+/* ----------------------------------------------------------------- page */
+.doc{ padding: 34px 0 0; max-width: 760px; }
+.crumbs{
+  display: flex; gap: 8px; font-size: 12.5px; color: var(--ink-3); margin-bottom: 14px;
+}
+.crumbs a{ color: var(--ink-3); text-decoration: none; }
+.crumbs a:hover{ color: var(--ink); }
+.doc h1{ font-size: 38px; letter-spacing: -.022em; margin: 0 0 10px; line-height: 1.12; }
+.doc .lead{ font-size: 17.5px; color: var(--ink-2); margin: 0 0 34px; line-height: 1.55; }
+
+.prose h2{
+  font-size: 25px; letter-spacing: -.015em; margin: 52px 0 14px;
+  padding-top: 18px; border-top: 1px solid var(--line); scroll-margin-top: 80px;
+}
+.prose h3{ font-size: 17.5px; margin: 32px 0 10px; scroll-margin-top: 80px; }
+.prose h2:first-child{ border-top: 0; padding-top: 0; margin-top: 0; }
+
+/* Visible on hover, and always visible to a keyboard — an anchor you can only
+   reach with a mouse is not an anchor for everyone. */
+.anchor{
+  margin-left: 10px; color: var(--ink-3); text-decoration: none; font-weight: 400;
+  opacity: 0; transition: opacity .12s ease;
+}
+h2:hover .anchor, h3:hover .anchor, h4:hover .anchor, .anchor:focus{ opacity: 1; }
+
+.prose{ font-size: 15.5px; line-height: 1.68; color: var(--ink); }
+.prose p{ margin: 0 0 16px; }
+.prose a{ color: var(--ink); text-decoration: underline; text-underline-offset: 2.5px; }
+.prose code{
+  font-family: ui-monospace, "JetBrains Mono", monospace; font-size: .89em;
+  background: var(--plate); padding: 1.5px 5px; border-radius: 4px;
+}
+
+/* ------------------------------------------------------------ codeblocks */
+.prose pre{
+  position: relative; background: var(--card); border: 1px solid var(--line);
+  border-radius: 9px; padding: 15px 17px; overflow-x: auto; margin: 0 0 20px;
+  font-size: 13.5px; line-height: 1.6;
+}
+.prose pre code{ background: none; padding: 0; }
+.copy{
+  position: absolute; top: 8px; right: 8px; padding: 4px 9px; font-size: 11.5px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
+  color: var(--ink-3); cursor: pointer; opacity: 0; transition: opacity .12s ease;
+  font-family: inherit;
+}
+pre:hover .copy, .copy:focus{ opacity: 1; }
+.copy:hover{ color: var(--ink); border-color: var(--ink-3); }
+.copy.done{ opacity: 1; color: var(--ink); }
+
+/* ---------------------------------------------------------------- tables */
+.prose table{ width: 100%; border-collapse: collapse; font-size: 14px; margin: 0 0 20px; }
+.prose th{
+  text-align: left; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink-3); font-weight: 600; padding: 0 14px 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+.prose td{ padding: 11px 14px 11px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.scroll{ overflow-x: auto; margin: 0 0 20px; }
+
+/* --------------------------------------------------------------- callout */
+.prose .note{
+  border-left: 3px solid var(--ink); background: var(--card); padding: 13px 16px;
+  margin: 0 0 20px; font-size: 14.5px; border-radius: 0 8px 8px 0;
+}
+
+/* ----------------------------------------------------------------- pager */
+.pager{
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+  margin: 64px 0 0; padding-top: 26px; border-top: 1px solid var(--line);
+}
+.pager a{
+  display: flex; flex-direction: column; gap: 3px; padding: 14px 16px;
+  border: 1px solid var(--line); border-radius: 9px; text-decoration: none; color: var(--ink);
+}
+.pager a:hover{ border-color: var(--ink-3); }
+.pager .next{ text-align: right; }
+.pager span{ font-size: 11.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); }
+.pager b{ font-size: 15px; font-weight: 600; }
+
+/* ---------------------------------------------------------------- search */
+.searchbox{
+  position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.42);
+  display: grid; place-items: start center; padding: 10vh 20px;
+}
+.searchbox[hidden]{ display: none; }
+.searchbox-in{
+  width: 100%; max-width: 640px; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 13px; box-shadow: 0 22px 60px rgba(0,0,0,.28); overflow: hidden;
+}
+#q{
+  width: 100%; border: 0; border-bottom: 1px solid var(--line); padding: 17px 20px;
+  font: inherit; font-size: 16px; background: none; color: var(--ink); outline: none;
+}
+#results{ max-height: 52vh; overflow-y: auto; }
+#results a{
+  display: block; padding: 11px 20px; text-decoration: none; color: var(--ink);
+  border-bottom: 1px solid var(--line);
+}
+#results a:last-child{ border-bottom: 0; }
+#results a.sel, #results a:hover{ background: var(--plate); }
+#results .h{ font-size: 14.5px; font-weight: 600; }
+#results .p{ font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+#results .empty{ padding: 26px 20px; color: var(--ink-3); font-size: 14px; }
+.hint{
+  display: flex; gap: 6px; align-items: center; padding: 9px 20px;
+  border-top: 1px solid var(--line); font-size: 11.5px; color: var(--ink-3);
+}
+
+/* ------------------------------------------------------------ responsive */
+@media (max-width: 1140px){
+  .shell{ grid-template-columns: var(--side-w) minmax(0, 1fr); }
+  .onpage{ display: none; }
+}
+@media (max-width: 860px){
+  .shell{ grid-template-columns: minmax(0, 1fr); gap: 0; padding: 0 20px 72px; }
+  .nav-in{ gap: 10px; }
+  .burger{ display: block; }
+  .search-open{ max-width: none; margin-left: 0; }
+  .nav-links a:not(.btn){ display: none; }
+  .side{
+    position: fixed; inset: var(--topbar-h) auto 0 0; width: 82vw; max-width: 320px;
+    background: var(--bg); border-right: 1px solid var(--line); padding: 22px 14px 40px;
+    transform: translateX(-102%); transition: transform .18s ease; z-index: 50;
+    max-height: none;
+  }
+  .side.open{ transform: none; }
+  .doc{ padding-top: 26px; }
+  .doc h1{ font-size: 30px; }
+  .pager{ grid-template-columns: 1fr; }
+}
+
+/* On a phone the row is burger, mark, search and one action. The keyboard
+   hint is for people who have a keyboard, and the word "GitHub" is carried by
+   the arrow next to it. */
+@media (max-width: 480px){
+  .search-open kbd{ display: none; }
+  .nav-links{ gap: 10px; }
+  .nav-links .btn{ padding: 7px 11px; font-size: 0; }
+  .nav-links .btn::after{ content: "↗"; font-size: 14px; }
+}
