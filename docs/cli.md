@@ -108,8 +108,8 @@ state on that node.
 
 ### `rmc events [--kind K] [--limit N]`
 Raw telemetry as JSONL. Useful kinds: `inject`, `observe`, `rescue`, `mint`,
-`placement`, `conflict`, `conflict-resolved`, `compaction`, `merge`, `repair`,
-`error`.
+`placement`, `conflict`, `conflict-resolved`, `compaction`, `repair`, `select`,
+`select-fallback`, `error`.
 
 ---
 
@@ -142,27 +142,50 @@ Ask a model whether the session contained a reusable lesson, and mint a level-0
 node if so. Deliberately conservative — "nothing captured" is the common and
 correct outcome.
 
-### `rmc dream [--gists]`
-Whole-store consolidation: backfill gists, then merge lessons that keep being
-used together. Runs automatically from `absorb` at most once per
-`dream.interval_s` and only with `dream.min_new_episodes` of new evidence.
+### `rmc index [--rebuild] [--gists]`
+Write `.rmc/index.md` — one line per lesson, and the only thing the selector
+looks at before deciding what to open. It is **searched, never injected**, which
+is what keeps the per-prompt cost of retrieval independent of how many lessons
+you have.
 
 | Flag | Meaning |
 |---|---|
-| `--due` | say whether a dream is due, and why not |
-| `--list` | merge candidates from co-use, change nothing |
-| `--log [all]` | read the last dream's report, or list every one |
-| `--limit N` | merge groups attempted per pass (default 2) |
-| `--dry-run` | generate and validate, write nothing |
+| `--rebuild` | write it now, whether or not it looks stale |
+| `--gists` | fill missing titles and gists first, then rebuild |
+| `--limit N` | lessons to backfill gists for (default 20) |
 
-Every pass writes a report to `.rmc/dreams/<timestamp>.md` recording what was
-examined, what merged, what was refused and why, and the before/after of nodes,
-apexes and tokens served at apex.
+Rebuilt automatically whenever it falls behind the nodes, so you rarely need
+this. Reach for it when a lesson is not being found: the first question is
+whether it is in here, and the second is whether it has a gist. A lesson without
+one still gets a line, built from the head of its body — but that is prose
+rather than a statement of when the lesson applies, and the line is what a
+search has to match.
 
-`--gists` runs only the routing-view backfill, ignoring the dream gate. New
-lessons get a title and gist at capture time, but a store that predates that has
-lessons the relevance walk cannot see properly — and waiting for a dream is not
-a fix, since it is gated on elapsed time *and* new episodes.
+The index covers the global store as well as this one, with the path on each
+line, since a selector that cannot see cross-project lessons cannot retrieve
+them.
+
+### `rmc route`
+Selection lessons: what RMC has learned about *where to look*, as opposed to
+what it has learned about your work. Written by the reflection pass, always
+injected, capped by `routing.max_tokens`.
+
+| Flag | Meaning |
+|---|---|
+| `--list` | the rules, their record, and the growth ratio (default) |
+| `--when C --then A` | teach one by hand; both are required |
+| `--forget ID` | delete a rule |
+
+A rule must be conditioned on a *kind of task* — "when the task touches the
+integration tests, read `nodes/testing/`" — and an unconditioned one is refused.
+That is not style: annotating candidates with their usage record was measured to
+drop precision from 48% to 41% and recall from 100% to 81%, because how often a
+lesson is used says more about the distribution of work than about the lesson.
+It is also one rule per lesson, which would make this layer a second copy of the
+store.
+
+The listing ends with the number the whole approach rests on — rules against
+lessons. It should fall as the store grows.
 
 ### `rmc compact`
 Compress lessons and regression-test the result.
@@ -172,7 +195,6 @@ Compress lessons and regression-test the result.
 | `--list` | show what is eligible and why, run nothing |
 | `--due` | process the queue (default) |
 | `--node ID` | compress one specific node |
-| `--merge FAMILY` | generalise sibling lessons into one |
 | `--limit N` | how many to process (default 1) |
 | `--dry-run` | generate and validate, but do not write |
 
@@ -200,6 +222,9 @@ Any key can be overridden per-run by an environment variable:
 |---|---|---|
 | `agent` | `claude` | default backend |
 | `recall.enabled` | `true` | inject lessons at all |
+| `recall.selector` | `agentic` | `agentic` — a fork of your session searches the store; `judge` — the apex walk, and the eval baseline |
+| `recall.selector_timeout_s` | `45` | bound on the search, since the prompt is blocked meanwhile |
+| `recall.selector_max_tool_calls` | `6` | searches allowed before it must answer with what it has |
 | `recall.strategy` | `delta-patch` | `delta-patch`, `delta-jump`, or `stepwise` |
 | `recall.max_pack_tokens` | `1200` | ceiling on injected context |
 | `recall.max_families` | `3` | lesson families served per prompt |
@@ -224,10 +249,8 @@ Any key can be overridden per-run by an environment variable:
 | `learning.min_surprises` | `2` | failed tool calls that also do |
 | `learning.nudge_cooldown_s` | `900` | minimum gap between asks |
 | `learning.nudge_backoff_after` | `3` | consecutive fruitless nudges before backing off |
-| `dream.enabled` | `true` | run whole-store consolidation at all |
-| `dream.interval_s` | `86400` | minimum gap between dreams |
-| `dream.min_new_episodes` | `3` | new multi-lesson episodes required before dreaming |
-| `dream.limit` | `2` | merge groups attempted per pass |
+| `routing.enabled` | `true` | learn and inject selection lessons |
+| `routing.max_tokens` | `800` | cap on the only layer retrieval still sends per prompt |
 | `placement.consult` | `true` | ask a model how new knowledge relates to old |
 | `placement.judge_calls` | `2` | model calls the relatedness walk may spend |
 | `placement.max_depth` | `2` | how far down the walk may look |

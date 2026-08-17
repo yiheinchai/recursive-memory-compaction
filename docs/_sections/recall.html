@@ -4,39 +4,63 @@
       your prompt.
     </p>
 
-    <h3>Two structural gates first</h3>
-    <p>Neither is a judgement, so neither costs a call:</p>
-    <ul>
-      <li><b>Empty store</b> — nothing to recall, nothing to ask.</li>
-      <li><b>Everything fits</b> — if the whole store is under
-        <code>recall.max_pack_tokens</code>, there is no <i>choice</i> to make,
-        so all of it is served unfiltered. Relevance filtering switches on
-        exactly when the store outgrows the budget.</li>
-    </ul>
+    <h3>Selection is a search, not a question</h3>
     <p>
-      The second gate matters more than it sounds. Without it, recall spent a
-      model call deciding which two of two lessons to load, and blew the hook's
-      deadline doing it. With it, recall returns in ~0.1s until the store is
-      genuinely large.
+      A fork of your live session is asked which lessons this next prompt needs.
+      It has the whole conversation — the task, the tool calls, what has already
+      been tried — and it searches the store to answer:
+    </p>
+    <div class="scroll">
+    <table>
+      <tr><th>Step</th><th>What happens</th></tr>
+      <tr><td>1</td><td><code>.rmc/index.md</code> is grepped — one line per lesson: id, family, level, title, tags, gist, path</td></tr>
+      <tr><td>2</td><td><code>nodes/</code> is grepped too, for anything the summaries miss</td></tr>
+      <tr><td>3</td><td>promising lessons are read, preferring <code>grep -C</code> over opening a long file</td></tr>
+      <tr><td>4</td><td>the fork returns node ids, and the hook injects those bodies</td></tr>
+    </table>
+    </div>
+    <p>
+      Step 2 matters more than it looks. The index holds a title and a one-line
+      summary, so a lesson whose <i>body</i> names the exact command or error
+      string will not match on its summary — and after a verbatim skills
+      migration, most of what a store knows lives in bodies thousands of lines
+      long. Grep over a directory of markdown is cheap, so the selector is told
+      to use it freely, along with anything else the shell offers. The index is
+      the cheapest place to look first, not a boundary on where it may look.
+    </p>
+    <p>
+      <b>The index is searched, never sent.</b> That is the whole scaling
+      argument. The previous design rendered every apex into one question at
+      ~55 tokens each, which at 5,000 lessons is ~225k tokens <i>per prompt</i>
+      — the thing deciding what to load no longer fits beside the work. A grep
+      costs the same at 5,000 lessons as at 50.
+    </p>
+    <p>
+      It also fixes something quieter: the walk could only reach a lesson by
+      descending into its apex, so a lesson under an unpromising summary was
+      unreachable. A search does not care what level a lesson sits at.
+    </p>
+    <p>
+      Bounded by <code>recall.selector_max_tool_calls</code> and
+      <code>recall.selector_timeout_s</code>, because the user is waiting the
+      whole time. The tools are read-only by construction — this runs unattended
+      on every prompt, so it must not be able to edit anything.
     </p>
 
-    <h3>The walk</h3>
-    <p>Once filtering is needed, the model decides — walking abstract to concrete:</p>
-    <ul>
-      <li>Start from the <b>apexes</b> (nodes with no parent). They are the most
-        compressed things in the store, so the whole top level fits in one question.</li>
-      <li>Each candidate is rendered as one line: id, title, and a <b>gist</b> —
-        never the body. Sending 700 characters per lesson to <i>choose</i> which
-        lessons to send is the scaling bug that eats the context it was meant to protect.</li>
-      <li>The model returns <code>relevant</code> / <code>maybe</code> /
-        <code>unrelated</code> per candidate, plus <code>descend</code> when a
-        summary is too abstract to judge from.</li>
-      <li>Only <code>descend</code> branches are opened. A branch judged
-        unrelated is never walked.</li>
-      <li>Bounded by <code>recall.judge_calls</code> and
-        <code>recall.max_depth</code>. Anything unresolved when the budget runs
-        out is served rather than dropped.</li>
-    </ul>
+    <h3>When it falls back</h3>
+    <p>
+      Two things it needs: a session to fork, and a backend that can fork one.
+      Without either — the first turn of a session, a non-Claude backend,
+      <code>recall.selector: judge</code> — the old apex walk runs instead. That
+      walk is also the baseline every arm of <code>rmc eval-recall</code> is
+      measured against, so it is kept deliberately rather than left behind.
+    </p>
+    <p>
+      A selector that fails outright falls back too. What it must never do is
+      look like "nothing applied": an empty pack caused by an outage says so on
+      the notice line, because a user who reads a broken system as an empty one
+      concludes memory does not work.
+    </p>
 
     <h3>Three tiers of re-injection</h3>
     <p>

@@ -50,18 +50,26 @@
 <p>Judge a finished session and fold the result into the tree: update node stats, file the episode, and work out which dropped detail any correction was about. Costs one judgement, skipped entirely for sessions too small to teach anything. Normally invoked by the <code>SessionEnd</code> hook.</p>
 <h3><code>rmc learn --transcript PATH [--session id]</code></h3>
 <p>Ask a model whether the session contained a reusable lesson, and mint a level-0 node if so. Deliberately conservative — &quot;nothing captured&quot; is the common and correct outcome.</p>
-<h3><code>rmc dream [--gists]</code></h3>
-<p>Whole-store consolidation: backfill gists, then merge lessons that keep being used together. Runs automatically from <code>absorb</code> at most once per <code>dream.interval_s</code> and only with <code>dream.min_new_episodes</code> of new evidence.</p>
+<h3><code>rmc index [--rebuild] [--gists]</code></h3>
+<p>Write <code>.rmc/index.md</code> — one line per lesson, and the only thing the selector looks at before deciding what to open. It is <b>searched, never injected</b>, which is what keeps the per-prompt cost of retrieval independent of how many lessons you have.</p>
 <div class='scroll'><table>
 <tr><th>Flag</th><th>Meaning</th></tr>
-<tr><td><code>--due</code></td><td>say whether a dream is due, and why not</td></tr>
-<tr><td><code>--list</code></td><td>merge candidates from co-use, change nothing</td></tr>
-<tr><td><code>--log [all]</code></td><td>read the last dream&#x27;s report, or list every one</td></tr>
-<tr><td><code>--limit N</code></td><td>merge groups attempted per pass (default 2)</td></tr>
-<tr><td><code>--dry-run</code></td><td>generate and validate, write nothing</td></tr>
+<tr><td><code>--rebuild</code></td><td>write it now, whether or not it looks stale</td></tr>
+<tr><td><code>--gists</code></td><td>fill missing titles and gists first, then rebuild</td></tr>
+<tr><td><code>--limit N</code></td><td>lessons to backfill gists for (default 20)</td></tr>
 </table></div>
-<p>Every pass writes a report to <code>.rmc/dreams/&lt;timestamp&gt;.md</code> recording what was examined, what merged, what was refused and why, and the before/after of nodes, apexes and tokens served at apex.</p>
-<p><code>--gists</code> runs only the routing-view backfill, ignoring the dream gate. New lessons get a title and gist at capture time, but a store that predates that has lessons the relevance walk cannot see properly — and waiting for a dream is not a fix, since it is gated on elapsed time *and* new episodes.</p>
+<p>Rebuilt automatically whenever it falls behind the nodes, so you rarely need this. Reach for it when a lesson is not being found: the first question is whether it is in here, and the second is whether it has a gist. A lesson without one still gets a line, built from the head of its body — but that is prose rather than a statement of when the lesson applies, and the line is what a search has to match.</p>
+<p>The index covers the global store as well as this one, with the path on each line, since a selector that cannot see cross-project lessons cannot retrieve them.</p>
+<h3><code>rmc route</code></h3>
+<p>Selection lessons: what RMC has learned about <i>where to look</i>, as opposed to what it has learned about your work. Written by the reflection pass, always injected, capped by <code>routing.max_tokens</code>.</p>
+<div class='scroll'><table>
+<tr><th>Flag</th><th>Meaning</th></tr>
+<tr><td><code>--list</code></td><td>the rules, their record, and the growth ratio (default)</td></tr>
+<tr><td><code>--when C --then A</code></td><td>teach one by hand; both are required</td></tr>
+<tr><td><code>--forget ID</code></td><td>delete a rule</td></tr>
+</table></div>
+<p>A rule must be conditioned on a <i>kind of task</i> — &quot;when the task touches the integration tests, read <code>nodes/testing/</code>&quot; — and an unconditioned one is refused. That is not style: annotating candidates with their usage record was measured to drop precision from 48% to 41% and recall from 100% to 81%, because how often a lesson is used says more about the distribution of work than about the lesson. It is also one rule per lesson, which would make this layer a second copy of the store.</p>
+<p>The listing ends with the number the whole approach rests on — rules against lessons. It should fall as the store grows.</p>
 <h3><code>rmc compact</code></h3>
 <p>Compress lessons and regression-test the result.</p>
 <div class='scroll'><table>
@@ -69,19 +77,37 @@
 <tr><td><code>--list</code></td><td>show what is eligible and why, run nothing</td></tr>
 <tr><td><code>--due</code></td><td>process the queue (default)</td></tr>
 <tr><td><code>--node ID</code></td><td>compress one specific node</td></tr>
-<tr><td><code>--merge FAMILY</code></td><td>generalise sibling lessons into one</td></tr>
 <tr><td><code>--limit N</code></td><td>how many to process (default 1)</td></tr>
 <tr><td><code>--dry-run</code></td><td>generate and validate, but do not write</td></tr>
 </table></div>
 <p>A node is eligible when it is an active apex, below <code>compaction.max_level</code>, has at least <code>compaction.min_successes</code> successful recalls, is past its cooldown, and <b>has recorded episodes to validate against</b>. A node with no episodes is left alone on purpose: compressing with no way to check the result is worse than not compressing.</p>
 <p>Rejection is normal and informative — the failing episodes become <code>preserve:</code> hints for the next attempt.</p>
 
-<h3><code>rmc eval-recall [--save NAME] [--against NAME] [--limit N]</code></h3>
+<h3><code>rmc eval-recall [--arm judge|agentic] [--save NAME] [--against NAME] [--limit N]</code></h3>
 <p>
   Score retrieval against what actually got used. Each recorded episode is
-  replayed against exactly the candidates it was served, and the judge's picks
-  are compared with <code>episode.used</code>. Precision and recall are always
-  printed together — precision alone is maximised by serving nothing.
+  re-selected, and the picks are compared with <code>episode.used</code>.
+  Precision and recall are always printed together — precision alone is
+  maximised by serving nothing.
+</p>
+<div class='scroll'><table>
+<tr><th>Arm</th><th>Candidates it chooses from</th></tr>
+<tr><td><code>judge</code> (default)</td><td>exactly the lessons that episode was served — the baseline, 48% precision at 100% recall</td></tr>
+<tr><td><code>agentic</code></td><td>the whole store, searched cold in a fresh process</td></tr>
+</table></div>
+<p>
+  The restriction in the <code>judge</code> arm is deliberate: a lesson nobody
+  was shown could not have been used, so counting its absence as evidence would
+  manufacture false positives out of the retrieval decision. The
+  <code>agentic</code> arm cannot honour that restriction, because searching the
+  whole store is the point — so the two face different candidate sets and the
+  report says so rather than presenting them as one scale.
+</p>
+<p>
+  That arm is also <b>cold</b>: no conversation in front of it. In production
+  the selector forks the live session and has the task's tool calls and
+  reasoning, so this is a floor on agentic selection rather than an estimate of
+  it.
 </p>
 <p>
   <code>--save</code> stores the run under a name; <code>--against</code>
@@ -112,6 +138,9 @@
 <tr><th>Key</th><th>Default</th><th>Meaning</th></tr>
 <tr><td><code>agent</code></td><td><code>claude</code></td><td>default backend</td></tr>
 <tr><td><code>recall.enabled</code></td><td><code>true</code></td><td>inject lessons at all</td></tr>
+<tr><td><code>recall.selector</code></td><td><code>agentic</code></td><td><code>agentic</code> — a fork of your session searches the store; <code>judge</code> — the apex walk, and the eval baseline</td></tr>
+<tr><td><code>recall.selector_timeout_s</code></td><td><code>45</code></td><td>bound on the search, since the prompt is blocked meanwhile</td></tr>
+<tr><td><code>recall.selector_max_tool_calls</code></td><td><code>6</code></td><td>searches allowed before it must answer with what it has</td></tr>
 <tr><td><code>recall.strategy</code></td><td><code>delta-patch</code></td><td><code>delta-patch</code>, <code>delta-jump</code>, or <code>stepwise</code></td></tr>
 <tr><td><code>recall.max_pack_tokens</code></td><td><code>1200</code></td><td>ceiling on injected context</td></tr>
 <tr><td><code>recall.max_families</code></td><td><code>3</code></td><td>lesson families served per prompt</td></tr>
@@ -136,10 +165,8 @@
 <tr><td><code>learning.min_surprises</code></td><td><code>2</code></td><td>failed tool calls that also do</td></tr>
 <tr><td><code>learning.nudge_cooldown_s</code></td><td><code>900</code></td><td>minimum gap between asks</td></tr>
 <tr><td><code>learning.nudge_backoff_after</code></td><td><code>3</code></td><td>consecutive fruitless nudges before backing off</td></tr>
-<tr><td><code>dream.enabled</code></td><td><code>true</code></td><td>run whole-store consolidation at all</td></tr>
-<tr><td><code>dream.interval_s</code></td><td><code>86400</code></td><td>minimum gap between dreams</td></tr>
-<tr><td><code>dream.min_new_episodes</code></td><td><code>3</code></td><td>new multi-lesson episodes required before dreaming</td></tr>
-<tr><td><code>dream.limit</code></td><td><code>2</code></td><td>merge groups attempted per pass</td></tr>
+<tr><td><code>routing.enabled</code></td><td><code>true</code></td><td>learn and inject selection lessons</td></tr>
+<tr><td><code>routing.max_tokens</code></td><td><code>800</code></td><td>cap on the only layer retrieval still sends per prompt</td></tr>
 <tr><td><code>placement.consult</code></td><td><code>true</code></td><td>ask a model how new knowledge relates to old</td></tr>
 <tr><td><code>placement.judge_calls</code></td><td><code>2</code></td><td>model calls the relatedness walk may spend</td></tr>
 <tr><td><code>placement.max_depth</code></td><td><code>2</code></td><td>how far down the walk may look</td></tr>

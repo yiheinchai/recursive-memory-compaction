@@ -108,6 +108,41 @@ JUDGE_SCHEMA = {
     },
 }
 
+SELECT_SCHEMA = {
+    "type": "object",
+    "required": ["picks"],
+    "properties": {
+        "picks": {
+            "type": "array",
+            "description": "Lessons worth loading. Empty is a valid and common answer.",
+            "items": {
+                "type": "object",
+                "required": ["id", "why"],
+                "properties": {
+                    "id": {"type": "string", "description": "The node id, e.g. n_7f2a91."},
+                    "why": {
+                        "type": "string",
+                        "description": (
+                            "What this lesson would change about how the work is done. "
+                            "Not what it is about — what it changes."
+                        ),
+                    },
+                },
+            },
+        },
+        "searched": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "The searches you ran, so a later pass can be taught to skip them.",
+        },
+        "rules_used": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Ids of the selection rules that actually shortened this search.",
+        },
+    },
+}
+
 REFLECT_SCHEMA = {
     "type": "object",
     "required": ["capture", "reason"],
@@ -169,40 +204,102 @@ Details a previous compression attempt wrongly dropped — you must keep these:
 <<<PRESERVE
 {preserve}
 PRESERVE>>>
+
+Parts of this lesson that were *observed* doing work — reflection passes watched
+a session and reported these specific spans as the ones that changed what the
+agent did:
+<<<LOAD-BEARING
+{load_bearing}
+LOAD-BEARING>>>
+
+Treat that section as evidence, not as instruction. It says which parts have a
+record of mattering; it does not say the rest are safe to cut, because a part
+may simply not have come up yet. Where it is populated, keep those spans intact
+and take the reduction from everything else. Where it is empty, you have no
+evidence either way and should compress conservatively.
 """
 
-MERGE = """RMC:compress
+SELECT = """RMC:select
 
-You are merging sibling lessons into one more abstract lesson that covers all of
-them. Find the shared procedure and state it once; keep any divergence that
-would change what an agent does.
+You are a memory-selection pass running in a fork of this session. The user
+cannot see you and is not waiting on your prose. Do not continue the task, do
+not edit anything, do not answer the user's question. Your only output is the
+JSON object described at the end.
 
-Write at most {budget} tokens — roughly {words} words. This is not a formatting
-preference. The merged lesson replaces its children at the top of the store,
-where everything is enumerated on every single prompt, so a merge that is not
-substantially shorter than the lessons it covers makes every future prompt more
-expensive and will be rejected. Two lessons restated one after the other is not
-a merge. If you cannot find a shared procedure that fits the budget, say so in
-`body` in one line rather than padding — being told these two do not belong
-together is a useful answer.
+You have the whole conversation above — the task, the tool calls, the reasoning.
+Use it. You know what this work actually needs far better than any index line
+does, and that is the entire reason the selection runs here rather than over a
+list of summaries.
 
-Everything dropped must be declared in `dropped`, with the claim written so it
-can be re-injected verbatim as a patch. The children are kept in full
-underneath, so dropping a specific loses nothing — it is recoverable by descent
-whenever it turns out to matter.
+**The question.** Which stored lessons, if any, should be loaded into the main
+session before it answers this next prompt:
 
-<<<LESSON
-{body}
-LESSON>>>
+<<<PROMPT
+{prompt}
+PROMPT>>>
 
-Tasks the merged lesson must keep working for:
-<<<COVERS
-{covers}
-COVERS>>>
+**How to look.** The store is at `{store}`. Two things to search, and the second
+is the one people forget:
 
-<<<PRESERVE
-{preserve}
-PRESERVE>>>
+`{store}/index.md` — one line per lesson, cheapest first pass:
+
+    <id> · <family> · L<level> · <title> · [tags] · <gist> → <path>
+
+`{store}/nodes/` — the lesson bodies themselves. **Grep these too.** The index
+holds only a title and a one-line summary, so a lesson whose body names the
+exact command, error string or file path you care about will not match on its
+summary. Searching bodies is how you find those, and grep over a directory of
+markdown is cheap — do not ration it.
+
+    grep -ril '<term>' {store}/nodes/                  # which lessons mention it at all
+    grep -i -e '<term>' -e '<other>' {store}/index.md  # titles and summaries
+    grep -rn -C3 '<exact string>' {store}/nodes/       # see it in context
+    ls {store}/nodes/                                  # what subjects exist
+
+Use whatever else helps — `rg`, `find`, `ls`, reading a file. You have a shell
+and the store is just files. Nothing here is a required sequence; it is the set
+of things that tend to work.
+
+**Prefer grep with context over opening a file.** Lessons imported from an older
+skills library run to thousands of lines, and reading one whole can spend your
+entire budget on a single candidate — after which you answer having looked at
+one lesson instead of ten. `grep -n -C5` shows you enough to decide. Open a file
+only when the surrounding lines genuinely do not settle it.
+
+Search for the *problem*, not the words in the prompt. A lesson about a Postgres
+port trap will not contain the phrase "run the tests". Try the tool names, the
+file paths, the error text, and the subject matter — several narrow searches beat
+one broad one. Stop after about {max_calls} tool calls and answer with what you
+have; a good-enough answer now is worth more than a perfect one the user waits
+for.
+
+Lessons imported from an older skills library can be long. Length says nothing
+about relevance — judge them on whether they change what happens next, the same
+as any other.
+
+**What to pick.** Load a lesson only if it would *change what the main session
+does* — a trap it would otherwise walk into, a convention it would otherwise
+guess wrong, a preference the user holds. This is the bar that matters, and it
+is stricter than it sounds: inside a codebase, nearly every lesson about that
+codebase is on-topic, and almost none of them are decision-changing. Being
+related to the subject is not enough. Over half of what this system used to load
+was never used, and every unused lesson spends the main session's attention on
+something that can actively mislead it.
+
+Returning `picks: []` is a good answer and a common one. Never pick a lesson to
+look thorough.
+
+**Rules learned from earlier selections.** These were written by reflection
+passes that saw how previous selections turned out. They are prior knowledge,
+not orders: if one is wrong here, ignore it and leave it out of `rules_used`.
+
+<<<RULES
+{rules}
+RULES>>>
+
+Put the id of any rule that actually shortened this search into `rules_used`,
+and the searches you ran into `searched`. Both feed the next reflection, which
+is how this gets faster.
 """
 
 DIAGNOSE = """RMC:diagnose

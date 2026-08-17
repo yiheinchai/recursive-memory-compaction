@@ -44,6 +44,7 @@ class ClaudeCodeAdapter:
         tools: bool = False,
         timeout: int = 180,
         session: Session | None = None,
+        allowed_tools: list[str] | None = None,
     ) -> AgentResult:
         if not self.available():
             return AgentResult(ok=False, error=f"{self.binary} not on PATH", backend=self.name)
@@ -65,7 +66,14 @@ class ClaudeCodeAdapter:
             argv += ["--model", self.model]
         if system:
             argv += ["--append-system-prompt", system]
-        if tools:
+        if allowed_tools:
+            # An explicit allowlist, for a call that must search but must not
+            # change anything — selection is the case. Nothing outside the list
+            # is reachable, so this is stricter than the deny list below rather
+            # than a relaxation of it: in headless mode a tool that is not
+            # allowed is refused, not prompted for.
+            argv += ["--allowedTools", *allowed_tools]
+        elif tools:
             # Replay needs to actually do the work; accept edits without prompting
             # but stay inside the sandbox directory we were handed.
             argv += ["--permission-mode", "acceptEdits"]

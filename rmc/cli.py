@@ -104,15 +104,37 @@ def cmd_status(args: argparse.Namespace) -> int:
     if nodes:
         total = sum(n.tokens for n in nodes)
         apex = [n for n in nodes if n.is_apex and n.status == "active"]
+        from . import routing as routing_mod
         from .judge import _render
         from .util import count_tokens
 
-        # What recall pays every prompt is the one-line render of each apex, not
-        # the bodies — it never sends a body to decide what to send.
-        routing = sum(count_tokens(_render(n)) for n in apex)
-        print(f"  tokens     {total} stored, {routing} routed per prompt")
+        # What selection costs per prompt, and it depends on which selector is
+        # running. The judge sends a one-line render of every apex, so its cost
+        # is the store's width. The agentic selector greps an index nobody
+        # sends, so its cost is the selection-rule layer and nothing else —
+        # which is the entire reason for the change, and therefore the number
+        # worth printing side by side rather than quietly replacing.
+        selector = str(store.config.get("recall.selector", "agentic"))
+        walk_cost = sum(count_tokens(_render(n)) for n in apex)
+        stats = routing_mod.growth(store)
+        print(f"  tokens     {total} stored")
+        if selector == "agentic":
+            print(
+                f"  selection  {stats['tokens']} tok/prompt  "
+                + dim(f"(searched, not sent — the apex walk would cost {walk_cost})")
+            )
+        else:
+            print(f"  selection  {walk_cost} tok/prompt  " + dim(f"({len(apex)} apexes, all sent)"))
         deepest = max(n.level for n in nodes)
         print(f"  max level  {deepest}")
+        if stats["rules"]:
+            # The claim the long-tail fix rests on: rules track kinds of work,
+            # not lessons. A ratio that climbs means the layer meant to stay
+            # small is becoming a second copy of the store.
+            print(
+                f"  routing    {stats['rules']} selection rules over {stats['nodes']} lessons  "
+                + dim(f"(ratio {stats['ratio']:.2f}, should fall as the store grows)")
+            )
     _print_reflection_stats(store)
 
     if not families:
@@ -452,16 +474,15 @@ def _absorb(store, adapter, facts, served, args) -> int:
             state = "accepted" if res.accepted else "rejected"
             print(f"compact: {state} {res.node_id} — {res.reason[:120]}")
 
-    # Consolidation is not a reaction to this session, so it does not belong to
-    # it — but this is the one place that already runs detached, holds a lock and
-    # is allowed to spend calls. Gated on a clock and on new evidence, so most
-    # sessions skip it entirely.
-    due, why = dream_due(store)
-    if due:
-        print(f"dream: running ({why})")
-        print(f"dream: {dream(store, adapter, limit=int(store.config.get('dream.limit', 2))).render()}")
-    else:
-        print(f"dream: skipped — {why}")
+    # Anything that just minted, folded or compressed a lesson has changed what
+    # the selector will search next prompt. The index is the selector's only
+    # view of the store, so a stale one is not a cosmetic problem: a lesson that
+    # is missing from it cannot be found, and the miss is indistinguishable from
+    # the lesson not existing.
+    from . import index as index_mod
+
+    if index_mod.rebuild(store) is not None:
+        print(f"index: rebuilt ({len(store.nodes())} lessons)")
     return 0
 
 
@@ -506,6 +527,17 @@ def cmd_used(args: argparse.Namespace) -> int:
         verdicts[ident] = False
     state["attributed"] = verdicts
 
+    # Which span of which lesson did the work. This is the observation that
+    # turns compression from a guess into an edit: the compressor stops choosing
+    # what to cut from the text alone and starts taking the reduction from the
+    # parts with no record of ever mattering.
+    spans: dict[str, list[str]] = {}
+    for entry in getattr(args, "load_bearing", None) or []:
+        node_id, _, span = str(entry).partition(":")
+        node_id, span = node_id.strip(), span.strip()
+        if node_id and span:
+            spans.setdefault(node_id, []).append(span)
+
     banked = dict(state.get("banked") or {})
     credited = []
     for ident in used:
@@ -515,10 +547,27 @@ def cmd_used(args: argparse.Namespace) -> int:
         node.stats.attempts += 1
         node.stats.successes += 1
         node.stats.last_used = utcnow()
+        for span in spans.get(ident, []):
+            if span not in node.load_bearing:
+                # Bounded, and oldest-out: a lesson accumulating evidence
+                # forever would eventually declare all of itself load-bearing,
+                # which is the same as declaring none of it.
+                node.load_bearing = [*node.load_bearing, span][-12:]
         store.save_node(node)
         banked[ident] = banked.get(ident, 0) + 1
         credited.append(ident)
     state["banked"] = banked
+
+    # The selection rules that shaped this pack get the same treatment the
+    # lessons do. Without it the routing layer would be the one stage in RMC
+    # writing knowledge it never finds out the fate of.
+    from . import routing as routing_mod
+
+    helped = [i.strip() for i in (getattr(args, "rule_helped", "") or "").split(",") if i.strip()]
+    wasted = [i.strip() for i in (getattr(args, "rule_wasted", "") or "").split(",") if i.strip()]
+    shown = [i for i in (state.get("rules_shown") or []) if i]
+    if shown or helped or wasted:
+        routing_mod.credit(store, helped=helped, wasted=wasted, shown=shown)
 
     episode = None
     if used and args.task:
@@ -592,7 +641,7 @@ def cmd_observe(args: argparse.Namespace) -> int:
 
 
 def cmd_compact(args: argparse.Namespace) -> int:
-    from .compact import compress_node, due_nodes, merge_candidates, merge_nodes, run_due
+    from .compact import compress_node, due_nodes, run_due
 
     store = need_store(args)
     if store is None:
@@ -604,12 +653,6 @@ def cmd_compact(args: argparse.Namespace) -> int:
         if node is None:
             return die(f"no such node: {args.node}")
         results = [compress_node(store, adapter, node, dry_run=args.dry_run)]
-    elif args.merge:
-        groups = merge_candidates(store, args.merge, adapter)
-        if not groups:
-            print(dim(f"no merge candidates in family {args.merge}"))
-            return 0
-        results = [merge_nodes(store, adapter, g, dry_run=args.dry_run) for g in groups[: args.limit]]
     else:
         pending = due_nodes(store)
         if not pending:
@@ -649,66 +692,110 @@ def cmd_compact(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_dream(args: argparse.Namespace) -> int:
-    """Whole-store consolidation, independent of any session."""
-    from .compact import co_use_groups, dream
+
+def cmd_index(args: argparse.Namespace) -> int:
+    """Write the file the selector greps.
+
+    Kept as a command rather than left purely automatic because the index is the
+    selector's entire view of the store: when a lesson is not being found, the
+    first question is whether it is in here, and that has to be answerable
+    without reading the code.
+    """
+    from . import index as index_mod
 
     store = need_store(args)
     if store is None:
         return 1
 
-    # Routing views are written at capture time now, but a store that predates
-    # that has lessons the relevance walk cannot see properly. Waiting for a
-    # dream is not a fix: dream is gated on elapsed time AND new episodes, so
-    # for a quiet store it may never come.
     if args.gists:
         from .summary import backfill
 
-        n = backfill(store, make_adapter(store, args), limit=args.limit or 50)
-        print(f"wrote {n} routing view(s)" if n else "every lesson already has one")
+        filled = backfill(store, make_adapter(store, args), limit=args.limit)
+        print(f"gists: filled {filled}")
+        store.invalidate()
+
+    path = index_mod.path_for(store)
+    if args.rebuild or args.gists or index_mod.is_stale(store):
+        written = index_mod.rebuild(store)
+        if written is None:
+            return die(f"could not write {path}")
+        print(f"{green('rebuilt')} {written}")
+    else:
+        print(dim(f"{path} is current"))
+
+    nodes = [n for n in store.nodes() if n.status != "archived"]
+    missing = [n for n in nodes if not n.gist.strip()]
+    print(f"  {len(nodes)} lessons indexed")
+    if missing:
+        # A lesson with no gist still has a line, built from the head of its
+        # body — but that line is prose rather than a statement of when the
+        # lesson applies, and it is what a search has to match against. This is
+        # the single cheapest thing to fix when selection is missing lessons.
+        print(
+            yellow(f"  {len(missing)} without a gist")
+            + dim(" — run `rmc index --gists` so they can be searched properly")
+        )
+    return 0
+
+
+def cmd_route(args: argparse.Namespace) -> int:
+    """Read and edit the selection lessons.
+
+    These are the only thing retrieval now costs on every prompt, so they are
+    the thing most worth being able to inspect and delete by hand.
+    """
+    from . import routing
+
+    store = need_store(args)
+    if store is None:
+        return 1
+
+    if args.forget:
+        rule = routing.get(store, args.forget)
+        if rule is None:
+            return die(f"no such rule: {args.forget}")
+        routing.delete(rule)
+        print(f"{green('forgot')} {rule.id} — when {rule.when}")
         return 0
 
-    if args.log:
-        from .compact import dream_logs
-
-        logs = dream_logs(store, limit=args.limit)
-        if not logs:
-            print(dim("no dreams recorded yet"))
-            return 0
-        if args.log is True or args.log == "latest":
-            print(logs[0].read_text())
-            print(dim(f"— {logs[0]}  ({len(logs)} dream(s) on record)"))
-            return 0
-        for path in logs:
-            print(f"  {path.stem}  {dim(str(path))}")
+    if args.when or args.then_:
+        if not (args.when and args.then_):
+            return die("--when and --then are both required to add a rule")
+        rule = routing.mint(store, when=args.when, then=args.then_, origin="manual")
+        if rule is None:
+            return die("rejected: a rule needs a task condition and an action, and must be new")
+        print(f"{green('learned')} {rule.id}")
+        print(dim(f"  {rule.render()}"))
         return 0
 
-    if args.due:
-        from .compact import dream_due
+    rules = routing.load(store)
+    stats = routing.growth(store)
+    budget = int(store.config.get("routing.max_tokens", 800))
+    kept = {r.id for r in routing.fit(rules, budget)}
 
-        due, why = dream_due(store)
-        print(f"{green('due') if due else dim('not due')} — {why}")
+    print(bold("selection lessons") + dim(f"  ·  {stats['tokens']}/{budget} tokens injected per prompt"))
+    if not rules:
+        print(dim("\n  none yet — they are written by reflection after a session."))
         return 0
 
-    if args.list:
-        groups = co_use_groups(store)
-        if not groups:
-            print(dim("no lessons have been used together on successful work yet"))
-            return 0
-        print(bold("lessons repeatedly used together"))
-        for nodes, seen in groups:
-            names = ", ".join(f"{n.id}[{n.family}]" for n in nodes)
-            print(f"  {seen}×  {names}")
-        print(dim("\n  these are the merge candidates — co-use, not similarity"))
-        return 0
+    print()
+    for rule in rules:
+        mark = " " if rule.id in kept else yellow("·")
+        record = f"{rule.helped}/{rule.helped + rule.wasted}" if rule.shown else "no record yet"
+        print(f"{mark} {rule.id}  " + dim(f"helped {record}"))
+        print(f"    {rule.render()}")
 
-    adapter = make_adapter(store, args)
-    report = dream(store, adapter, limit=args.limit, dry_run=args.dry_run)
-    print(report.render())
-    for line in report.merged:
-        print(f"  {green('merged')}   {line}")
-    for line in report.rejected:
-        print(f"  {yellow('rejected')} {line}")
+    # The number the whole approach to the long tail stands on. If rules grow
+    # with lessons rather than with kinds of work, the layer that was supposed
+    # to be small is just a second copy of the store, and that has to be visible
+    # rather than inferred.
+    print()
+    print(
+        f"  {stats['rules']} rules over {stats['nodes']} lessons  "
+        + dim(f"(ratio {stats['ratio']:.2f} — this should fall as the store grows)")
+    )
+    if len(kept) < len(rules):
+        print(dim(f"  {len(rules) - len(kept)} rule(s) marked · are over the cap and not injected"))
     return 0
 
 
@@ -855,15 +942,42 @@ def cmd_trace(args: argparse.Namespace) -> int:
     stage(1, "the prompt you typed")
     print(f"   {prompt.strip()[:600]}")
 
-    roots = [n for n in (store.apex(f) for f in store.families()) if n is not None]
-    stage(2, f"what RMC put in front of the model ({len(roots)} apex lessons)")
-    if not roots:
-        print(dim("   nothing stored yet — no question is asked at all"))
+    from . import index as index_mod
+    from . import routing as routing_mod
+
+    agentic = str(store.config.get("recall.selector", "agentic")) == "agentic"
+    nodes = [n for n in store.nodes() if n.status != "archived"]
+    if not nodes:
+        stage(2, "what the selector had to work with")
+        print(dim("   nothing stored yet — no selection happens at all"))
         return _trace_after(store, adapter, Path(args.after), stage) if args.after else 0
-    for node in roots:
-        depth = f", {len(node.dropped)} detail(s) beneath" if node.dropped else ""
-        print(f"   [{node.id}] {node.title or node.family}  {dim(f'L{node.level}, {node.tokens} tok{depth}')}")
-    print(dim(f"\n   these are the most compressed nodes, which is why they all fit in one question"))
+
+    if agentic:
+        # Under the agentic selector nothing is "put in front of" the model:
+        # it is handed a store and searches it. Showing the apex layer here
+        # would describe a mechanism that no longer runs.
+        rules = routing_mod.fit(
+            routing_mod.load(store), int(store.config.get("routing.max_tokens", 800))
+        )
+        stage(2, f"what the selector was given ({len(rules)} selection rule(s))")
+        for rule in rules:
+            print(f"   {dim(rule.id)}  {rule.render()[2:]}")
+        if not rules:
+            print(dim("   none yet — the search runs unguided until reflection writes some"))
+        print(
+            dim(
+                f"\n   plus a store of {len(nodes)} lessons to search: "
+                f"{index_mod.path_for(store)}"
+            )
+        )
+        print(dim("   the index is grepped, never sent — this is what costs 0 tokens per prompt"))
+    else:
+        roots = [n for n in (store.apex(f) for f in store.families()) if n is not None]
+        stage(2, f"what RMC put in front of the model ({len(roots)} apex lessons)")
+        for node in roots:
+            depth = f", {len(node.dropped)} detail(s) beneath" if node.dropped else ""
+            print(f"   [{node.id}] {node.title or node.family}  {dim(f'L{node.level}, {node.tokens} tok{depth}')}")
+        print(dim("\n   these are the most compressed nodes, which is why they all fit in one question"))
 
     selection = select_lessons(store, adapter, prompt)
     stage(3, "what the model decided")
@@ -875,13 +989,18 @@ def cmd_trace(args: argparse.Namespace) -> int:
         )
         opened = dim("  → opened for detail") if pick.descend else ""
         print(f"   {mark} {node_id}  {dim(pick.why[:70])}{opened}")
-    skipped = [p for p in selection.picks.values() if not p.positive]
-    print(
-        dim(
-            f"\n   {len(skipped)} branch(es) judged irrelevant were never walked further — "
-            f"{selection.calls} model call(s) total"
+    if selection.searched:
+        print(dim("\n   searches it ran:"))
+        for query in selection.searched:
+            print(dim(f"     {query}"))
+    else:
+        skipped = [p for p in selection.picks.values() if not p.positive]
+        print(
+            dim(
+                f"\n   {len(skipped)} branch(es) judged irrelevant were never walked further — "
+                f"{selection.calls} model call(s) total"
+            )
         )
-    )
 
     pack = recall_pack(store, prompt, adapter)
     stage(4, "what is injected into the agent's context, verbatim")
@@ -1123,7 +1242,7 @@ def cmd_eval_recall(args: argparse.Namespace) -> int:
         return 1
     adapter = make_adapter(store, args)
 
-    report = eval_recall.run(store, adapter, limit=args.limit)
+    report = eval_recall.run(store, adapter, limit=args.limit, arm=args.arm)
     if not report.scores:
         print(dim("no episodes with both a prompt and a recorded outcome yet"))
         print(dim("recall cannot be scored until some work has been done with lessons in play"))
@@ -1159,6 +1278,8 @@ def cmd_eval_recall(args: argparse.Namespace) -> int:
                         for s in report.scores
                     ],
                     "skipped": report.skipped,
+                    "arm": report.arm,
+                    "searches": report.searches,
                 },
                 indent=2,
             ),
@@ -1184,6 +1305,10 @@ def _rehydrate(raw: dict) -> dict:
             for s in raw.get("scores") or []
         ],
         "skipped": list(raw.get("skipped") or []),
+        # Runs saved before arms existed were all judge runs, and saying so is
+        # what lets `compare` warn when two arms are put side by side.
+        "arm": str(raw.get("arm") or "judge"),
+        "searches": int(raw.get("searches") or 0),
     }
 
 
@@ -1393,6 +1518,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--unused", help="comma-separated node ids that did not")
     p.add_argument("--task", help="the specific work the lessons bore on — makes it replayable")
     p.add_argument("--outcome", help="what doing it correctly looked like")
+    p.add_argument(
+        "--load-bearing",
+        action="append",
+        metavar="NODE_ID:SPAN",
+        help="the part of a lesson that did the work; repeatable",
+    )
+    p.add_argument("--rule-helped", help="comma-separated selection rule ids that shortened the search")
+    p.add_argument("--rule-wasted", help="comma-separated selection rule ids that sent it astray")
     p.set_defaults(func=cmd_used)
 
     p = sub.add_parser("observe", help="judge a transcript and update stats")
@@ -1405,35 +1538,25 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("compact", help="compress lessons and regression-test the result")
     p.add_argument("--node", help="compress one specific node")
     p.add_argument("--due", action="store_true", help="process the queue (default)")
-    p.add_argument("--merge", metavar="FAMILY", help="merge sibling lessons in a family")
     p.add_argument("--list", action="store_true", help="list what is due, do nothing")
     p.add_argument("--limit", type=int, default=1)
     p.add_argument("--dry-run", action="store_true")
     add_agent_flags(p)
     p.set_defaults(func=cmd_compact)
 
-    p = sub.add_parser(
-        "dream", help="consolidate the whole store: fill gists, merge co-used lessons"
-    )
-    p.add_argument("--list", action="store_true", help="show merge candidates, change nothing")
-    p.add_argument(
-        "--log",
-        nargs="?",
-        const=True,
-        default=None,
-        metavar="all",
-        help="read the last dream's report; 'all' lists every recorded dream",
-    )
-    p.add_argument("--due", action="store_true", help="say whether a dream is due, and why")
-    p.add_argument(
-        "--gists",
-        action="store_true",
-        help="only fill missing titles and gists, ignoring the dream gate",
-    )
-    p.add_argument("--limit", type=int, default=2)
-    p.add_argument("--dry-run", action="store_true")
+    p = sub.add_parser("index", help="the file the selector searches instead of being sent")
+    p.add_argument("--rebuild", action="store_true", help="write it now")
+    p.add_argument("--gists", action="store_true", help="fill missing titles and gists first")
+    p.add_argument("--limit", type=int, default=20)
     add_agent_flags(p)
-    p.set_defaults(func=cmd_dream)
+    p.set_defaults(func=cmd_index)
+
+    p = sub.add_parser("route", help="selection lessons: what RMC learned about where to look")
+    p.add_argument("--list", action="store_true", help="show the rules and their record")
+    p.add_argument("--when", help="the task condition this rule fires on")
+    p.add_argument("--then", dest="then_", help="what the selector should do when it fires")
+    p.add_argument("--forget", metavar="RULE_ID", help="delete a rule")
+    p.set_defaults(func=cmd_route)
 
     p = sub.add_parser("eval", help="does compression preserve transfer? measure it")
     p.add_argument("--holdout", type=float, default=0.3, help="fraction of episodes to test on")
@@ -1448,6 +1571,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="does recall serve the right lessons? measure precision against what was used",
     )
     p.add_argument("--limit", type=int, default=0, help="episodes to score; 0 is all")
+    p.add_argument(
+        "--arm",
+        choices=["judge", "agentic"],
+        default="judge",
+        help="judge: the apex-walk baseline. agentic: search the whole store cold",
+    )
     p.add_argument("--save", metavar="NAME", help="store this run so a later one can be compared to it")
     p.add_argument("--against", metavar="NAME", help="compare this run to a saved one")
     add_agent_flags(p)

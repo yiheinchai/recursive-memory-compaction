@@ -150,8 +150,11 @@ class Store:
         if not gitignore.exists():
             # Sessions and telemetry are machine-local noise; nodes and episodes
             # are the artefact worth committing and sharing across a team.
+            # `index.md` is derived from the nodes and rebuilt whenever it falls
+            # behind them, so committing it buys nothing and conflicts on every
+            # branch that learns anything.
             gitignore.write_text(
-                "sessions/\nevents.jsonl\nbackground.log\n*-cache.json\n*.lock\n",
+                "sessions/\nevents.jsonl\nbackground.log\n*-cache.json\n*.lock\nindex.md\n",
                 encoding="utf-8",
             )
         return store

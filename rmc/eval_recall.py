@@ -74,6 +74,12 @@ class EpisodeScore:
 class Report:
     scores: list[EpisodeScore] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    # Which selector produced these numbers. Carried on the report rather than
+    # remembered by the caller, because the two arms are scored against
+    # different candidate sets and a table that does not say which is which
+    # invites exactly the comparison it cannot support.
+    arm: str = "judge"
+    searches: int = 0
 
     # -- aggregates ------------------------------------------------------- #
     @property
@@ -132,51 +138,106 @@ class Report:
             )
         lines += [
             "",
+            f"arm            {self.arm}"
+            + (
+                "  (candidates: the whole store, searched cold)"
+                if self.arm == "agentic"
+                else "  (candidates: exactly what the episode was served)"
+            ),
             f"precision      {self.precision:.0%}  ({self.hits}/{self.kept} kept lessons bore on the work)",
             f"recall         {self.recall_rate:.0%}  ({self.hits}/{self.used} useful lessons still delivered)",
             f"noise tokens   {self.noise_tokens}",
             f"useful tokens  {self.useful_tokens}",
             f"was spending   {self.baseline_tokens} tokens to deliver the same {self.used} useful lessons",
         ]
+        if self.searches:
+            lines.append(
+                f"searches       {self.searches} across {len(self.scores)} episodes "
+                f"({self.searches / max(1, len(self.scores)):.1f} per selection)"
+            )
         if self.skipped:
             lines.append(f"skipped        {len(self.skipped)} episode(s) with nothing to score")
         return "\n".join(lines)
 
 
-def run(store: Store, adapter: Adapter, *, limit: int = 0) -> Report:
-    """Re-ask the relevance judge about episodes whose outcome we know.
+ARMS = ("judge", "agentic")
 
-    Each episode is replayed against exactly the lessons it was served, so the
-    judge faces the decision it actually faced and the score is not polluted by
-    lessons it never had the chance to pick.
+
+def run(store: Store, adapter: Adapter, *, limit: int = 0, arm: str = "judge") -> Report:
+    """Re-run selection over episodes whose outcome we know.
+
+    Two arms, and they do not face the same question — which is the point, and
+    also the thing a reader of the numbers has to be told.
+
+    ``judge`` replays each episode against **exactly the lessons it was served**.
+    A lesson nobody was shown could not have been used, so counting its absence
+    from `used` as evidence against it would manufacture false positives out of
+    the retrieval decision. This is the baseline: 48% precision at 100% recall.
+
+    ``agentic`` gives the selector the whole store and lets it search. The
+    denominator is different by necessity — the candidate set genuinely is
+    everything — and that cuts both ways. Recall can now exceed the judge's,
+    because the judge could only ever pick from what an earlier version of
+    retrieval had already chosen; and precision is measured against a much
+    larger set of things it could have wrongly picked. The two columns are
+    comparable as *outcomes* and not as *scores on one test*, so the report
+    labels the arm rather than presenting them as like-for-like.
+
+    The agentic arm here is also **cold**: a fresh process, no conversation in
+    front of it. In production the selector forks the live session and has the
+    task's tool calls and reasoning. So this arm is a floor on what agentic
+    selection does, not an estimate of it.
     """
+    arm = (arm or "judge").strip().lower()
+    if arm not in ARMS:
+        raise ValueError(f"unknown arm: {arm!r} (want {' | '.join(ARMS)})")
+
     report = Report()
+    report.arm = arm
     episodes = [e for e in store.episodes() if e.served and e.used is not None]
     if limit:
         episodes = episodes[:limit]
 
     for episode in episodes:
-        candidates = [n for n in (store.get(i) for i in episode.served) if n is not None]
-        if not candidates or not episode.prompt.strip():
+        if not episode.prompt.strip():
+            report.skipped.append(episode.id)
+            continue
+        served = [n for n in (store.get(i) for i in episode.served) if n is not None]
+        if not served:
             report.skipped.append(episode.id)
             continue
 
-        # A judge per episode, so nothing is carried between them — and its own
-        # cache means re-running the eval on an unchanged store is free.
-        picks = Judge(store, adapter).relevance(episode.prompt, candidates)
-        verdicts = {p.id: p.verdict for p in picks}
+        # `used` may name lessons since compressed away; only score what exists.
+        used = {i for i in (episode.used or []) if store.get(i) is not None}
 
-        score = EpisodeScore(
-            episode=episode.id,
-            prompt=episode.prompt,
-            served={n.id for n in candidates},
-            # `used` may name lessons since merged away; only score what exists.
-            used={i for i in (episode.used or []) if store.get(i) is not None},
+        if arm == "judge":
+            # A judge per episode, so nothing is carried between them — and its
+            # own cache means re-running the eval on an unchanged store is free.
+            picks = Judge(store, adapter).relevance(episode.prompt, served)
+            verdicts = {p.id: p.verdict for p in picks}
+            candidates = served
             # An unanswered candidate counts as kept. A judge that silently
             # omits a lesson has not decided to drop it, and scoring silence as
             # a decision would flatter any change that makes the model answer
             # less.
-            kept={n.id for n in candidates if verdicts.get(n.id, "relevant") != "unrelated"},
+            kept = {n.id for n in served if verdicts.get(n.id, "relevant") != "unrelated"}
+        else:
+            from . import select_agent
+
+            result = select_agent.select(store, adapter, episode.prompt, session_id="")
+            if result.failed:
+                report.skipped.append(episode.id)
+                continue
+            candidates = store.nodes()
+            kept = {n.id for n in result.selected}
+            report.searches += len(result.searched)
+
+        score = EpisodeScore(
+            episode=episode.id,
+            prompt=episode.prompt,
+            served={n.id for n in served},
+            used=used,
+            kept=kept,
             tokens={n.id: n.tokens for n in candidates},
         )
         report.scores.append(score)
@@ -198,7 +259,16 @@ def compare(before: Report, after: Report) -> str:
         ("noise tokens", str(before.noise_tokens), str(after.noise_tokens)),
     ]
     width = max(len(r[0]) for r in rows)
-    lines = [f"{'':{width}}   before    after"]
+    lines = [f"{'':{width}}   {before.arm:>6}    {after.arm:>6}"]
     for name, b, a in rows:
         lines.append(f"{name:{width}}   {b:>6}    {a:>6}")
+    if before.arm != after.arm:
+        # Said every time the arms differ, because the numbers look directly
+        # comparable and are not: the agentic arm chose from the whole store
+        # while the judge chose from what retrieval had already narrowed for it.
+        lines += [
+            "",
+            "these arms faced different candidate sets — read them as two outcomes,",
+            "not as two scores on the same test",
+        ]
     return "\n".join(lines)

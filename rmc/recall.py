@@ -51,6 +51,12 @@ class Pack:
     # deciding whether RMC works.
     degraded: bool = False
     error: str = ""
+    # Which selection rules shaped this pack. Carried through to the session
+    # record so the reflector can credit the ones that worked and charge the
+    # ones that sent the selector somewhere useless — without this the routing
+    # layer has outcomes it can never see.
+    rules_shown: list[str] = field(default_factory=list)
+    rules_used: list[str] = field(default_factory=list)
 
     def __bool__(self) -> bool:
         return bool(self.text.strip())
@@ -62,6 +68,46 @@ class Pack:
 
 
 def select_lessons(
+    store: Store,
+    adapter: Adapter,
+    prompt: str,
+    *,
+    limit: int | None = None,
+    budget: Budget | None = None,
+    session_id: str = "",
+    cwd: Any = None,
+) -> WalkResult:
+    """Which lessons bear on this prompt.
+
+    Two selectors, and which one runs is a question about capability rather than
+    preference. The agentic one searches the store from a fork of the live
+    session and is the only one whose cost does not grow with the store; it
+    needs a session to fork and a backend that can fork it. When either is
+    missing — the first turn of a session, a non-Claude backend — the judge-walk
+    below runs instead. It is the fallback, not a legacy path: it is also the
+    measurement baseline every arm of `rmc eval-recall` is compared against.
+    """
+    from . import select_agent
+
+    can_search, why_not = select_agent.available(store, adapter, session_id)
+    if can_search:
+        result = select_agent.select(
+            store, adapter, prompt, session_id=session_id, cwd=cwd, limit=limit
+        )
+        # A failed search falls through to the judge rather than serving
+        # nothing. The two selectors fail independently, and an empty pack is
+        # expensive enough that it is worth spending the second call to avoid
+        # one caused by a transient.
+        if not result.failed:
+            return result
+        store.log("select-fallback", reason=result.error[:200])
+    elif why_not:
+        store.log("select-fallback", reason=why_not)
+
+    return _walk_lessons(store, adapter, prompt, limit=limit, budget=budget)
+
+
+def _walk_lessons(
     store: Store,
     adapter: Adapter,
     prompt: str,
@@ -206,6 +252,8 @@ def recall_pack(
     include_patches: bool = True,
     already_served: dict[str, int] | None = None,
     turn: int = 0,
+    session_id: str = "",
+    cwd: Any = None,
 ) -> Pack:
     """Build the context pack for a prompt.
 
@@ -221,9 +269,11 @@ def recall_pack(
     chunks: list[str] = []
     used = 0
 
-    selection = select_lessons(store, adapter, prompt)
+    selection = select_lessons(store, adapter, prompt, session_id=session_id, cwd=cwd)
     pack.reasons = {n.id: selection.why(n.id) for n in selection.selected}
     pack.degraded, pack.error = selection.failed, selection.error
+    pack.rules_shown = list(selection.rules_shown)
+    pack.rules_used = list(selection.rules_used)
     if pack.degraded:
         store.log("recall-degraded", error=pack.error[:200])
 

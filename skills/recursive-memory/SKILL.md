@@ -63,6 +63,33 @@ rmc recall --prompt "..."  # exactly what would be injected for that prompt
 `rmc recall` is the right tool for "why did you think that?" — it shows which
 families matched and what text was served.
 
+## Why a lesson was not found
+
+Selection is a search, not a lookup over a rendered list: a fork of the session
+greps `.rmc/index.md` and opens what looks relevant. So a lesson that exists and
+was not served is usually one of three things, in order of likelihood:
+
+```bash
+rmc index                  # is it indexed at all, and does it have a gist?
+rmc index --gists          # fill missing gists — the line is what a search matches
+rmc route                  # what the selector has been taught about where to look
+```
+
+A lesson with no gist still gets an index line, built from the head of its body.
+That is prose rather than a statement of when the lesson applies, and it is what
+the search has to match against — so it is the cheapest thing to fix.
+
+If the lesson is indexed and findable but still was not picked, that is a
+selection judgement rather than a bug, and the fix is a rule:
+
+```bash
+rmc route --when "<the kind of task>" --then "<where to look>"
+```
+
+Keep `--when` about a *kind of task*, never about one lesson. "When the task
+touches the integration tests, read `nodes/testing/`" generalises; "n_abc is
+rarely useful" is one rule per lesson and is refused.
+
 ## When a recalled lesson is wrong
 
 A lesson that produced bad advice is a real defect, and the tree can repair it.
@@ -93,7 +120,6 @@ A lesson that produced bad advice is a real defect, and the tree can repair it.
 rmc compact --list            # what is eligible and why
 rmc compact --due             # run the queue (validated, may reject)
 rmc compact --node <id> --dry-run
-rmc compact --merge <family>  # generalise sibling lessons into one
 ```
 
 Compression only runs against nodes with recorded successful episodes. A node

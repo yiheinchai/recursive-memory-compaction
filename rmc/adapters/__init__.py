@@ -78,6 +78,7 @@ class Adapter(Protocol):
         tools: bool = False,
         timeout: int = 180,
         session: "Session | None" = None,
+        allowed_tools: list[str] | None = None,
     ) -> AgentResult: ...
 
     def available(self) -> bool: ...

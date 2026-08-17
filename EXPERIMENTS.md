@@ -427,13 +427,70 @@ no human proposed.
 result supports is that the loop can find and validate a non-obvious change —
 not that it will keep doing so.*
 
-## 10. Reproducing
+## 11. Rebuilding selection as a search (change, not yet a measurement)
+
+Recorded here because it acts on §3, §4 and §8 at once, and because what it
+claims is falsifiable and not yet falsified either way.
+
+**What changed.**
+
+| Was | Is |
+|---|---|
+| the apex layer rendered into one judge call | a fork of the live session greps `.rmc/index.md` |
+| routing cost ~55 tok × apexes, per prompt | the index is searched, never sent — 0 tok/prompt |
+| candidates = apexes, reachable by descent | candidates = every lesson, reachable by grep |
+| retrieval learned nothing from outcomes | selection lessons in `.rmc/routing/`, capped at 800 tok |
+| merging held apex width down | merging deleted (§3), width no longer a per-prompt cost |
+| compressor guessed what to cut | compressor is given spans observed doing work |
+
+**Why the fork rather than a fresh process.** It inherits the task, the tool
+calls and the reasoning — which is the input the selection loop is defined over
+— and it reads the conversation from cache rather than re-sending it (§8.1
+measured a 21,272-token prefix returning entirely from cache on
+`--resume --fork-session`).
+
+**What is claimed, and how it fails.** Three things, each with a number that
+would show it wrong:
+
+1. *Routing cost stops tracking the store.* Falsified if `rmc status` shows
+   selection cost rising with lesson count. It cannot, by construction — the
+   only per-prompt cost left is the rule layer, which is capped — so the real
+   question is 2.
+2. *Selection lessons stay far fewer than lessons.* This is the load-bearing
+   bet and it is **unmeasured**. `rmc route` prints rules ÷ lessons; if that
+   ratio climbs rather than falls, the layer meant to be small is a second copy
+   of the store and the approach to the long tail is wrong.
+3. *Precision improves.* Unmeasured. `rmc eval-recall --arm agentic` scores it,
+   but see the caveat below.
+
+**The caveat on measuring it.** The two arms do not face the same test. `judge`
+replays each episode against exactly what it was served, because a lesson nobody
+was shown could not have been used. `agentic` searches the whole store, which is
+the point of it, so its denominator is necessarily different. The eval arm is
+also *cold* — a fresh process with no conversation — while production selection
+forks the live session. So the agentic number is a floor, not an estimate, and
+`compare` prints a warning whenever two arms are put side by side.
+
+**The known risk.** Latency, in a hook that blocks the prompt. §4.4 puts process
+startup alone at ~5s and an agentic loop is several round trips. Bounded by
+`selector_max_tool_calls: 6` and `selector_timeout_s: 45`, and expected to
+converge as selection lessons accumulate — which is claim 2 again. If claim 2 is
+false this is simply slower than what it replaced.
+
+**Prior art against it.** §4.2 already measured the naive form of selection
+lessons: annotating candidates with their usage record dropped precision to 41%
+and recall to 81%. The difference here is that a rule must name a *kind of task*
+and an unconditioned one is refused at mint time. If that distinction does not
+hold up in practice, this should be reverted rather than tuned.
+
+## 12. Reproducing
 
 ```
-rmc status                                  # store shape, routing cost, precision
-rmc eval-recall --save NAME                 # score retrieval against observed use
-rmc eval-recall --model M --against NAME    # A/B a routing model
-rmc dream --dry-run                         # consolidation candidates, no writes
+rmc status                                  # store shape, selection cost, precision
+rmc route                                   # selection rules, and rules ÷ lessons
+rmc index                                   # what the selector can actually find
+rmc eval-recall --arm judge --save base     # the 48% / 100% baseline
+rmc eval-recall --arm agentic --against base
 rmc tune --rounds N                         # propose, measure, keep only wins
 rmc tune --history                          # every attempt, including the rejected
 rmc migrate [--apply]                       # convert a Claude skills library

@@ -30,6 +30,8 @@ class CodexAdapter:
         schema: dict[str, Any] | None = None,
         tools: bool = False,
         timeout: int = 180,
+        session: Any = None,
+        allowed_tools: list[str] | None = None,
     ) -> AgentResult:
         if not self.available():
             return AgentResult(ok=False, error=f"{self.binary} not on PATH", backend=self.name)

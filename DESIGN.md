@@ -11,9 +11,9 @@ and the compression validation protocol.
 |---|---|
 | **Lesson** | A reusable piece of procedural knowledge, stored as one markdown file with frontmatter. |
 | **Node** | A lesson at one specific abstraction level. |
-| **Family** | A set of nodes connected by compression/merge edges; the unit you traverse. |
+| **Family** | A set of nodes connected by compression edges; the unit you traverse. |
 | **Level** | Integer. `0` = original verbose lesson. Higher = more compressed/abstract. |
-| **Apex** | The highest-level node of a family. Loaded first at recall time. |
+| **Apex** | The highest-level node of a family. The starting point of the `judge` selector's walk. |
 | **Delta manifest** | The list of claims a compression removed, attributed to the descendants that still hold them. |
 | **Regression set** | Every task a node (and its subtree) has been validated against. |
 | **Oracle** | The check that decides whether an output is correct, for a given task. |
@@ -23,7 +23,7 @@ Edge directions are named explicitly to avoid the usual confusion, since
 
 - `compressed_into: <id>` — points **up**, toward less detail.
 - `derived_from: [<id>, ...]` — points **down**, toward more detail. Plural,
-  because a compression may merge several sibling lessons into one abstraction.
+  because a lesson can be reached from more than one abstraction above it.
 
 Recall walks *down* `derived_from`. Learning grows *up* via `compressed_into`.
 
@@ -91,64 +91,137 @@ about detail several levels below it without holding the text.
 Recall produces a **context pack**: the text that gets prepended to the task.
 
 ```
-pack = selected node bodies
+pack = selection lessons
+       + selected node bodies
        [+ claims that previously rescued them]
        [+ any unresolved conflict, as a question]
 ```
 
-### 3.1 When there is nothing to choose
-
-Relevance filtering only matters under **scarcity**. If every stored lesson fits
-inside `max_pack_tokens`, there is no selection problem: serve them all, ask
-nothing, return in milliseconds. Filtering switches on only once the tree
-outgrows the budget.
-
-This is not a heuristic standing in for judgement — it is the observation that
-judgement is needed to *choose*, and there is no choice to make. It also happens
-to be the common case: a young store is small, and that is exactly when you least
-want a model call on every prompt.
-
-Getting this wrong is not theoretical. An earlier version asked on every prompt
-regardless, and with a 464-token store against a 1200-token budget it spent a
-`claude -p` round trip picking two lessons out of two — and blew the hook's
-10-second deadline doing it, so the injection was discarded entirely. Recall
-went from timing out to 0.09s.
-
-`recall.always_judge: true` forces filtering anyway.
-
-### 3.2 Choosing what to serve, when there is a choice
+### 3.1 Selection is a search
 
 Which lessons bear on a prompt is a judgement about meaning, so the model makes
-it (`judge.relevance`). The harness supplies the search shape:
+it. What changed is *where the model looks from*.
 
-1. Start from the **apexes** — the most compressed node of each family. Because
-   they are compressed, the entire top level of the store fits in one question.
-2. Ask once: for each, is it `relevant`, `maybe`, or `unrelated` — and if
-   `maybe`, is the summary too abstract to decide from?
-3. Descend only into the lines flagged `descend`. A line judged `unrelated` is
-   never opened, so an irrelevant branch costs nothing beyond its one line in
-   the first question.
-4. Stop at `recall.max_depth`, or when `recall.judge_calls` is spent. Anything
-   still unresolved when the budget runs out is served rather than dropped.
+The original design rendered the apex layer into one question. That is
+affordable at 29 lessons and arithmetically impossible later: routing costs ~55
+tokens per apex, apex count tracks node count at roughly 1:1 (EXPERIMENTS §3.4),
+and at 5,000 lessons the candidate list alone is ~225k tokens **per prompt** —
+the thing deciding what to load no longer fits beside the work. Prompt caching
+changes that constant by an order of magnitude and does not change its shape.
 
-Cost therefore tracks the **depth** of the tree and the number of plausible
-lines, not the number of lessons stored. Verdicts are cached by prompt, so
-re-asking the same thing is free.
+So selection is a **fork of the live session**, given tools:
 
-The structural gate: an empty store asks nothing at all.
+1. `.rmc/index.md` holds one line per lesson — id, family, level, title, tags,
+   gist, path. It is regenerated whenever it falls behind the nodes.
+2. The fork greps that index *and* `nodes/` itself, opens what it needs, and
+   returns the ids worth loading.
+3. The hook injects those bodies.
 
-### 3.3 Budgets
+The index is a first pass, not the search surface. It holds a summary, so a
+lesson whose body names the exact command or error string will not match on it —
+and after a verbatim skills migration most of what a store knows lives in bodies
+thousands of lines long. The selector has a shell and the store is files; the
+prompt names the searches that tend to work and explicitly does not restrict it
+to them. What it *is* steered away from is reading a very long lesson whole,
+which can spend the whole budget on one candidate.
+
+**The index is searched, never sent.** That is the whole scaling property: at
+5,000 lessons it is ~125k tokens on disk and 0 tokens per prompt. What costs
+tokens per prompt is the selection-lesson layer (§3.4), which is capped.
+
+Three further consequences, in descending order of how obvious they are:
+
+- **The candidate set is no longer the apex layer.** EXPERIMENTS §8.2 found half
+  the store unreachable, because a lesson could only be found by descending into
+  an apex whose summary looked unpromising. A grep does not care what level a
+  lesson sits at.
+- **The selector has the reasoning.** A fork inherits the conversation — the
+  task, the tool calls, what has already been tried. That is a far better basis
+  for "what does this work need" than the user's opening sentence, and it is the
+  input the learning loop in §3.4 is defined over.
+- **Attribution becomes an observation.** Which lessons the selector opened is
+  visible in the transcript as tool calls, rather than being a judge's later
+  reconstruction.
+
+### 3.2 What it costs, and the bound on it
+
+Latency, in a hook that blocks the user's prompt. EXPERIMENTS §4.4 puts process
+startup alone at ~5s, and an agentic loop is several round trips rather than
+one. This is the likeliest way the design fails in daily use, and it will be
+felt long before it shows up in a precision number.
+
+Three things bound it, and none of them is optimism:
+
+- `recall.selector_max_tool_calls` (6) — the prompt tells the fork to answer
+  with what it has once spent. An unbounded search always has another phrasing
+  to try.
+- `recall.selector_timeout_s` (45) — past this the selector is abandoned.
+- Selection lessons, which are supposed to make the search converge. If they do
+  not, this is slower than what it replaced, and §3.4's measurement is what says
+  so.
+
+### 3.3 Falling back, and never silently
+
+The selector needs a session to fork and a backend that can fork one. Without
+either — the first turn of a session, a non-Claude backend,
+`recall.selector: judge` — the apex walk of the original design runs instead. A
+selector that fails outright also falls through to it.
+
+The apex walk is therefore kept deliberately, not left behind: it is the
+baseline every arm of `rmc eval-recall` is measured against.
+
+What must never happen is an empty pack that looks like a decision when it was
+an outage. `Pack.degraded` carries the distinction to `recall_notice`, because a
+user who reads a broken selector as "nothing applied" concludes the whole system
+does not work — and that conclusion is not recoverable by any later fix.
+
+### 3.4 Selection lessons — RMC applied to its own retrieval
+
+Every other stage of RMC learns from outcomes. Selection learned from nothing,
+and it is the stage measured worst: filtering lifts precision from 28% to 48%,
+which means **over half of what recall serves is never used** (EXPERIMENTS §4.1).
+
+A selection lesson is what a reflection pass writes after watching a session —
+not knowledge about the work, but knowledge about where the knowledge was:
+
+```
+- When the task runs the integration tests: read nodes/testing/ before running pytest
+```
+
+They live in `.rmc/routing/`, **not** under `nodes/`. If they were nodes they
+would be retrieved by the mechanism they exist to fix, and would compete with
+real lessons for the same budget. They are always injected, under
+`routing.max_tokens`.
+
+**Every rule must be conditioned on a kind of task, and one that is not is
+refused at mint time.** This is not tidiness. EXPERIMENTS §4.2 measured the
+unconditioned form — annotating candidates with their usage record — and it
+dropped precision to 41% and recall to 81%, worse on both, because how often a
+lesson is used is a statement about the distribution of work rather than about
+the lesson. The unconditioned form is also one rule per lesson, which would make
+this layer a second copy of the store.
+
+That last point is the load-bearing one. The design bets that selection lessons
+track *kinds of work* rather than lessons, so the injected layer stays bounded
+while the store does not. **This is a bet, not a guarantee**, so `rmc status` and
+`rmc route` report the ratio of rules to lessons. If it climbs rather than
+falls, the approach to the long tail is wrong and needs revisiting — and that
+has to be visible as a number rather than inferred.
+
+### 3.5 Budgets
 
 ```yaml
 recall:
   max_pack_tokens: 1200
   max_families: 3            # lessons served per prompt
-  judge_calls: 2             # model calls the relevance walk may spend
-  max_depth: 2               # how far down the walk may look
-  timeout_s: 20              # bound on the routing call, under the hook deadline
-  always_judge: false        # filter even when everything would fit
+  selector: agentic          # agentic | judge
+  selector_timeout_s: 45     # bound on the search
+  selector_max_tool_calls: 6 # searches before it must answer
   max_expansions: 3          # descents during a failure, see §4
   strategy: delta-patch      # delta-patch | delta-jump | stepwise
+routing:
+  enabled: true
+  max_tokens: 800            # the only per-prompt cost that remains
 ```
 
 - `delta-patch` — apex + the matched claims. Cheapest; default.
@@ -156,7 +229,9 @@ recall:
 - `stepwise` — walk `derived_from` one level at a time, ignoring the manifest.
   Baseline for ablation.
 
----
+The `judge` selector keeps its own budgets — `judge_calls`, `max_depth`,
+`fanout`, `filter_above`, `warm_prefix_above_tokens` — documented in
+`rmc/config.py`. They apply only when it runs.
 
 ## 4. Descent and selection
 
@@ -280,17 +355,33 @@ Three properties matter:
   those become `preserve:` hints for the next attempt, so the compressor converges
   instead of thrashing.
 
-### 5.4 Merge (sibling generalization)
+### 5.4 What the compressor is told to keep
 
-When two sibling nodes in a family both sit at level `L` and their
-`covers_tasks` are disjoint but their bodies are judged to share a procedure, a
-**merge compression** is attempted: both bodies in, one level-`L+1` body out,
-`derived_from` listing both, and a regression set that is the union of both
-subtrees. Merges are what turn the chain into a tree, and they are also the
-riskiest operation, so they use a stricter threshold
-(`compaction.merge_threshold`, default 1.0 over a larger `k`).
+The compressor used to choose what to cut from the lesson text alone, and find
+out afterwards — via replay — whether it had been wrong. It is now given the
+spans a reflection pass **observed** doing work: the sentences that changed what
+an agent did, reported per session and accumulated on the node as
+`load_bearing`.
 
----
+Where that evidence exists, the reduction is taken from everything else. Where
+it is absent the compressor is told so explicitly and compresses
+conservatively — the asymmetry matters, because absence of evidence is not
+evidence of uselessness. A span may simply not have come up yet, and reading the
+list as "everything else is dead" is the obvious wrong move.
+
+Replay is unchanged and still decides. "Would 60% of this lesson still work?" is
+a counterfactual a reflector can only guess at; validation against the
+regression set in a fresh process is what actually answers it. So this is better
+input to an existing gate, not a new gate.
+
+**Merging is gone.** Two or more lessons could previously be generalised into a
+shared parent. It was removed rather than disabled, on the evidence in
+EXPERIMENTS §3: unchecked merges landed at 100–102% of combined size; 8 of 8
+attempts landed at 96–115% until the prompt was given an explicit token budget;
+and consolidation removed ~2 apexes per pass while capture added them faster, so
+the steady state it existed to produce never arrived. The thing merging was for
+— holding the apex layer narrow, because recall enumerated it every prompt —
+stopped being a cost the moment selection became a search (§3.1).
 
 ## 6. Episodes — the ambient oracle
 
@@ -411,9 +502,9 @@ it never notices. `placement.py` classifies the new lesson against the tree:
 | Relation | Action | Effect |
 |---|---|---|
 | `duplicate` | none | record the hit; the existing lesson is pulling its weight |
-| `refines` | fold into L0 | merge the detail in, then patch every ancestor |
+| `refines` | fold into L0 | work the detail in, then patch every ancestor |
 | `contradicts` | dispute both | keep both, attach a question, ask the human |
-| `specialises` | attach sibling | stands alongside; merge-compression may generalise them later |
+| `specialises` | attach sibling | stands alongside under the more general lesson |
 | `orthogonal` | new family | a genuinely new leaf |
 
 ### 7.1 Refinement has to reach the apex
@@ -518,7 +609,7 @@ Stated plainly, since a research harness that hides its weaknesses is useless:
   worked, carried by the prior — which is reassuring for robustness and a good
   argument for asserting on score *components* in tests, not just outcomes.
 - **Merges can over-generalize.** Two procedures that look alike and differ in
-  one precondition will merge, and the failure only shows up on a task that
+  one precondition will be folded together, and the failure only shows up on a task that
   exercises the precondition. The regression set is the mitigation; it is not a
   proof.
 - **Compression is not monotone.** A level-4 node is not guaranteed better than

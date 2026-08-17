@@ -83,8 +83,18 @@ class MockAdapter:
         schema: dict[str, Any] | None = None,
         tools: bool = False,
         timeout: int = 180,
+        session: Any = None,
+        allowed_tools: list[str] | None = None,
     ) -> AgentResult:
-        self.calls.append({"prompt": prompt, "schema": schema, "tools": tools})
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "schema": schema,
+                "tools": tools,
+                "session": session,
+                "allowed_tools": allowed_tools,
+            }
+        )
 
         if self.router is not None:
             payload = self.router(prompt, schema)

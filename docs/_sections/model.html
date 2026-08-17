@@ -7,20 +7,20 @@ title: Retrying flaky services
 gist: Retry idempotent remote calls; S3 needs body parsing.   <span class="c"># the routing view</span>
 level: 3
 status: active            <span class="c"># active | superseded | demoted | disputed | archived</span>
-origin: compression       <span class="c"># reflection | compression | merge | manual</span>
+origin: compression       <span class="c"># reflection | compression | manual</span>
 conflict: ""              <span class="c"># an unresolved contradiction, surfaced at recall</span>
 derived_from: [n_c41b, n_9de1]   <span class="c"># points DOWN, toward detail</span>
 parents: [n_aa01]                <span class="c"># points UP, toward abstraction</span>
 covers_tasks: [e_4f1a, e_9c22]   <span class="c"># the regression set</span>
 dropped: [...]                   <span class="c"># the delta manifest</span>
 preserve: [...]                  <span class="c"># hints from rejected compressions</span>
+load_bearing: [...]              <span class="c"># spans observed doing work, for the compressor</span>
 stats: {attempts, successes, failures, expansions, rescues, last_used}</pre>
     <div class="note">
       <b>Both edges are lists, so this is a DAG, not a tree.</b> A lesson can be
-      abstracted in more than one direction: compressed vertically into a terser
-      form of itself, <i>and</i> merged sideways into a shared generalisation.
-      While the parent link was a single field, the second silently destroyed
-      the first.
+      abstracted along more than one line, and a lesson reached from two
+      directions must acknowledge both. While the parent link was a single
+      field, the second abstraction silently destroyed the first.
     </div>
 
     <h3>Episode — a replayable regression test</h3>

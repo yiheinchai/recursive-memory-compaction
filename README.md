@@ -25,7 +25,7 @@ You do not drive it. You work normally, and it runs in hooks.
 | [4. Consolidation](#4-consolidation) | where a new lesson goes |
 | [5. Compression](#5-compression) | earning a smaller form |
 | [6. Descent](#6-descent) | recovering detail when the short form fails |
-| [7. Dreaming](#7-dreaming) | whole-store consolidation |
+| [7. Selection lessons](#7-selection-lessons) | teaching retrieval where to look |
 | [Data model](#data-model) | nodes, episodes, the DAG, the store |
 | [Install](#install) | plugin or clone |
 | [Inspecting it](#inspecting-it) | status, tree, recall, trace |
@@ -67,8 +67,7 @@ the whole idea: usage drives abstraction.
 | context is about to compact | the record of what you were shown is cleared | 0 |
 | a substantial turn ends | a reflector runs off-thread: did anything teach us something, and which lessons actually mattered | 1–2, detached |
 | you teach it something | `rmc add` records it immediately, reconciled against what is known | 1–2 |
-| the session ends | the transcript is judged, lessons minted, compression attempted | 2–4, detached |
-| once a day, if there is new evidence | `dream` merges lessons that keep being used together | 1–2 per group |
+| the session ends | the transcript is judged, lessons minted, compression attempted, selection rules written | 2–4, detached |
 
 Everything expensive is **detached** — spawned as a separate process that
 outlives the hook. Spawned agents get `RMC_CHILD=1`, which makes RMC's own hooks
@@ -94,7 +93,7 @@ There are exactly five semantic calls in the system (`rmc/judge.py`):
 | `assess` | how did this session go, and which lessons actually bore on it? |
 | `rank_repairs` | which dropped detail explains this failure? |
 
-Plus four in the compression path: compress, merge, replay-probe, and the replay
+Plus four more: select (which lessons this work needs), compress, replay-probe, and the replay
 judge.
 
 **What stays in code, and why it is not a violation:** counting an *observed
@@ -224,7 +223,7 @@ bore on the work?**
 Serving is a retrieval decision; using is an outcome. Conflating them breaks two
 things at once — an irrelevant lesson that happened to be injected accrues a
 record of usefulness it never earned, and serving ten lessons manufactures
-forty-five "co-use" pairs out of a single retrieval decision.
+the selector is never told that what it chose went unread.
 
 Two sources, best first:
 
@@ -261,7 +260,7 @@ New knowledge is reconciled with old before it is stored, never appended blindly
 
 Where a lesson lands decides whether it can ever be found again. A lesson about
 a vendor API filed under one repo is invisible from every other one, so nothing
-downstream can rescue it — not recall, not co-use, not dreaming.
+downstream can rescue it — not recall, not compression, not descent.
 
 So `scope` asks: does this depend on *this repository*, or would it be true for
 anyone using these tools anywhere? Global lessons go to `~/.rmc`, project
@@ -278,7 +277,7 @@ classifies:
 | `duplicate` | nothing stored; the hit is recorded |
 | `refines` | fold into the matched lesson's own lineage, then patch its ancestors |
 | `contradicts` | keep both, mark both `disputed`, attach a question |
-| `specialises` | attach as a sibling; a merge may later generalise both |
+| `specialises` | attach as a sibling under the more general lesson |
 | `orthogonal` | new family |
 
 **Refinement must reach the apex.** Folding detail into a level-0 node leaves
@@ -346,12 +345,16 @@ accept iff pass_rate >= 1.0  and  tokens <= 0.75 × original
 - **Rejections are informative** — failing episodes become `preserve:` hints for
   the next attempt, so the compressor converges instead of thrashing.
 
-### Merging
+### What the compressor is told to keep
 
-Two or more lessons become one abstract parent covering all of them. Merges may
-span families, and a merge that would swallow one of its own ancestors is
-refused — that would make the graph cyclic and every upward walk
-non-terminating.
+It is given the spans a reflection pass *observed* doing work — the sentences
+that changed what an agent did. Where that evidence exists the reduction is
+taken from everything else; where it is absent the compressor is told so and
+compresses conservatively, because a span with no record may simply not have
+come up yet.
+
+Before this, the compressor chose what to cut from the text alone and found out
+afterwards whether it had been wrong.
 
 ### Repair
 
@@ -396,68 +399,67 @@ If that fails too, it is a genuine knowledge gap, not a compression bug.
 
 ---
 
-## 7. Dreaming
+## 7. Selection lessons
 
-`rmc dream` — whole-store consolidation, independent of any session. Every other
-path reacts to the session in front of it; this one steps back.
+RMC applied to its own retrieval. Every other stage learns from outcomes;
+selection learned from nothing, and it is the stage measured worst — filtering
+lifts precision from 28% to 48%, which means **over half of what recall serves
+is never used**.
 
-It grows abstraction from **co-use**: lessons repeatedly *used together* on work
-that succeeded. That signal is the right one because the pair most worth merging
-often shares no surface features — a lesson about deployment tooling and one
-about cache economics can belong under one abstraction purely because they are
-needed together, and no similarity metric will place them near each other.
-
-Counting co-occurrence is evidence and stays in code. Whether a group shares a
-generalisable idea is the model's call. Threshold is 2 occurrences; one is
-coincidence. Failed sessions do not count.
-
-### When it runs
-
-Dreaming is not a reaction to a session, so no session event is its natural
-occasion. It runs on **elapsed time gated by new evidence**: at most once per
-`dream.interval_s` (24h), and only when at least `dream.min_new_episodes` (3)
-new successful multi-lesson episodes have accumulated since the last pass.
-Dreaming over an unchanged store only re-asks questions already answered and
-cached.
-
-Both halves of that gate are structural — a clock reading and a count — so
-neither belongs to the model. It is invoked from `absorb`, the detached
-end-of-session pipeline, because that is the one place that already runs off the
-main thread, already holds a lock, and is already allowed to spend calls. Most
-sessions skip it in a line.
-
-### Seeing what it did
-
-A dream rewrites the store while nobody is watching, which is exactly the
-situation that needs a record. Every pass writes a report to `.rmc/dreams/`:
+A selection lesson is what the reflection pass writes after watching a session:
+not knowledge about the work, but knowledge about *where the knowledge was*.
 
 ```
-# dream 2026-08-16T16:12:41Z
-
-| | before | after |
-|---|---|---|
-| nodes | 12 | 13 |
-| apexes | 9 | 8 |
-| tokens served at apex | 2088 | 1640 |
-
-Examined 3 co-use group(s); wrote 2 gist(s).
-
-## merged
-- n_cache+n_deploy (co-used 4x) -> n_9f10
-
-## refused
-- n_a+n_b (co-used 3x): merge regression pass-rate 67% < 100%
+- When the task runs the integration tests: read nodes/testing/ before running pytest
+- When the task is a docs change: nothing in nodes/deploy/ applies, skip it
 ```
 
-`tokens served at apex` is the number that matters — it is what recall pays on
-every prompt.
+The next selector reads those and reaches the right set in fewer searches, or
+skips one it now knows is fruitless.
+
+### They live outside the tree
+
+Not under `nodes/`. If they were lessons they would be retrieved by the
+mechanism they exist to fix, and would compete with real lessons for the same
+budget. They live in `.rmc/routing/`, are always injected, and are capped by
+`routing.max_tokens`.
+
+They are also the **only** thing retrieval still costs per prompt — the index is
+grepped, the rules are sent — so the cap is real. When it binds, the rules with
+the worst record of improving a selection drop out first.
+
+### The rule that keeps them small
+
+**Every rule must be conditioned on a kind of task.** One that is not is refused
+rather than stored.
+
+| Form | Verdict |
+|---|---|
+| "when the task touches the integration tests, read `nodes/testing/`" | stored |
+| "`n_abc` is rarely useful" | refused |
+
+This is not tidiness. The second form was measured: annotating candidates with
+their usage record dropped precision from 48% to 41% and recall from 100% to
+81% — worse on both. How often a lesson gets used is a statement about the
+distribution of work, not about the lesson. It is also one rule per lesson,
+which would make this layer a second copy of the store.
+
+### The number the idea rests on
+
+The bet is that selection lessons track *kinds of work*, not lessons, so the
+injected layer stays small while the store does not. That is a bet, so it is
+printed rather than assumed:
+
+```
+routing    4 selection rules over 210 lessons  (ratio 0.02, should fall as the store grows)
+```
+
+If that ratio climbs, the approach to the long tail is wrong.
 
 ```bash
-rmc dream --due        # is a dream due, and why not
-rmc dream --list       # merge candidates from co-use, change nothing
-rmc dream --log        # the last dream's report
-rmc dream --log all    # every dream on record
-rmc dream --dry-run    # generate and validate, write nothing
+rmc route                              # the rules, their record, the growth ratio
+rmc route --when "..." --then "..."    # teach one by hand
+rmc route --forget r_e5fea0            # delete one
 ```
 
 ---
@@ -583,7 +585,8 @@ rmc status                     # families, levels, precision, capture stats
 rmc tree --family retry        # the graph, with delta manifests
 rmc recall --prompt "..."      # what would be injected, and the model's reason
 rmc trace --prompt "..."       # every stage, ending in the verbatim block
-rmc dream --list               # merge candidates from co-use
+rmc index                      # is the lesson the selector searches actually indexed
+rmc route                      # the selection rules, their record, and the growth ratio
 rmc conflicts                  # unresolved contradictions
 rmc doctor                     # backends, store, hook wiring
 rmc report --about "..."       # a redacted defect report; sends nothing

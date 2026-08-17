@@ -1,0 +1,87 @@
+<h2 id="select">07 &nbsp;Selection lessons</h2>
+    <p>
+      RMC applied to its own retrieval. Every other stage learns from outcomes;
+      selection learned from nothing, and it is the stage measured to be worst.
+    </p>
+
+    <h3>The problem they solve</h3>
+    <p>
+      Filtering lifts precision from 28% to 48%. That second number is the one
+      that matters: <b>over half of what recall serves is never used</b>. Every
+      unused lesson spends attention, and an unrelated one can actively mislead.
+    </p>
+    <p>
+      A selection lesson is what a reflection pass writes after watching a
+      session — not knowledge about the work, but knowledge about <i>where the
+      knowledge was</i>:
+    </p>
+    <pre><code>- When the task runs the integration tests: read nodes/testing/ before running pytest
+- When the task is a docs change: nothing in nodes/deploy/ applies, skip it</code></pre>
+    <p>
+      The next selector reads those and reaches the right set in fewer searches,
+      or skips one it now knows is fruitless. They are written by the reflection
+      fork, which is the only thing in the system that saw both what was loaded
+      and how the work actually went.
+    </p>
+
+    <h3>Why they live outside the tree</h3>
+    <p>
+      Selection lessons are not stored under <code>nodes/</code>. If they were,
+      they would be retrieved by the very mechanism they exist to fix, and would
+      compete with real lessons for the same injection budget. They live in
+      <code>.rmc/routing/</code> and are always injected, under their own cap.
+    </p>
+    <p>
+      They are also the <b>only</b> thing retrieval now costs per prompt. The
+      index is grepped; the rules are sent. So the cap is real:
+      <code>routing.max_tokens</code>, and when it binds, the rules with the
+      worst record of improving a selection fall out first.
+    </p>
+
+    <h3>The rule that keeps them small</h3>
+    <p>
+      <b>Every rule must be conditioned on a kind of task.</b> A rule with no
+      <code>when</code> is rejected rather than stored.
+    </p>
+    <div class="scroll">
+    <table>
+      <tr><th>Form</th><th>Verdict</th></tr>
+      <tr><td>"when the task touches the integration tests, read <code>nodes/testing/</code>"</td><td>stored</td></tr>
+      <tr><td>"<code>n_abc</code> is rarely useful"</td><td>refused</td></tr>
+    </table>
+    </div>
+    <p>
+      This is not tidiness. The second form was measured: annotating candidates
+      with their usage record made retrieval <i>worse</i> on both precision
+      (48%&nbsp;→&nbsp;41%) and recall (100%&nbsp;→&nbsp;81%). How often a lesson
+      gets used is a statement about the distribution of work, not about the
+      lesson. The second form is also one rule per lesson, which would make this
+      layer a second copy of the store — the exact thing it exists to avoid.
+    </p>
+
+    <h3>The number the whole idea rests on</h3>
+    <p>
+      The bet is that selection lessons track <i>kinds of work</i>, not lessons,
+      so the layer stays small while the store does not. That is a bet, not a
+      guarantee, so <code>rmc status</code> and <code>rmc route</code> report the
+      ratio:
+    </p>
+    <pre><code>routing    4 selection rules over 210 lessons  (ratio 0.02, should fall as the store grows)</code></pre>
+    <p>
+      If that ratio climbs instead of falling, the approach to the long tail is
+      wrong and needs revisiting. It is printed rather than inferred for exactly
+      that reason.
+    </p>
+
+    <h3>Inspecting and correcting them</h3>
+    <pre><code>rmc route                     # the rules, their record, and the growth ratio
+rmc route --when "..." --then "..."   # teach one by hand
+rmc route --forget r_e5fea0   # delete one</code></pre>
+    <p>
+      A rule that keeps sending the selector somewhere useless is charged for
+      it, and drops out of the injected layer on its own once better rules
+      compete for the cap.
+    </p>
+
+
+    <!-- ================================================= evaluation -->

@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Configuration — RMC</title>
-<meta name="description" content="Every setting, its default, and the reasoning behind that default.">
-<meta property="og:title" content="Configuration — RMC docs">
-<meta property="og:description" content="Every setting, its default, and the reasoning behind that default.">
+<title>07 Selection lessons — RMC</title>
+<meta name="description" content="Teaching retrieval where to look, so the long tail stays reachable.">
+<meta property="og:title" content="07 Selection lessons — RMC docs">
+<meta property="og:description" content="Teaching retrieval where to look, so the long tail stays reachable.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%230a0a0a'/><rect x='6' y='7' width='20' height='3' fill='white'/><rect x='9' y='14' width='14' height='3' fill='white'/><rect x='12' y='21' width='8' height='3' fill='white'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -58,7 +58,7 @@ try {
 <a href="migrate.html">Migrate from Claude skills</a>
 <div class="grp">Reference</div>
 <a href="cli.html">CLI reference</a>
-<a href="configuration.html" class="on" aria-current="page">Configuration</a>
+<a href="configuration.html">Configuration</a>
 <a href="integration.html">Integration</a>
 <a href="data-model.html">Data model</a>
 <div class="grp">How it works</div>
@@ -69,99 +69,117 @@ try {
 <a href="placement.html">04 Placement</a>
 <a href="compression.html">05 Compression</a>
 <a href="descent.html">06 Descent</a>
-<a href="selection.html">07 Selection lessons</a>
+<a href="selection.html" class="on" aria-current="page">07 Selection lessons</a>
 <div class="grp">Measuring</div>
 <a href="evaluation.html">Evaluation</a>
 <a href="tuning.html">Self-tuning</a>
 <a href="limits.html">Known limits</a>
 </nav></aside>
 <main class="doc">
-<div class="crumbs"><a href="quickstart.html">Docs</a><span>/</span><span>Configuration</span></div>
-<h1>Configuration</h1>
-<p class="lead">Every setting, its default, and the reasoning behind that default.</p>
+<div class="crumbs"><a href="quickstart.html">Docs</a><span>/</span><span>07 Selection lessons</span></div>
+<h1>07 Selection lessons</h1>
+<p class="lead">Teaching retrieval where to look, so the long tail stays reachable.</p>
 <div class="prose">
 
     <p>
-      <code>rmc config</code> with no arguments dumps everything; one argument
-      reads a dotted key; two set it. Any key can be overridden per-run by an
-      environment variable: <code>recall.max_pack_tokens</code> →
-      <code>RMC_RECALL_MAX_PACK_TOKENS</code>.
+      RMC applied to its own retrieval. Every other stage learns from outcomes;
+      selection learned from nothing, and it is the stage measured to be worst.
     </p>
-    
 
-    <h3 id="ablations">Ablations<a class="anchor" href="#ablations" aria-label="Link to this section">#</a></h3>
-    <p><code>recall.strategy</code> exists so the descent policy can be measured rather than asserted:</p>
-<pre>rmc config recall.strategy stepwise      <span class="c"># baseline: walk children, ignore deltas</span>
-rmc config recall.strategy delta-jump    <span class="c"># replace apex with the holder node</span>
-rmc config recall.strategy delta-patch   <span class="c"># default: apex + matched claims only</span></pre>
+    <h3 id="the-problem-they-solve">The problem they solve<a class="anchor" href="#the-problem-they-solve" aria-label="Link to this section">#</a></h3>
+    <p>
+      Filtering lifts precision from 28% to 48%. That second number is the one
+      that matters: <b>over half of what recall serves is never used</b>. Every
+      unused lesson spends attention, and an unrelated one can actively mislead.
+    </p>
+    <p>
+      A selection lesson is what a reflection pass writes after watching a
+      session — not knowledge about the work, but knowledge about <i>where the
+      knowledge was</i>:
+    </p>
+    <pre><code>- When the task runs the integration tests: read nodes/testing/ before running pytest
+- When the task is a docs change: nothing in nodes/deploy/ applies, skip it</code></pre>
+    <p>
+      The next selector reads those and reaches the right set in fewer searches,
+      or skips one it now knows is fruitless. They are written by the reflection
+      fork, which is the only thing in the system that saw both what was loaded
+      and how the work actually went.
+    </p>
 
-    <!-- ======================================================= eval -->
+    <h3 id="why-they-live-outside-the-tree">Why they live outside the tree<a class="anchor" href="#why-they-live-outside-the-tree" aria-label="Link to this section">#</a></h3>
+    <p>
+      Selection lessons are not stored under <code>nodes/</code>. If they were,
+      they would be retrieved by the very mechanism they exist to fix, and would
+      compete with real lessons for the same injection budget. They live in
+      <code>.rmc/routing/</code> and are always injected, under their own cap.
+    </p>
+    <p>
+      They are also the <b>only</b> thing retrieval now costs per prompt. The
+      index is grepped; the rules are sent. So the cap is real:
+      <code>routing.max_tokens</code>, and when it binds, the rules with the
+      worst record of improving a selection fall out first.
+    </p>
 
-<h2 id="every-setting">Every setting<a class="anchor" href="#every-setting" aria-label="Link to this section">#</a></h2><p>Generated from <code>rmc/config.py</code> when the docs are built, so it cannot drift from the code the way a retyped table does — and did.</p><div class="scroll"><table>
-<tr><th>Setting</th><th>Default</th><th>What it is for</th></tr>
-<tr><td><code>version</code></td><td><code>1</code></td><td></td></tr>
-<tr><td><code>agent</code></td><td><code>claude</code></td><td>default backend: claude | codex | mock</td></tr>
-<tr><td><code>model</code></td><td><code>null</code></td><td>None -&gt; backend default</td></tr>
-<tr><td><code>recall.enabled</code></td><td><code>true</code></td><td></td></tr>
-<tr><td><code>recall.strategy</code></td><td><code>delta-patch</code></td><td>delta-patch | delta-jump | stepwise</td></tr>
-<tr><td><code>recall.max_pack_tokens</code></td><td><code>1200</code></td><td></td></tr>
-<tr><td><code>recall.max_families</code></td><td><code>3</code></td><td>how many lessons to inject per prompt</td></tr>
-<tr><td><code>recall.judge_calls</code></td><td><code>2</code></td><td>Model calls the walk may spend <em>descending</em>. The first pass over the top level is not drawn from this — it is sized by how many chunks the apex layer needs, because a chunk skipped there is a lesson that can never be retrieved.</td></tr>
-<tr><td><code>recall.fanout</code></td><td><code>12</code></td><td>Lessons shown to the model in one question. Wide levels are split across several; this is about answer quality, not budget.</td></tr>
-<tr><td><code>recall.parallel</code></td><td><code>4</code></td><td>Chunks of one level put to the model at the same time. They are independent questions about disjoint sets, and each costs ~15s of which ~5s is process startup, so asking them in turn makes the top level unaffordable exactly as the store grows: six chunks sequentially exceeds the recall timeout and serves nothing. This is what makes covering every lesson possible rather than aspirational.</td></tr>
-<tr><td><code>recall.max_depth</code></td><td><code>2</code></td><td>how far down the tree the walk may look</td></tr>
-<tr><td><code>recall.max_expansions</code></td><td><code>3</code></td><td></td></tr>
-<tr><td><code>recall.filter_above</code></td><td><code>3</code></td><td>Apexes below which recall serves everything without asking.  There used to be no count here, only a token budget, justified as &quot;judgement is only needed under scarcity&quot;. That was wrong about cost: measured over 57 prompts on a store that fit the budget, 15,917 of ~17,800 injected tokens went unused, and judging those same sets kept every lesson that mattered while dropping 55% of the noise. Context that fits is not context that is free.  It was right about latency, which is the part that cannot be argued away: a routing call costs ~5s of CLI startup alone and ~34s on the model that routes well, in a hook that blocks the user&#x27;s prompt. So a gate stays — but a small one, sized so that what it lets through is a few lines rather than a page. Three lessons served blind is cheaper than five seconds of waiting; twenty is not.</td></tr>
-<tr><td><code>recall.warm_prefix_above_tokens</code></td><td><code>2000</code></td><td>Candidate-list size above which routing seeds a reusable conversation instead of re-sending the list every prompt. Providers serve an identical prefix from cache at roughly a tenth of the price, but only within one conversation — and seeding costs an extra round trip, so below this the trick loses money. It is set for where the design has to work rather than where it is: at 5,000 lessons the list runs to ~225k tokens per prompt and re-sending it is not survivable.</td></tr>
-<tr><td><code>recall.min_cacheable_tokens</code></td><td><code>1200</code></td><td>Smallest prefix a provider will open a cache entry for. Below it, seeding writes nothing and every fork misses — so when warming is on, candidate chunks are widened until they clear this. Roughly 1024 for the larger models and 2048 for the smallest; 1200 leaves margin without making the questions much wider than they need to be.</td></tr>
-<tr><td><code>recall.model</code></td><td><code>null</code></td><td>Model for the routing decision. Null means &quot;same as everything else&quot;, and that is the measured right answer despite looking wasteful.  Choosing which of two dozen one-line summaries bear on a prompt looks like a classification job a small model should win, and it blocks the user&#x27;s prompt, so the incentive to downgrade it is strong. <code>rmc eval-recall</code> says don&#x27;t:  model      precision  recall  noise tok default        48%     100%      7,146 sonnet         35%      81%      9,781 haiku          35%      75%      8,818  Both small models serve <em>more</em> noise and drop useful lessons. Since serving everything unfiltered has 100% recall by construction, a cheap router is strictly worse than no router at all — it costs latency, loses lessons, and does not even save context. Set this only with an eval run to back it.</td></tr>
-<tr><td><code>recall.stays_fresh_turns</code></td><td><code>8</code></td><td>Turns for which an already-injected lesson counts as still present and attended to. Inside it, a repeat is skipped; beyond it, the lesson is refreshed with its one-line gist rather than repeated in full. Context compaction resets this, since compaction may have removed the text.</td></tr>
-<tr><td><code>recall.timeout_s</code></td><td><code>20</code></td><td>Bound on the routing call, kept below the hook&#x27;s own deadline so a slow judgement degrades to &quot;inject nothing&quot; instead of being killed.</td></tr>
-<tr><td><code>recall.selector</code></td><td><code>agentic</code></td><td>How selection is made.  agentic: fork the live session and let it search the store. The only option whose cost does not grow with the number of lessons — the index is grepped, never sent — and the only one that sees the task&#x27;s tool calls and reasoning rather than just its opening sentence. judge:   render the apex layer into one question and walk it. Costs ~55 tokens per apex per prompt, which is ~225k at 5,000 lessons.  <code>judge</code> is not dead code: it is the baseline every arm of <code>rmc eval-recall</code> is compared against, and the automatic fallback whenever there is no session to fork.</td></tr>
-<tr><td><code>recall.selector_timeout_s</code></td><td><code>45</code></td><td>Longer than <code>timeout_s</code> because a search is several tool calls rather than one question, and each costs a round trip. This is the number that decides whether selection is felt as lag, so it is also the first thing to lower if it is.</td></tr>
-<tr><td><code>recall.selector_max_tool_calls</code></td><td><code>6</code></td><td>Searches the selector may run before it must answer with what it has. An unbounded search is the failure mode here: there is always another phrasing to try, and the user is waiting the whole time.</td></tr>
-<tr><td><code>routing.enabled</code></td><td><code>true</code></td><td>Selection lessons: what the reflector learned about <em>where the knowledge was</em>, as opposed to what the knowledge is.</td></tr>
-<tr><td><code>routing.max_tokens</code></td><td><code>800</code></td><td>The only part of retrieval that costs tokens on every prompt now that the index is searched rather than sent. It is capped rather than trusted to stay small: the claim that selection lessons stay far fewer than lessons is a bet, and <code>rmc status</code> reports the ratio so the bet is visible. When the cap binds, the rules with the worst record of improving a selection are the ones that fall out.</td></tr>
-<tr><td><code>selection.w_judge</code></td><td><code>0.60</code></td><td>The model decides which dropped detail explains a failure; the other two terms are evidence (observed rescue rate) and measurement (tokens), not proxies for judgement.</td></tr>
-<tr><td><code>selection.w_prior</code></td><td><code>0.28</code></td><td></td></tr>
-<tr><td><code>selection.w_cost</code></td><td><code>0.12</code></td><td></td></tr>
-<tr><td><code>selection.explore</code></td><td><code>posterior</code></td><td>posterior | ucb</td></tr>
-<tr><td><code>selection.ucb_c</code></td><td><code>0.7</code></td><td></td></tr>
-<tr><td><code>compaction.enabled</code></td><td><code>true</code></td><td></td></tr>
-<tr><td><code>compaction.min_successes</code></td><td><code>1</code></td><td>Successful recalls before a compression is attempted. Recall serves about one lesson per prompt, so waiting for a second success can take weeks — and the wait buys little, because the thing that actually protects the lesson is replay against its own episodes, which runs either way. One success is enough of an occasion.</td></tr>
-<tr><td><code>compaction.max_ratio</code></td><td><code>0.75</code></td><td>Candidate must be &lt;= this fraction of the parent&#x27;s tokens. Measured against real compressors, a single step on an already-dense lesson lands around 0.7; a stricter gate simply rejects everything and leaves you at 100%. What matters is compounding, not per-step depth — 0.75 per level is ~32% of the original after four levels.</td></tr>
-<tr><td><code>compaction.threshold</code></td><td><code>1.0</code></td><td>required replay pass-rate</td></tr>
-<tr><td><code>compaction.regression_k</code></td><td><code>5</code></td><td>episodes replayed per validation</td></tr>
-<tr><td><code>compaction.max_level</code></td><td><code>6</code></td><td></td></tr>
-<tr><td><code>compaction.cooldown_s</code></td><td><code>900</code></td><td></td></tr>
-<tr><td><code>learning.enabled</code></td><td><code>true</code></td><td></td></tr>
-<tr><td><code>learning.min_tool_calls</code></td><td><code>8</code></td><td>ignore trivial sessions</td></tr>
-<tr><td><code>learning.capture_failures</code></td><td><code>true</code></td><td></td></tr>
-<tr><td><code>learning.nudge_enabled</code></td><td><code>true</code></td><td>Reflection needs an <em>occasion</em>, not a verdict. The agent has the judgement to tell a conceptual mistake from a typo, but in flight its attention is on the task — so the harness schedules the look and the agent decides what it sees. These thresholds only ask &quot;did this turn have enough substance to be worth a thought&quot;.</td></tr>
-<tr><td><code>learning.nudge_mode</code></td><td><code>background</code></td><td>background: a detached process reflects on the transcript, and the agent is never interrupted. Costs nothing on the main thread. block:      interrupt the agent to reflect in its own context. It has the live sense of what surprised it, but spends a turn and pollutes the working context — a real cost in the middle of a large task. fork:       reflect inside a fork of the live session — same context, off the main thread. Costs ~0.1x its tokens thanks to prompt cache reads, but 10% of a large context still exceeds a digest. off:        no reflection until session end.</td></tr>
-<tr><td><code>learning.nudge_after_tool_calls</code></td><td><code>12</code></td><td></td></tr>
-<tr><td><code>learning.nudge_after_turns</code></td><td><code>3</code></td><td></td></tr>
-<tr><td><code>learning.min_surprises</code></td><td><code>2</code></td><td>failed tool calls also make a turn substantial</td></tr>
-<tr><td><code>learning.nudge_cooldown_s</code></td><td><code>900</code></td><td></td></tr>
-<tr><td><code>learning.nudge_backoff_after</code></td><td><code>3</code></td><td>If the agent captures on its own, stop interrupting it. Backs the cooldown off after this many nudges in a row that yielded nothing.</td></tr>
-<tr><td><code>placement.consult</code></td><td><code>true</code></td><td>ask a model how new knowledge relates to old</td></tr>
-<tr><td><code>placement.judge_calls</code></td><td><code>2</code></td><td>levels of tree walk when looking for related lessons</td></tr>
-<tr><td><code>placement.max_depth</code></td><td><code>2</code></td><td></td></tr>
-<tr><td><code>placement.surface_conflicts</code></td><td><code>true</code></td><td>raise unresolved contradictions at recall</td></tr>
-<tr><td><code>signals.min_confidence</code></td><td><code>0.5</code></td><td>below this an outcome is recorded as &#x27;unknown&#x27;</td></tr>
-<tr><td><code>limits.agent_timeout_s</code></td><td><code>180</code></td><td></td></tr>
-<tr><td><code>limits.max_concurrent</code></td><td><code>2</code></td><td></td></tr>
-<tr><td><code>privacy.redact</code></td><td><code>true</code></td><td>scrub secret-shaped strings before anything is stored</td></tr>
-</table></div>
+    <h3 id="the-rule-that-keeps-them-small">The rule that keeps them small<a class="anchor" href="#the-rule-that-keeps-them-small" aria-label="Link to this section">#</a></h3>
+    <p>
+      <b>Every rule must be conditioned on a kind of task.</b> A rule with no
+      <code>when</code> is rejected rather than stored.
+    </p>
+    <div class="scroll">
+    <table>
+      <tr><th>Form</th><th>Verdict</th></tr>
+      <tr><td>"when the task touches the integration tests, read <code>nodes/testing/</code>"</td><td>stored</td></tr>
+      <tr><td>"<code>n_abc</code> is rarely useful"</td><td>refused</td></tr>
+    </table>
+    </div>
+    <p>
+      This is not tidiness. The second form was measured: annotating candidates
+      with their usage record made retrieval <i>worse</i> on both precision
+      (48%&nbsp;→&nbsp;41%) and recall (100%&nbsp;→&nbsp;81%). How often a lesson
+      gets used is a statement about the distribution of work, not about the
+      lesson. The second form is also one rule per lesson, which would make this
+      layer a second copy of the store — the exact thing it exists to avoid.
+    </p>
+
+    <h3 id="the-number-the-whole-idea-rests-on">The number the whole idea rests on<a class="anchor" href="#the-number-the-whole-idea-rests-on" aria-label="Link to this section">#</a></h3>
+    <p>
+      The bet is that selection lessons track <i>kinds of work</i>, not lessons,
+      so the layer stays small while the store does not. That is a bet, not a
+      guarantee, so <code>rmc status</code> and <code>rmc route</code> report the
+      ratio:
+    </p>
+    <pre><code>routing    4 selection rules over 210 lessons  (ratio 0.02, should fall as the store grows)</code></pre>
+    <p>
+      If that ratio climbs instead of falling, the approach to the long tail is
+      wrong and needs revisiting. It is printed rather than inferred for exactly
+      that reason.
+    </p>
+
+    <h3 id="inspecting-and-correcting-them">Inspecting and correcting them<a class="anchor" href="#inspecting-and-correcting-them" aria-label="Link to this section">#</a></h3>
+    <pre><code>rmc route                     # the rules, their record, and the growth ratio
+rmc route --when "..." --then "..."   # teach one by hand
+rmc route --forget r_e5fea0   # delete one</code></pre>
+    <p>
+      A rule that keeps sending the selector somewhere useless is charged for
+      it, and drops out of the injected layer on its own once better rules
+      compete for the cap.
+    </p>
+
+
+    <!-- ================================================= evaluation -->
+
 </div>
 <nav class="pager">
-<a class="prev" href="cli.html"><span>Previous</span><b>CLI reference</b></a>
-<a class="next" href="integration.html"><span>Next</span><b>Integration</b></a>
+<a class="prev" href="descent.html"><span>Previous</span><b>06 Descent</b></a>
+<a class="next" href="evaluation.html"><span>Next</span><b>Evaluation</b></a>
 </nav>
 </main>
 <aside class="onpage"><div class="grp">On this page</div><nav>
-<a class="l3" href="#ablations">Ablations</a>
-<a class="l2" href="#every-setting">Every setting</a>
+<a class="l3" href="#the-problem-they-solve">The problem they solve</a>
+<a class="l3" href="#why-they-live-outside-the-tree">Why they live outside the tree</a>
+<a class="l3" href="#the-rule-that-keeps-them-small">The rule that keeps them small</a>
+<a class="l3" href="#the-number-the-whole-idea-rests-on">The number the whole idea rests on</a>
+<a class="l3" href="#inspecting-and-correcting-them">Inspecting and correcting them</a>
 </nav></aside>
 </div>
 

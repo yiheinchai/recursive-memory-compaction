@@ -93,6 +93,40 @@ DEFAULTS: dict[str, Any] = {
         # Bound on the routing call, kept below the hook's own deadline so a
         # slow judgement degrades to "inject nothing" instead of being killed.
         "timeout_s": 20,
+        # How selection is made.
+        #
+        # agentic: fork the live session and let it search the store. The only
+        #   option whose cost does not grow with the number of lessons — the
+        #   index is grepped, never sent — and the only one that sees the task's
+        #   tool calls and reasoning rather than just its opening sentence.
+        # judge:   render the apex layer into one question and walk it. Costs
+        #   ~55 tokens per apex per prompt, which is ~225k at 5,000 lessons.
+        #
+        # `judge` is not dead code: it is the baseline every arm of
+        # `rmc eval-recall` is compared against, and the automatic fallback
+        # whenever there is no session to fork.
+        "selector": "agentic",
+        # Longer than `timeout_s` because a search is several tool calls rather
+        # than one question, and each costs a round trip. This is the number
+        # that decides whether selection is felt as lag, so it is also the first
+        # thing to lower if it is.
+        "selector_timeout_s": 45,
+        # Searches the selector may run before it must answer with what it has.
+        # An unbounded search is the failure mode here: there is always another
+        # phrasing to try, and the user is waiting the whole time.
+        "selector_max_tool_calls": 6,
+    },
+    "routing": {
+        # Selection lessons: what the reflector learned about *where the
+        # knowledge was*, as opposed to what the knowledge is.
+        "enabled": True,
+        # The only part of retrieval that costs tokens on every prompt now that
+        # the index is searched rather than sent. It is capped rather than
+        # trusted to stay small: the claim that selection lessons stay far fewer
+        # than lessons is a bet, and `rmc status` reports the ratio so the bet is
+        # visible. When the cap binds, the rules with the worst record of
+        # improving a selection are the ones that fall out.
+        "max_tokens": 800,
     },
     "selection": {
         # The model decides which dropped detail explains a failure; the other
@@ -112,18 +146,6 @@ DEFAULTS: dict[str, Any] = {
         # protects the lesson is replay against its own episodes, which runs
         # either way. One success is enough of an occasion.
         "min_successes": 1,
-        # Episodes in which two lessons were both used before they count as
-        # evidence of a shared idea. Same arithmetic: two lessons used together
-        # in one episode is already uncommon, and requiring it twice made the
-        # signal unreachable in practice. A single co-occurrence only nominates
-        # the pair — the model still has to agree they are one procedure and the
-        # merge still has to reproduce both their episodes.
-        "min_co_use": 1,
-        # Lessons one merge may swallow. A merge must reproduce every child's
-        # episodes at full pass-rate, and the odds fall off fast with arity, so
-        # a nine-way attempt is a long shot that spends a whole pass — while the
-        # pairs underneath it each stand a real chance.
-        "max_merge_group": 5,
         # Candidate must be <= this fraction of the parent's tokens. Measured
         # against real compressors, a single step on an already-dense lesson
         # lands around 0.7; a stricter gate simply rejects everything and leaves
@@ -131,14 +153,6 @@ DEFAULTS: dict[str, Any] = {
         # 0.75 per level is ~32% of the original after four levels.
         "max_ratio": 0.75,
         "threshold": 1.0,  # required replay pass-rate
-        "merge_threshold": 1.0,  # required replay pass-rate for a merge
-        # A parent must be smaller than the children it stands in front of, or
-        # the apex layer — what recall enumerates every prompt — gets more
-        # expensive, which is the opposite of why we merged. Looser than
-        # max_ratio on purpose: merging is not compression's job. A merge only
-        # has to pay for the level it adds; squeezing the parent afterwards is
-        # what compaction is for, and that is where the compounding comes from.
-        "merge_ratio": 0.9,
         "regression_k": 5,  # episodes replayed per validation
         "max_level": 6,
         "cooldown_s": 900,
@@ -170,33 +184,6 @@ DEFAULTS: dict[str, Any] = {
         # If the agent captures on its own, stop interrupting it. Backs the
         # cooldown off after this many nudges in a row that yielded nothing.
         "nudge_backoff_after": 3,
-    },
-    "dream": {
-        "enabled": True,
-        # Consolidation is not a reaction to a session, so no session event is
-        # its natural occasion. It runs on elapsed time instead, gated on there
-        # being new evidence — dreaming over an unchanged store only re-asks
-        # questions already answered and cached.
-        "interval_s": 86400,  # once a day
-        # New successful multi-lesson episodes since the last run. Three was set
-        # before we had measured how rare a multi-lesson episode is: over a
-        # month of real use this store produced one. Width is now the fallback
-        # trigger, but co-use should still be able to fire on its own.
-        "min_new_episodes": 1,
-        # The other reason to dream. Co-use evidence only reaches lessons that
-        # get used together, and recall serves about one lesson per prompt — so
-        # one-off lessons stay flat at the top level forever, and every one of
-        # those apexes is enumerated on every prompt. Above this width, dream
-        # asks the model to group them whether or not they have ever been used
-        # together. This is the number that sets what recall costs per prompt.
-        "max_apexes": 12,
-        # Merges *accepted* per pass. This is the irreversible thing, so it is
-        # the one worth rationing tightly.
-        "limit": 2,
-        # Candidates *tried* per pass. A rejection costs one model call and the
-        # size gate runs before replay, so looking is cheap — and with the
-        # co-use floor at one there are many more candidates than good ones.
-        "max_attempts": 8,
     },
     "placement": {
         "consult": True,  # ask a model how new knowledge relates to old

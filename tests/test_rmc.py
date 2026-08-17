@@ -1334,30 +1334,6 @@ class TestMultipleParents(StoreCase):
         self.store.invalidate()
         return self.store.get("n_leaf")
 
-    def test_a_merge_after_a_compression_keeps_both_parents(self) -> None:
-        from rmc.compact import compress_node, merge_nodes
-
-        leaf = self.build()
-        adapter = MockAdapter(world=self.world())
-
-        compressed = compress_node(self.store, adapter, leaf)
-        self.assertTrue(compressed.accepted, compressed.reason)
-        first_parent = compressed.new_node.id
-        self.assertEqual(self.store.get("n_leaf").parents, [first_parent])
-
-        # Now merge the leaf sideways with an unrelated sibling. The pair is
-        # deliberately lopsided and has nothing to compress, so the size gate is
-        # lifted — what is under test here is parentage, not economy.
-        self.store.config.set("compaction.merge_ratio", 2.0)
-        other = self.add_node(id="n_side", family="f", level=0, body="Another lesson. @a")
-        merged = merge_nodes(self.store, adapter, [self.store.get("n_leaf"), other])
-        self.assertTrue(merged.accepted, merged.reason)
-
-        parents = self.store.get("n_leaf").parents
-        self.assertIn(first_parent, parents, "the compression must survive the merge")
-        self.assertIn(merged.new_node.id, parents)
-        self.assertEqual(len(parents), 2)
-
     def test_ancestors_walks_every_line_upward(self) -> None:
         a = self.add_node(id="n_a", family="f", body="a")
         p1 = self.add_node(id="n_p1", family="f", body="p1", level=1, derived_from=["n_a"])
@@ -1379,24 +1355,6 @@ class TestMultipleParents(StoreCase):
         self.store.save_node(child)
         self.store.invalidate()
         self.assertEqual([n.id for n in self.store.apexes()], ["n_p"])
-
-    def test_a_merge_that_would_form_a_cycle_is_refused(self) -> None:
-        """Nothing else prevents a merge swallowing its own ancestor, and an
-        upward walk over a cyclic graph never terminates."""
-        from rmc.compact import merge_nodes
-
-        child = self.add_node(id="n_ch", family="f", body="child. @a")
-        parent = self.add_node(id="n_pa", family="f", body="parent. @a", level=1, derived_from=["n_ch"])
-        child.parents = [parent.id]
-        self.store.save_node(child)
-        self.store.invalidate()
-
-        result = merge_nodes(
-            self.store, MockAdapter(world=self.world()),
-            [self.store.get("n_ch"), self.store.get("n_pa")],
-        )
-        self.assertFalse(result.accepted)
-        self.assertIn("cycle", result.reason)
 
     def test_legacy_stores_still_load(self) -> None:
         """`compressed_into` is the pre-DAG spelling and is still on disk."""
@@ -2085,157 +2043,6 @@ class TestConcurrentReflectors(StoreCase):
         self.assertIsNone(self.store.get("n_second"), "the duplicate must not be stored")
 
 
-class TestCoUse(StoreCase):
-    """Abstraction is built from what got used together, not what reads alike.
-
-    A long tail stays flat unless something merges it, and the useful merge is
-    often between lessons with nothing in common on the surface. Co-use is the
-    only signal RMC has that speaks to that, and it was already being recorded.
-    """
-
-    def setUp(self) -> None:
-        super().setUp()
-        for ident, family in (("n_a", "deploy"), ("n_b", "deploy"), ("n_c", "caching")):
-            self.add_node(id=ident, family=family, body=f"lesson {ident}")
-
-    def co_used(self, ident, used, outcome="success", served=None) -> None:
-        self.add_episode(
-            ident, "x", "did some work", outcome=outcome,
-            served=served if served is not None else used, used=used,
-        )
-
-    def test_one_co_occurrence_nominates_a_pair(self) -> None:
-        """Two lessons used together in one episode is already uncommon —
-        recall serves about one lesson per prompt. Requiring it twice made the
-        signal unreachable, and nomination is cheap: the model still has to
-        agree they are one procedure, and the merge still has to reproduce both
-        their episodes."""
-        from rmc.compact import co_use_groups
-
-        self.co_used("e1", ["n_a", "n_b"])
-        groups = co_use_groups(self.store)
-        self.assertEqual([sorted(n.id for n in nodes) for nodes, _ in groups],
-                         [["n_a", "n_b"]])
-
-    def test_the_co_use_floor_is_configurable(self) -> None:
-        from rmc.compact import co_use_groups
-
-        self.store.config.set("compaction.min_co_use", 2)
-        self.co_used("e1", ["n_a", "n_b"])
-        self.assertEqual(co_use_groups(self.store), [])
-        self.co_used("e2", ["n_a", "n_b"])
-        self.assertEqual(len(co_use_groups(self.store)), 1)
-
-    def test_repeated_co_use_becomes_a_merge_candidate(self) -> None:
-        from rmc.compact import co_use_groups
-
-        self.co_used("e1", ["n_a", "n_b"])
-        self.co_used("e2", ["n_a", "n_b"])
-        groups = co_use_groups(self.store)
-        self.assertTrue(groups)
-        self.assertEqual({n.id for n in groups[0][0]}, {"n_a", "n_b"})
-
-    def test_co_use_crosses_families(self) -> None:
-        """The cross-cutting index: a pair no family structure would ever group."""
-        from rmc.compact import co_use_groups
-
-        self.co_used("e1", ["n_a", "n_c"])
-        self.co_used("e2", ["n_a", "n_c"])
-        groups = co_use_groups(self.store)
-        families = {n.family for n in groups[0][0]}
-        self.assertEqual(families, {"deploy", "caching"})
-
-    def test_lessons_shown_but_not_used_are_not_co_used(self) -> None:
-        """The distinction that matters: serving is a retrieval decision, using
-        is an outcome. Counting everything shown manufactures associations —
-        serve ten lessons and you invent forty-five pairs."""
-        from rmc.compact import co_use_groups
-
-        self.co_used("e1", used=["n_a"], served=["n_a", "n_b", "n_c"])
-        self.co_used("e2", used=["n_a"], served=["n_a", "n_b", "n_c"])
-        self.assertEqual(co_use_groups(self.store), [], "only one lesson actually bore on the work")
-
-    def test_the_used_subset_is_what_forms_the_abstraction(self) -> None:
-        from rmc.compact import co_use_groups
-
-        self.co_used("e1", used=["n_a", "n_c"], served=["n_a", "n_b", "n_c"])
-        self.co_used("e2", used=["n_a", "n_c"], served=["n_a", "n_b", "n_c"])
-        groups = co_use_groups(self.store)
-        self.assertEqual({n.id for n in groups[0][0]}, {"n_a", "n_c"})
-
-    def test_failed_sessions_are_not_evidence_of_belonging(self) -> None:
-        from rmc.compact import co_use_groups
-
-        self.co_used("e1", ["n_a", "n_b"], outcome="failure")
-        self.co_used("e2", ["n_a", "n_b"], outcome="failure")
-        self.assertEqual(co_use_groups(self.store), [])
-
-    def test_a_triple_is_also_evidence_about_each_pair(self) -> None:
-        from rmc.compact import co_use_groups
-
-        self.co_used("e1", ["n_a", "n_b", "n_c"])
-        self.co_used("e2", ["n_a", "n_b", "n_c"])
-        found = {frozenset(n.id for n in nodes) for nodes, _ in co_use_groups(self.store)}
-        self.assertIn(frozenset({"n_a", "n_b", "n_c"}), found)
-        self.assertIn(frozenset({"n_a", "n_c"}), found, "pairs recur under other companions")
-
-
-class TestAMergeMustPayForItself(StoreCase):
-    """The apex layer is what recall enumerates on every prompt, so a parent
-    bigger than the children it stands in front of makes every prompt more
-    expensive — the opposite of why we merged.
-
-    This went unchecked: merge computed the ratio, printed it in its own accept
-    message ("merged 2 lessons at 102% of combined size"), and accepted anyway.
-    Compression had the equivalent gate from the start; merging never did.
-    """
-
-    def pair(self, reply_body: str):
-        a = self.add_node(id="n_a", family="f", level=0, body="First lesson with detail. @a")
-        b = self.add_node(id="n_b", family="f", level=0, body="Second lesson with detail. @b")
-        for ident, node in (("e1", "n_a"), ("e2", "n_b")):
-            self.add_episode(ident, "f", f"work on {node}", served=[node])
-            got = self.store.get(node)
-            got.covers_tasks = [ident]
-            self.store.save_node(got)
-        self.store.invalidate()
-        adapter = MockAdapter(router=lambda prompt, schema: {
-            "body": reply_body, "title": "Parent", "gist": "a parent", "dropped": [],
-        })
-        return [self.store.get("n_a"), self.store.get("n_b")], adapter
-
-    def test_a_parent_no_smaller_than_its_children_is_refused(self) -> None:
-        from rmc.compact import merge_nodes
-
-        nodes, adapter = self.pair(
-            "First lesson with detail. @a Second lesson with detail. @b "
-            "And some further words that make this no cheaper than the two apart."
-        )
-        result = merge_nodes(self.store, adapter, nodes)
-        self.assertFalse(result.accepted)
-        self.assertIn("does not pay for itself", result.reason)
-
-    def test_a_parent_that_actually_abstracts_goes_on_to_replay(self) -> None:
-        from rmc.compact import merge_nodes
-
-        nodes, adapter = self.pair("Both lessons. @a @b")
-        result = merge_nodes(self.store, adapter, nodes)
-        self.assertLess(result.after_tokens, result.before_tokens)
-        self.assertIn("pass-rate", result.reason, "the size gate let it through to replay")
-
-    def test_the_size_gate_runs_before_replay(self) -> None:
-        """Replay is the expensive check. No point paying for it to validate a
-        parent that could not be kept whatever it says."""
-        from rmc.compact import merge_nodes
-
-        nodes, adapter = self.pair(
-            "First lesson with detail. @a Second lesson with detail. @b "
-            "And some further words that make this no cheaper than the two apart."
-        )
-        result = merge_nodes(self.store, adapter, nodes)
-        self.assertEqual(result.replays, [])
-
-
 class TestConfigIsOverridesOnly(StoreCase):
     """A store must not be frozen at the defaults of the day it was created.
 
@@ -2286,217 +2093,6 @@ class TestConfigIsOverridesOnly(StoreCase):
         self.store.config.set("agent", "codex")
         self.store.config.save(self.path())
         self.assertEqual(Config.load(self.path()).get("agent"), "codex")
-
-
-class TestWidthDrivenConsolidation(StoreCase):
-    """The long tail has to consolidate without ever having been co-used.
-
-    Co-use needs two lessons used in one episode, twice. Recall serves about one
-    lesson per prompt, so a store can accumulate a hundred one-off lessons and
-    never produce a single co-use group — while every one of those apexes is
-    enumerated on every prompt. Width is the second trigger, and it is a count,
-    so the harness owns it; which apexes are the same procedure stays a
-    judgement the model makes.
-    """
-
-    def widen(self, n: int, family: str = "deploy") -> None:
-        for i in range(n):
-            self.add_node(id=f"n_{family}_{i}", family=family, body=f"lesson {i}")
-
-    def test_width_alone_makes_a_dream_due(self) -> None:
-        from rmc.compact import dream_due
-
-        self.widen(13)
-        due, why = dream_due(self.store)
-        self.assertTrue(due, why)
-        self.assertIn("apexes", why)
-
-    def test_many_families_are_the_same_flat_layer_as_one(self) -> None:
-        """Thirteen families of one apex cost the router exactly what one
-        family of thirteen costs — so the gate cannot be per-family."""
-        from rmc.compact import dream_due
-
-        for i in range(13):
-            self.add_node(id=f"n_{i}", family=f"family_{i}", body=f"lesson {i}")
-        due, why = dream_due(self.store)
-        self.assertTrue(due, why)
-
-    def test_a_narrow_store_with_no_co_use_is_not_due(self) -> None:
-        from rmc.compact import dream_due
-
-        self.widen(3)
-        due, why = dream_due(self.store)
-        self.assertFalse(due)
-        self.assertIn("within", why)
-
-    def test_a_child_does_not_count_toward_width(self) -> None:
-        from rmc.compact import dream_due
-
-        self.widen(13)
-        for i in range(1, 13):
-            child = self.store.get(f"n_deploy_{i}")
-            child.parents = ["n_deploy_0"]
-            self.store.save_node(child)
-        self.store.invalidate()
-        due, why = dream_due(self.store)
-        self.assertFalse(due, why)
-
-    def test_dream_asks_the_model_across_families(self) -> None:
-        """The peer set is the apex layer, not one family — otherwise the
-        thirteen-singleton store has nothing any pass can reach."""
-        import rmc.compact as compact
-
-        for i in range(13):
-            self.add_node(id=f"n_{i}", family=f"family_{i}", body=f"lesson {i}")
-        seen: list[list[str]] = []
-
-        def spy(store, family=None, adapter=None, *, peers=None):
-            seen.append(sorted(n.id for n in (peers or [])))
-            return []
-
-        original = compact.merge_candidates
-        compact.merge_candidates = spy
-        try:
-            compact.dream(self.store, MockAdapter(), dry_run=True)
-        finally:
-            compact.merge_candidates = original
-
-        self.assertEqual(len(seen), 1)
-        self.assertEqual(len(seen[0]), 13, "every apex was a candidate, whatever its family")
-
-    def test_a_narrow_layer_is_left_alone(self) -> None:
-        import rmc.compact as compact
-
-        self.widen(4)
-        called = []
-        original = compact.merge_candidates
-        compact.merge_candidates = lambda *a, **k: called.append(1) or []
-        try:
-            compact.dream(self.store, MockAdapter(), dry_run=True)
-        finally:
-            compact.merge_candidates = original
-        self.assertEqual(called, [], "nothing to pay for, nothing to consolidate")
-
-    def test_the_coldest_apexes_go_first(self) -> None:
-        """A lesson that keeps getting used is earning its place at the top;
-        one nothing has touched is pure routing tax."""
-        from rmc.compact import _coldest
-
-        self.widen(3)
-        hot = self.store.get("n_deploy_0")
-        hot.stats.attempts = 9
-        self.store.save_node(hot)
-        self.store.invalidate()
-        order = [n.id for n in _coldest(self.store, self.store.apexes())]
-        self.assertEqual(order[-1], "n_deploy_0")
-
-    def test_one_pass_asks_about_a_bounded_slice(self) -> None:
-        """Judging costs a call per anchor, so a huge store cannot have all of
-        it considered every night."""
-        from rmc.compact import _coldest
-
-        self.widen(60)
-        self.assertEqual(len(_coldest(self.store, self.store.apexes())), 24)
-
-    def test_an_over_wide_group_is_not_attempted(self) -> None:
-        """One episode that used nine lessons nominates all nine. Attempting
-        that spends the whole ration on the least likely candidate."""
-        import rmc.compact as compact
-
-        self.widen(9, "deploy")
-        peers = [self.store.get(f"n_deploy_{i}") for i in range(9)]
-        self.add_episode("e1", "x", "work",
-                         served=[n.id for n in peers], used=[n.id for n in peers])
-        attempts: list[int] = []
-
-        def merge(store, adapter, nodes, dry_run=False):
-            attempts.append(len(nodes))
-            return compact.CompactionResult(node_id=nodes[0].id, accepted=False, reason="test")
-
-        original = (compact.merge_nodes, compact.merge_candidates)
-        compact.merge_nodes = merge
-        compact.merge_candidates = lambda *a, **k: []
-        try:
-            compact.dream(self.store, MockAdapter(), limit=4, dry_run=True)
-        finally:
-            compact.merge_nodes, compact.merge_candidates = original
-
-        self.assertTrue(attempts, "the pairs underneath are still candidates")
-        self.assertTrue(all(n <= 5 for n in attempts), attempts)
-
-    def spy_merges(self, verdicts, *, limit=2, groups=6):
-        """Run a dream whose every merge answers from `verdicts`, and report
-        which groups it tried."""
-        import rmc.compact as compact
-
-        self.widen(13, "deploy")
-        peers = [self.store.get(f"n_deploy_{i}") for i in range(13)]
-        pairs = [[peers[i], peers[i + 1]] for i in range(0, groups * 2, 2)]
-        tried: list[list[str]] = []
-        answers = list(verdicts)
-
-        def candidates(store, family=None, adapter=None, *, peers=None):
-            return pairs
-
-        def merge(store, adapter, nodes, dry_run=False):
-            tried.append([n.id for n in nodes])
-            ok = answers.pop(0) if answers else False
-            return compact.CompactionResult(
-                node_id=nodes[0].id, accepted=ok, reason="test",
-                new_node=nodes[0] if ok else None,
-            )
-
-        original = (compact.merge_candidates, compact.merge_nodes)
-        compact.merge_candidates, compact.merge_nodes = candidates, merge
-        try:
-            compact.dream(self.store, MockAdapter(), limit=limit, dry_run=True)
-        finally:
-            compact.merge_candidates, compact.merge_nodes = original
-        return tried
-
-    def test_accepted_merges_are_rationed(self) -> None:
-        """Rewriting the tree is the irreversible thing, so it is the one
-        rationed tightly."""
-        tried = self.spy_merges([True, True, True, True], limit=2)
-        self.assertEqual(len(tried), 2)
-
-    def test_a_rejection_does_not_spend_the_ration(self) -> None:
-        """Two rejections used to end a pass with thirty-four candidates
-        untried — the store stayed flat and the log said work had been done."""
-        tried = self.spy_merges([False, False, True, True], limit=2)
-        self.assertEqual(len(tried), 4, "kept looking past the rejections")
-
-    def test_one_lesson_does_not_soak_up_the_whole_pass(self) -> None:
-        """A single episode that used nine lessons nominates all thirty-six of
-        their pairs, and every pair of one node sorts together — so a pass
-        would re-ask about the same lesson against eight partners."""
-        import rmc.compact as compact
-
-        self.widen(9, "deploy")
-        peers = [self.store.get(f"n_deploy_{i}") for i in range(9)]
-        self.add_episode("e1", "x", "work",
-                         served=[n.id for n in peers], used=[n.id for n in peers])
-        tried: list[list[str]] = []
-
-        def merge(store, adapter, nodes, dry_run=False):
-            tried.append([n.id for n in nodes])
-            return compact.CompactionResult(node_id=nodes[0].id, accepted=False, reason="test")
-
-        original = (compact.merge_nodes, compact.merge_candidates)
-        compact.merge_nodes = merge
-        compact.merge_candidates = lambda *a, **k: []
-        try:
-            compact.dream(self.store, MockAdapter(), limit=2, dry_run=True)
-        finally:
-            compact.merge_nodes, compact.merge_candidates = original
-
-        flat = [i for pair in tried for i in pair]
-        self.assertEqual(len(flat), len(set(flat)), f"a lesson was asked about twice: {tried}")
-
-    def test_looking_is_still_bounded(self) -> None:
-        self.store.config.set("dream.max_attempts", 3)
-        tried = self.spy_merges([False] * 6, limit=2)
-        self.assertEqual(len(tried), 3)
 
 
 class TestAnEmptyPackSaysWhy(StoreCase):
@@ -2577,88 +2173,6 @@ class TestReInjection(StoreCase):
         with redirect_stdout(io.StringIO()):
             on_pre_compact({"session_id": "s", "cwd": str(self.base)})
         self.assertEqual(self.store.read_session("s")["served_at"], {})
-
-
-class TestDreamSchedule(StoreCase):
-    """Consolidation runs on a clock and on evidence, and leaves an account.
-
-    Both gates are structural — a clock reading and a count of episodes. Neither
-    asks what anything means, so neither belongs to the model.
-    """
-
-    def seed_evidence(self, n: int) -> None:
-        for ident, family in (("n_a", "deploy"), ("n_b", "caching")):
-            if not self.store.get(ident):
-                self.add_node(id=ident, family=family, body=f"lesson {ident}")
-        for i in range(n):
-            self.add_episode(f"e{i}", "x", "work", served=["n_a", "n_b"], used=["n_a", "n_b"])
-
-    def test_not_due_without_new_evidence(self) -> None:
-        from rmc.compact import dream_due
-
-        self.store.config.set("dream.min_new_episodes", 3)
-        self.seed_evidence(1)
-        due, why = dream_due(self.store)
-        self.assertFalse(due)
-        self.assertIn("need 3", why)
-
-    def test_due_once_enough_has_accumulated(self) -> None:
-        from rmc.compact import dream_due
-
-        self.store.config.set("dream.min_new_episodes", 3)
-        self.seed_evidence(3)
-        due, why = dream_due(self.store)
-        self.assertTrue(due, why)
-
-    def test_a_single_multi_lesson_episode_is_enough_by_default(self) -> None:
-        """Over a month of real use this store produced one such episode. A
-        floor of three meant co-use could never fire on its own."""
-        from rmc.compact import dream_due
-
-        self.seed_evidence(1)
-        due, why = dream_due(self.store)
-        self.assertTrue(due, why)
-
-    def test_not_due_again_inside_the_interval(self) -> None:
-        """A clock reading, not a judgement."""
-        from rmc.compact import dream_due
-
-        self.seed_evidence(3)
-        self.store.log("dream", episodes_seen=3)
-        due, why = dream_due(self.store)
-        self.assertFalse(due)
-        self.assertIn("interval", why)
-
-    def test_can_be_switched_off(self) -> None:
-        from rmc.compact import dream_due
-
-        self.store.config.set("dream.enabled", False)
-        self.seed_evidence(9)
-        self.assertFalse(dream_due(self.store)[0])
-
-    def test_a_dream_writes_a_readable_account(self) -> None:
-        """Nobody watched it happen, so it has to say what it did."""
-        from rmc.compact import dream, dream_logs
-
-        self.seed_evidence(3)
-        report = dream(self.store, MockAdapter(world=MockWorld()), limit=1)
-
-        logs = dream_logs(self.store)
-        self.assertTrue(logs, "the dream must leave a record")
-        text = logs[0].read_text()
-        self.assertIn("before", text)
-        self.assertIn("routing tokens per prompt", text)
-        # Before/after is the point: it shows what changed, not just what ran.
-        self.assertIn("nodes", report.before)
-        self.assertIn("routing_tokens", report.after)
-
-    def test_a_refused_merge_is_recorded_with_its_reason(self) -> None:
-        from rmc.compact import dream, dream_logs
-
-        self.seed_evidence(3)
-        broken = MockAdapter(router=lambda p, s: {"body": "", "dropped": []})
-        dream(self.store, broken, limit=1)
-        self.assertIn("refused", dream_logs(self.store)[0].read_text())
 
 
 class TestPerUseCredit(StoreCase):
@@ -3212,3 +2726,351 @@ class TestRecallNotice(unittest.TestCase):
         from rmc.recall import Pack
         p = Pack(); p.served = ["n1"]; p.tokens = 12
         self.assertEqual(recall_notice(p), "RMC · 1 lesson · 12 tok")
+
+
+# =========================================================================== #
+# the index: what the selector searches instead of being sent
+# =========================================================================== #
+
+
+class TestTheIndexIsSearchedNotSent(StoreCase):
+    """The scaling claim, tested as a property rather than asserted.
+
+    The point of the index is that it can grow without the per-prompt cost
+    growing, so the test that matters is not "the file is correct" but "the file
+    is not the thing that gets injected".
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        from rmc import index as index_mod
+
+        self.index = index_mod
+
+    def test_every_live_lesson_gets_exactly_one_line(self) -> None:
+        for i in range(5):
+            self.add_node(id=f"n{i}", family="retry", body=f"body {i}", gist=f"gist {i}")
+        self.index.rebuild(self.store)
+        text = self.index.path_for(self.store).read_text()
+        self.assertEqual(self.index.count_lines(text), 5)
+
+    def test_a_lesson_is_findable_by_its_gist_not_only_its_title(self) -> None:
+        # The selector greps for the problem, not for the lesson's name, so a
+        # gist that never reaches the file makes the lesson unreachable.
+        self.add_node(
+            id="n1", family="testing", title="Integration tests",
+            gist="PAYMENTS_PG_PORT must be 5433 or the suite cannot connect",
+            body="long body",
+        )
+        self.index.rebuild(self.store)
+        text = self.index.path_for(self.store).read_text()
+        self.assertIn("PAYMENTS_PG_PORT", text)
+
+    def test_an_archived_lesson_is_not_advertised(self) -> None:
+        self.add_node(id="n1", family="retry", body="live")
+        self.add_node(id="n2", family="retry", body="gone", status="archived")
+        self.index.rebuild(self.store)
+        text = self.index.path_for(self.store).read_text()
+        self.assertIn("n1", text)
+        self.assertNotIn("n2 ·", text)
+
+    def test_a_line_never_wraps(self) -> None:
+        # A claim split across two lines is a claim grep cuts in half.
+        self.add_node(
+            id="n1", family="retry", title="A\ntitle\nwith\nnewlines",
+            gist="a gist\nwith\nnewlines", body="b",
+        )
+        self.index.rebuild(self.store)
+        body = self.index.path_for(self.store).read_text().split("\n\n")[-1]
+        self.assertEqual(len([line for line in body.splitlines() if line.strip()]), 1)
+
+    def test_adding_a_lesson_makes_the_index_stale(self) -> None:
+        self.add_node(id="n1", family="retry", body="a")
+        self.index.rebuild(self.store)
+        self.assertFalse(self.index.is_stale(self.store))
+        self.add_node(id="n2", family="retry", body="b")
+        self.assertTrue(self.index.is_stale(self.store))
+
+    def test_deleting_a_lesson_also_makes_it_stale(self) -> None:
+        # A deletion makes nothing newer, so an mtime check alone would keep
+        # advertising a lesson that is gone.
+        n1 = self.add_node(id="n1", family="retry", body="a")
+        self.add_node(id="n2", family="retry", body="b")
+        self.index.rebuild(self.store)
+        self.store.delete_node(n1)
+        self.store.invalidate()
+        self.assertTrue(self.index.is_stale(self.store))
+
+    def test_the_index_is_never_part_of_a_context_pack(self) -> None:
+        """The whole scaling argument in one assertion."""
+        for i in range(40):
+            self.add_node(id=f"n{i}", family=f"f{i}", body=f"body {i}", gist=f"gist {i}")
+        self.index.rebuild(self.store)
+        adapter = router({"picks": []})
+        pack = recall_pack(self.store, "do some work", adapter)
+        self.assertNotIn("index.md", pack.text)
+        self.assertEqual(pack.tokens, 0)
+
+
+# =========================================================================== #
+# selection lessons
+# =========================================================================== #
+
+
+class TestSelectionLessons(StoreCase):
+    def setUp(self) -> None:
+        super().setUp()
+        from rmc import routing
+
+        self.routing = routing
+
+    def test_a_rule_needs_a_task_condition(self) -> None:
+        """The guardrail against repeating EXPERIMENTS §4.2.
+
+        An unconditioned rule is both the form measured to make retrieval worse
+        and the form that grows one-per-lesson, which is the growth the whole
+        layer exists to avoid.
+        """
+        self.assertIsNone(self.routing.mint(self.store, when="", then="skip n_abc"))
+        self.assertIsNotNone(
+            self.routing.mint(
+                self.store,
+                when="the task touches the integration tests",
+                then="read nodes/testing/ first",
+            )
+        )
+
+    def test_a_rule_with_no_action_is_refused(self) -> None:
+        self.assertIsNone(self.routing.mint(self.store, when="the task is a deploy", then=""))
+
+    def test_the_same_condition_is_not_stored_twice(self) -> None:
+        self.routing.mint(self.store, when="the task is a deploy", then="read nodes/deploy/")
+        again = self.routing.mint(self.store, when="The task is a deploy.", then="something else")
+        self.assertIsNone(again, "a repeated condition is a contradiction, not an addition")
+        self.assertEqual(len(self.routing.load(self.store)), 1)
+
+    def test_rules_live_outside_the_lesson_tree(self) -> None:
+        # If they were nodes they would be retrieved by the mechanism they exist
+        # to fix, and would compete with real lessons for the same budget.
+        self.routing.mint(self.store, when="the task is a deploy", then="read nodes/deploy/")
+        self.assertEqual(self.store.nodes(), [])
+        self.assertTrue((self.store.root / "routing").is_dir())
+
+    def test_the_injected_layer_is_capped(self) -> None:
+        for i in range(20):
+            self.routing.mint(self.store, when=f"the task is kind {i}", then="look in " + "x " * 40)
+        rules = self.routing.load(self.store)
+        kept = self.routing.fit(rules, 200)
+        self.assertLess(len(kept), len(rules))
+        self.assertLessEqual(sum(r.tokens for r in kept), 200)
+
+    def test_the_cap_keeps_the_rules_with_the_best_record(self) -> None:
+        good = self.routing.mint(self.store, when="task A", then="look in nodes/a/")
+        bad = self.routing.mint(self.store, when="task B", then="look in nodes/b/")
+        self.routing.credit(self.store, helped=[good.id] * 1, wasted=[], shown=[])
+        for _ in range(4):
+            self.routing.credit(self.store, helped=[], wasted=[bad.id], shown=[])
+        kept = self.routing.fit(self.routing.load(self.store), good.tokens + 2)
+        self.assertEqual([r.id for r in kept], [good.id])
+
+    def test_credit_is_recorded_across_reloads(self) -> None:
+        rule = self.routing.mint(self.store, when="task A", then="look in nodes/a/")
+        self.routing.credit(self.store, helped=[rule.id], wasted=[], shown=[rule.id])
+        again = self.routing.get(self.store, rule.id)
+        self.assertEqual((again.helped, again.shown), (1, 1))
+
+    def test_growth_reports_rules_against_lessons(self) -> None:
+        """The measurement the long-tail claim stands or falls on."""
+        for i in range(10):
+            self.add_node(id=f"n{i}", family=f"f{i}", body="b")
+        self.routing.mint(self.store, when="task A", then="look in nodes/a/")
+        stats = self.routing.growth(self.store)
+        self.assertEqual((stats["rules"], stats["nodes"]), (1, 10))
+        self.assertAlmostEqual(stats["ratio"], 0.1)
+
+
+# =========================================================================== #
+# the agentic selector
+# =========================================================================== #
+
+
+class TestAgenticSelection(StoreCase):
+    def setUp(self) -> None:
+        super().setUp()
+        from rmc import select_agent
+
+        self.sel = select_agent
+        self.SESSION = "0e7c1a42-1f3b-4c0d-9a55-2b8e6d4f10aa"
+        self.n1 = self.add_node(id="n1", family="retry", body="retry stuff", gist="retrying")
+        self.n2 = self.add_node(id="n2", family="deploy", body="deploy stuff", gist="deploying")
+
+    def test_it_will_not_run_without_a_session_to_fork(self) -> None:
+        ok, why = self.sel.available(self.store, MockAdapter(), "")
+        self.assertFalse(ok)
+        self.assertIn("session", why)
+
+    def test_it_will_not_run_on_a_backend_that_cannot_fork(self) -> None:
+        ok, why = self.sel.available(self.store, MockAdapter(), self.SESSION)
+        self.assertFalse(ok)
+        self.assertIn("fork", why)
+
+    def test_a_session_id_that_cannot_be_resumed_is_rejected_before_spawning(self) -> None:
+        # `--resume` rejects a non-UUID, but only after a process has started —
+        # about a second of the user's wait to learn what the string already said.
+        ok, why = self.sel.available(self.store, MockAdapter(), "s-demo")
+        self.assertFalse(ok)
+        self.assertIn("resumable", why)
+
+    def test_the_config_can_turn_it_off(self) -> None:
+        self.store.config.set("recall.selector", "judge")
+        ok, why = self.sel.available(self.store, MockAdapter(), self.SESSION)
+        self.assertFalse(ok)
+        self.assertIn("judge", why)
+
+    def test_picks_resolve_to_nodes(self) -> None:
+        nodes, picks = self.sel.parse_picks(
+            {"picks": [{"id": "n1", "why": "it changes the retry policy"}]}, self.store.get
+        )
+        self.assertEqual([n.id for n in nodes], ["n1"])
+        self.assertEqual(picks["n1"].why, "it changes the retry policy")
+
+    def test_a_pick_naming_a_lesson_that_no_longer_exists_is_dropped(self) -> None:
+        # A stale index can name a lesson that has since been compressed away.
+        # Dropping it beats crashing on every prompt until someone rebuilds.
+        nodes, _ = self.sel.parse_picks(
+            {"picks": [{"id": "n1", "why": "x"}, {"id": "gone", "why": "y"}]}, self.store.get
+        )
+        self.assertEqual([n.id for n in nodes], ["n1"])
+
+    def test_an_archived_lesson_is_never_served(self) -> None:
+        self.add_node(id="n3", family="old", body="x", status="archived")
+        self.store.invalidate()
+        nodes, _ = self.sel.parse_picks({"picks": [{"id": "n3", "why": "x"}]}, self.store.get)
+        self.assertEqual(nodes, [])
+
+    def test_the_same_lesson_twice_is_served_once(self) -> None:
+        nodes, _ = self.sel.parse_picks(
+            {"picks": [{"id": "n1", "why": "a"}, {"id": "n1", "why": "b"}]}, self.store.get
+        )
+        self.assertEqual(len(nodes), 1)
+
+    def test_no_picks_is_a_verdict_not_a_failure(self) -> None:
+        nodes, picks = self.sel.parse_picks({"picks": []}, self.store.get)
+        self.assertEqual((nodes, picks), ([], {}))
+
+    def test_the_rules_reach_the_prompt(self) -> None:
+        from rmc import routing
+
+        rule = routing.mint(
+            self.store, when="the task touches the tests", then="read nodes/testing/"
+        )
+        text = self.sel.build_prompt(self.store, "run the tests", routing.load(self.store))
+        self.assertIn("the task touches the tests", text)
+        self.assertIn("read nodes/testing/", text)
+        self.assertIsNotNone(rule)
+
+    def test_the_prompt_names_the_store_to_search(self) -> None:
+        text = self.sel.build_prompt(self.store, "run the tests", [])
+        self.assertIn(str(self.store.root), text)
+        self.assertIn("index.md", text)
+
+    def test_the_search_tools_cannot_write(self) -> None:
+        """This runs unattended on every prompt; it must not be able to edit."""
+        for tool in self.sel.SEARCH_TOOLS:
+            self.assertNotIn("Write", tool)
+            self.assertNotIn("Edit", tool)
+        self.assertNotIn("Bash", self.sel.SEARCH_TOOLS, "unrestricted Bash can write")
+
+
+class TestSelectionFallsBackRatherThanServingNothing(StoreCase):
+    """An empty pack caused by an outage must never be silent.
+
+    A user who reads "no lessons applied" when the truth is "the selector could
+    not run" concludes the system does not work, which is the one failure that
+    is not recoverable by any later fix.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        for i in range(6):
+            self.add_node(id=f"n{i}", family=f"f{i}", body=f"body {i}", gist=f"gist {i}")
+
+    def test_no_session_falls_back_to_the_judge_walk(self) -> None:
+        calls: list[str] = []
+        adapter = counting_router({"picks": []}, calls)
+        select_lessons(self.store, adapter, "do the work", session_id="")
+        self.assertTrue(calls, "the judge walk should have been asked")
+        self.assertIn("relevance", calls[0].lower())
+
+    def test_the_fallback_is_recorded(self) -> None:
+        select_lessons(self.store, router({"picks": []}), "do the work", session_id="")
+        events = self.store.read_events("select-fallback")
+        self.assertTrue(events)
+
+
+# =========================================================================== #
+# use-grounded compaction
+# =========================================================================== #
+
+
+class TestCompactionLearnsWhatWasLoadBearing(StoreCase):
+    def test_observed_spans_survive_a_round_trip(self) -> None:
+        node = self.add_node(id="n1", family="retry", body="a", load_bearing=["cap by deadline"])
+        self.store.invalidate()
+        self.assertEqual(self.store.get("n1").load_bearing, ["cap by deadline"])
+        self.assertIn("load_bearing", node.to_markdown())
+
+    def test_a_store_written_before_this_field_still_loads(self) -> None:
+        node = Node(id="n1", family="retry", body="a")
+        text = node.to_markdown().replace("load_bearing: []\n", "")
+        self.assertEqual(Node.from_markdown(text).load_bearing, [])
+
+    def test_the_compressor_is_told_what_was_observed(self) -> None:
+        seen: list[str] = []
+        adapter = counting_router(
+            {"body": "shorter", "dropped": [], "lossless": True}, seen
+        )
+        node = self.add_node(
+            id="n1", family="retry", body="long body here",
+            load_bearing=["cap total elapsed time by the caller's deadline"],
+        )
+        self.add_episode("e1", "retry", "add retry", served=["n1"])
+        node.covers_tasks = ["e1"]
+        self.store.save_node(node)
+        self.store.invalidate()
+        compress_node(self.store, adapter, self.store.get("n1"))
+        self.assertTrue(any("cap total elapsed time" in p for p in seen))
+
+    def test_with_nothing_observed_the_compressor_is_told_so(self) -> None:
+        # Silence and "nothing was load-bearing" must not look alike: the first
+        # means compress conservatively, the second would mean cut everything.
+        seen: list[str] = []
+        adapter = counting_router({"body": "shorter", "dropped": [], "lossless": True}, seen)
+        node = self.add_node(id="n1", family="retry", body="long body here")
+        self.add_episode("e1", "retry", "add retry", served=["n1"])
+        node.covers_tasks = ["e1"]
+        self.store.save_node(node)
+        self.store.invalidate()
+        compress_node(self.store, adapter, self.store.get("n1"))
+        self.assertTrue(any("nothing observed yet" in p for p in seen))
+
+
+class TestMergingIsGone(StoreCase):
+    """Removed rather than disabled, per EXPERIMENTS §3.
+
+    Unchecked merges landed at 100-102% of combined size; 8 of 8 attempts landed
+    at 96-115% until the prompt was given a budget; and consolidation removed ~2
+    apexes per pass while capture added them faster. With selection no longer
+    rendering the apex layer, the width it was trying to hold down stopped being
+    what retrieval costs.
+    """
+
+    def test_the_merge_entry_points_no_longer_exist(self) -> None:
+        import rmc.compact as compact
+
+        for name in ("merge_nodes", "co_use_groups", "merge_candidates", "dream", "dream_due"):
+            self.assertFalse(hasattr(compact, name), f"{name} should be gone")
+
+    def test_compaction_still_works(self) -> None:
+        self.assertTrue(hasattr(__import__("rmc.compact", fromlist=["x"]), "compress_node"))
+        self.assertTrue(hasattr(__import__("rmc.compact", fromlist=["x"]), "run_due"))

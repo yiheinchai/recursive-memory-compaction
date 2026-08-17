@@ -105,6 +105,12 @@ def on_user_prompt_submit(payload: dict[str, Any]) -> int:
         adapter,
         already_served=dict(state.get("served_at") or {}),
         turn=turn,
+        # The agentic selector forks this session, so it needs its id and the
+        # directory the work is happening in. Without the id there is nothing to
+        # fork and selection falls back to the judge-walk — which is what
+        # happens on the first turn, by construction.
+        session_id=session_id,
+        cwd=Path(str(payload.get("cwd") or os.getcwd())),
     )
     if not pack:
         if session_id:
@@ -127,6 +133,10 @@ def on_user_prompt_submit(payload: dict[str, Any]) -> int:
         state["served_at"] = served_at
         state["turn"] = turn
         state["cwd"] = str(payload.get("cwd") or os.getcwd())
+        # Union across the session, like `served`: several selections happen in
+        # one session and the reflector scores all of them at the end.
+        state["rules_shown"] = sorted({*state.get("rules_shown", []), *pack.rules_shown})
+        state["rules_used"] = sorted({*state.get("rules_used", []), *pack.rules_used})
         store.write_session(session_id, state)
 
     store.log(
@@ -523,7 +533,53 @@ by now has little to do with what just happened.
 
     rmc used --session {session} --used <ids> --unused <ids> \
       --task "<the specific work, one sentence>" \
-      --outcome "<what doing it right looked like, one sentence>"
+      --outcome "<what doing it right looked like, one sentence>" \
+      --load-bearing "<node id>:<the sentence or clause that did the work>"
+
+Pass `--load-bearing` once per part of a lesson that actually changed what
+happened — quote the specific sentence, not the whole lesson. A lesson is
+usually one useful paragraph carried by four that were never needed, and this is
+the only place that difference is ever observed. Compression uses it to cut the
+rest; with nothing here it has to guess, which is what it used to do.
+
+"""
+
+
+SELECTION = """Third: how the *selection* went — which memories were put in front of
+you, and whether they were the right ones.
+
+You can see what a search would have had to do to find what this work needed.
+That is worth more than the answer itself, because it generalises: the store
+keeps growing, and what stops selection getting slower is knowing where to look
+rather than looking everywhere.
+
+Write a rule if, and only if, one of these is true:
+
+  * a lesson that mattered was **not** loaded, and there is a search that would
+    have found it — name the search, not the lesson;
+  * a lesson was loaded and turned out to be irrelevant, in a way that will
+    recur for this *kind* of task;
+  * you had to open several files to find one thing, and a shorter route exists.
+
+    rmc route --when "<the kind of task, recognisable before the work starts>" \
+      --then "<where to look, or what to stop opening>"
+
+**The `--when` has to name a kind of task, and this is the whole of what makes
+the rule worth storing.** "When the task touches the integration tests" is a
+rule. "n_abc is rarely useful" is not — it is a fact about one lesson, there
+would be one of them per lesson, and the layer that is supposed to stay small
+becomes a second copy of the store. This was measured: annotating candidates
+with their usage record made retrieval worse on both precision and recall,
+because how often a lesson gets used is a statement about the distribution of
+work rather than about the lesson.
+
+Also say which rules you were shown that actually helped, and which sent you the
+wrong way:
+
+    rmc used --session {session} --rule-helped <ids> --rule-wasted <ids>
+
+If selection went fine and there is no rule to write, say so and write nothing.
+An unnecessary rule costs every future prompt.
 
 """
 
@@ -546,6 +602,12 @@ def _spawn_fork(store: Store, session_id: str, cwd: str, served: list[str] | Non
         if nodes
         else ""
     )
+    # Asked whether or not anything was served, because the case where nothing
+    # was is exactly the one worth learning from: a selection that found nothing
+    # for work that needed something is the failure this layer exists to catch,
+    # and it leaves no trace anywhere else.
+    if store.config.get("routing.enabled", True):
+        attribution += SELECTION.format(session=session_id)
     argv = [
         "claude",
         "--resume",

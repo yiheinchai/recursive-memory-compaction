@@ -44,13 +44,20 @@ accept iff pass_rate &gt;= 1.0  and  tokens &lt;= 0.75 × original</pre>
         converges instead of thrashing.</li>
     </ul>
 
-    <h3>Merging and repair</h3>
+    <h3>What the compressor is told to keep</h3>
     <p>
-      Two or more lessons can become one abstract parent covering all of them.
-      Merges may span families, and a merge that would swallow one of its own
-      ancestors is refused — that would make the graph cyclic and every upward
-      walk non-terminating.
+      It is given the spans a reflection pass <i>observed</i> doing work — the
+      sentences that changed what an agent did, reported per session. Where that
+      evidence exists the reduction is taken from everything else; where it is
+      absent the compressor is told so explicitly and compresses conservatively,
+      because a span with no record may simply not have come up yet.
     </p>
+    <p>
+      This is what separates compression from guessing. Before it, the
+      compressor chose what to cut from the text alone and found out afterwards
+      whether it had been wrong.
+    </p>
+    <h3>Repair</h3>
     <p>
       A delta that repeatedly rescues the same node is proof the compression cut
       too deep, so it is folded permanently back into the body and dropped from

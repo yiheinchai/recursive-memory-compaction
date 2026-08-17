@@ -933,6 +933,13 @@ class WalkResult:
     # a decision from one that is an outage.
     failed: bool = False
     error: str = ""
+    # Filled by the agentic selector only. The rules it was shown, the ones it
+    # says shortened the search, and the searches it ran — all three are what
+    # the next reflection scores, so they have to survive as far as the session
+    # record rather than being logged and forgotten.
+    rules_shown: list[str] = field(default_factory=list)
+    rules_used: list[str] = field(default_factory=list)
+    searched: list[str] = field(default_factory=list)
 
     def why(self, node_id: str) -> str:
         pick = self.picks.get(node_id)

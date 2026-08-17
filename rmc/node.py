@@ -151,6 +151,21 @@ class Node:
     # thinking about this topic, rather than as an out-of-context interruption.
     conflict: str = ""
     preserve: list[str] = field(default_factory=list)  # hints from rejected compressions
+    # Spans a reflection pass *observed* doing work: it watched a session and
+    # reported that this specific part of the lesson changed what the agent did.
+    #
+    # Distinct from `preserve`, and the difference is the direction of the
+    # evidence. `preserve` is negative and post-hoc — a compression cut this and
+    # replay failed, so put it back. This is positive and observational — this
+    # part was seen mattering in real work, before any compression touched it.
+    # Compression previously had only the first, which meant it guessed what to
+    # cut and found out afterwards; with this it can take the reduction from the
+    # parts that have no record of being used.
+    #
+    # Absence is not evidence of uselessness: a span may simply not have come up
+    # yet. That asymmetry is stated in the compressor prompt, because reading
+    # this list as "everything else is dead" is the obvious wrong move.
+    load_bearing: list[str] = field(default_factory=list)
     path: Path | None = None
 
     # ---------------------------------------------------------------- derived
@@ -191,6 +206,7 @@ class Node:
             "covers_tasks": list(self.covers_tasks),
             "tags": list(self.tags),
             "preserve": list(self.preserve),
+            "load_bearing": list(self.load_bearing),
             "dropped": [d.to_dict() for d in self.dropped],
             "stats": self.stats.to_dict(),
         }
@@ -229,6 +245,7 @@ class Node:
             origin=str(meta.get("origin") or "reflection"),
             conflict=str(meta.get("conflict") or ""),
             preserve=_as_list(meta.get("preserve")),
+            load_bearing=_as_list(meta.get("load_bearing")),
             path=path,
         )
 
