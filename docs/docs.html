@@ -48,6 +48,7 @@
     <a href="#start">Quickstart</a>
     <a href="#trouble">When something looks wrong</a>
     <a href="#tasks">Everyday tasks</a>
+    <a href="#migrate">Coming from Claude skills</a>
 
     <div class="grp">Reference</div>
     <a href="#commands">Commands</a>
@@ -219,6 +220,54 @@ rmc doctor</pre>
   is one the reflector saw the evidence for and did not take.
 </p>
 
+<h2 id="migrate">Coming from Claude skills</h2>
+<p>
+  If you already keep engineering knowledge as a directory of
+  <code>SKILL.md</code> files &mdash; especially one grown by an introspection
+  skill that writes new skills as it learns &mdash; you have built a manual
+  version of this. Migration converts it.
+</p>
+<pre>rmc migrate                    <span class="c"># plan: scans ./.claude/skills and ~/.claude/skills</span>
+rmc migrate --apply            <span class="c"># write the lessons</span>
+rmc migrate --path ~/other/skills --limit 5</pre>
+<p>
+  It is not a file conversion. A skill is a document holding several separate
+  claims; a lesson is one claim plus the situation that summons it. So each
+  skill is read and split, and three rules govern the result:
+</p>
+<table>
+  <tr><th>Rule</th><th>Why</th></tr>
+  <tr>
+    <td>Capture machinery is <b>not</b> imported</td>
+    <td>Skills whose subject is writing, indexing or syncing skills &mdash;
+    <code>introspect</code>, <code>create-skill</code>, <code>sync-skills</code>
+    &mdash; are reported as superseded. RMC does that itself; importing them
+    would fill the store with instructions for maintaining the system you are
+    leaving.</td>
+  </tr>
+  <tr>
+    <td>Nothing is deleted</td>
+    <td>Migration only adds. Retiring a skill is your call, made after you have
+    seen <code>rmc recall</code> return the same knowledge.</td>
+  </tr>
+  <tr>
+    <td>Everything goes through normal placement</td>
+    <td>Bulk import is exactly where reconciliation matters: a library grown
+    over months contains near-duplicates and outright contradictions, and a
+    fast path would import both sides of a disagreement in silence.</td>
+  </tr>
+</table>
+<p>
+  The <code>description:</code> field of a skill is already a gist &mdash; it
+  states when the skill applies &mdash; so it carries across directly, which is
+  what lets recall fire on knowledge you previously had to remember to invoke.
+</p>
+<p>
+  Afterwards, check a few things you know a skill covered:
+  <code>rmc recall -p "deploy the schema registry"</code>. When RMC returns the
+  same knowledge, the superseded skills are the safest to delete first.
+</p>
+
 <h2 id="commands">Commands</h2>
 <div class="scroll">
 <table>
@@ -235,6 +284,9 @@ rmc doctor</pre>
   <tr><td><code>rmc compact</code></td><td>Attempt compressions that are due</td></tr>
   <tr><td><code>rmc dream [--list] [--due] [--log] [--gists]</code></td><td>Whole-store consolidation; <code>--gists</code> fills missing routing views</td></tr>
   <tr><td><code>rmc eval</code></td><td>Replay held-out work against every level of a lesson</td></tr>
+  <tr><td><code>rmc eval-recall [--save N] [--against N]</code></td><td>Score retrieval against what was actually used; A/B two configurations</td></tr>
+  <tr><td><code>rmc tune [--rounds N] [--history]</code></td><td>Let RMC propose and measure its own retrieval improvements</td></tr>
+  <tr><td><code>rmc migrate [--path D] [--apply]</code></td><td>Convert an existing Claude skills library into lessons</td></tr>
   <tr><td><code>rmc report --about "…"</code></td><td>A redacted defect report. Sends nothing.</td></tr>
   <tr><td><code>rmc events --kind K</code></td><td>Raw telemetry</td></tr>
   <tr><td><code>rmc config [key] [value]</code></td><td>Read or set any setting</td></tr>

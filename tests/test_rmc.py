@@ -407,6 +407,146 @@ def judge_for(store, route):
 # --------------------------------------------------------------------------- #
 
 
+class TestSkillMigration(StoreCase):
+    """People who need RMC have usually built a worse version of it by hand.
+
+    A skills library is months of work, so the conversion has to be honest
+    about what it is doing: never delete, never import the machinery being
+    replaced, and never bulk-append past the reconciliation that catches the
+    contradictions such a library inevitably contains.
+    """
+
+    def skill(self, name, text):
+        d = self.base / "skills" / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(text, encoding="utf-8")
+        return self.base / "skills"
+
+    def test_frontmatter_and_body_are_separated(self) -> None:
+        from rmc.migrate import _frontmatter
+
+        fields, body = _frontmatter(
+            "---\nname: deploy\ndescription: Ship it. Use when deploying.\n---\n\n# Deploy\nSteps."
+        )
+        self.assertEqual(fields["name"], "deploy")
+        self.assertIn("Use when deploying", fields["description"])
+        self.assertTrue(body.startswith("# Deploy"))
+
+    def test_a_folded_description_is_joined(self) -> None:
+        """`description: >` spreads the trigger text over several lines, and
+        the trigger is the most valuable field in the file — it is already a
+        gist."""
+        from rmc.migrate import _frontmatter
+
+        fields, _ = _frontmatter(
+            "---\nname: x\ndescription: >\n  Use when the user says\n  reflect or retro.\n---\nBody."
+        )
+        self.assertEqual(fields["description"], "Use when the user says reflect or retro.")
+
+    def test_a_file_with_no_frontmatter_still_migrates(self) -> None:
+        from rmc.migrate import discover
+
+        root = self.skill("plain", "# Just a heading\n\nAnd some knowledge.")
+        found = [s for s in discover(root) if s.name == "plain"]
+        self.assertEqual(len(found), 1)
+        self.assertIn("knowledge", found[0].body)
+
+    def test_worktree_copies_are_not_imported_twice(self) -> None:
+        """A worktree holds a full second copy of the library. Importing both
+        doubles every lesson and then asks the model to reconcile each against
+        its own twin."""
+        from rmc.migrate import discover
+
+        self.skill("real", "---\nname: real\n---\nContent.")
+        wt = self.base / "skills" / ".claude" / "worktrees" / "wt" / "skills" / "real"
+        wt.mkdir(parents=True, exist_ok=True)
+        (wt / "SKILL.md").write_text("---\nname: real\n---\nContent.", encoding="utf-8")
+        self.assertEqual([s.name for s in discover(self.base / "skills")], ["real"])
+
+    def test_an_empty_skill_is_skipped(self) -> None:
+        from rmc.migrate import discover
+
+        root = self.skill("hollow", "---\nname: hollow\n---\n")
+        self.assertEqual([s.name for s in discover(root) if s.name == "hollow"], [])
+
+    def test_planning_writes_nothing(self) -> None:
+        """A skills library is months of work; the conversion is shown before
+        it happens."""
+        from rmc.migrate import run
+
+        root = self.skill("deploy", "---\nname: deploy\n---\nAlways set PG_PORT first.")
+        adapter = MockAdapter(router=lambda prompt, schema: {
+            "verdict": "import",
+            "lessons": [{"body": "Set PG_PORT before deploying.", "gist": "when deploying",
+                         "title": "Set PG_PORT", "family": "deploy"}],
+        })
+        before = len(list(self.store.nodes()))
+        outcomes = run(self.store, adapter, [root], apply_changes=False)
+        self.store.invalidate()
+        self.assertEqual(len(list(self.store.nodes())), before)
+        self.assertEqual(outcomes[0].verdict, "import")
+        self.assertEqual(len(outcomes[0].imported), 1)
+
+    def test_applying_routes_through_normal_placement(self) -> None:
+        """Bulk import is where reconciliation matters most — a library grown
+        over months contains both sides of some disagreements."""
+        from rmc.migrate import run
+
+        root = self.skill("deploy", "---\nname: deploy\n---\nAlways set PG_PORT first.")
+
+        def route(prompt, schema):
+            if "RMC:migrate" in prompt:
+                return {"verdict": "import", "lessons": [
+                    {"body": "Set PG_PORT before deploying.", "gist": "when deploying",
+                     "title": "Set PG_PORT", "family": "deploy"}]}
+            return {"picks": []}
+
+        run(self.store, MockAdapter(router=route), [root], apply_changes=True)
+        self.store.invalidate()
+        stored = [n for n in self.store.nodes() if n.origin == "migrated"]
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0].family, "deploy")
+        self.assertTrue(stored[0].gist, "a migrated lesson must be routable immediately")
+
+    def test_the_source_skill_is_never_touched(self) -> None:
+        """Whether to retire a skill is the user's call, made after seeing RMC
+        recall the same knowledge."""
+        from rmc.migrate import run
+
+        root = self.skill("deploy", "---\nname: deploy\n---\nAlways set PG_PORT first.")
+        path = root / "deploy" / "SKILL.md"
+        original = path.read_text()
+
+        def route(prompt, schema):
+            if "RMC:migrate" in prompt:
+                return {"verdict": "import", "lessons": [
+                    {"body": "Set PG_PORT first.", "gist": "when deploying", "family": "deploy"}]}
+            return {"picks": []}
+
+        run(self.store, MockAdapter(router=route), [root], apply_changes=True)
+        self.assertEqual(path.read_text(), original)
+
+    def test_capture_machinery_is_reported_not_imported(self) -> None:
+        """Importing the skills that captured skills would fill the store with
+        instructions for maintaining the system being replaced."""
+        from rmc.migrate import run
+
+        root = self.skill("introspect", "---\nname: introspect\n---\nReflect and write a skill.")
+        adapter = MockAdapter(router=lambda prompt, schema: {
+            "verdict": "superseded", "reason": "RMC captures automatically"})
+        outcomes = run(self.store, adapter, [root], apply_changes=True)
+        self.store.invalidate()
+        self.assertEqual(outcomes[0].verdict, "superseded")
+        self.assertEqual([n for n in self.store.nodes() if n.origin == "migrated"], [])
+
+    def test_a_model_failure_is_reported_not_swallowed(self) -> None:
+        from rmc.migrate import run
+
+        root = self.skill("deploy", "---\nname: deploy\n---\nSomething.")
+        outcomes = run(self.store, MockAdapter(router=lambda p, s: None), [root])
+        self.assertTrue(outcomes[0].error)
+
+
 class TestSelfTuning(StoreCase):
     """RMC changing its own retrieval criteria, and being stopped when wrong.
 
