@@ -374,13 +374,69 @@ chose to consider cannot see candidates it never considered. Coverage has to be
 checked separately from precision, and the eval as built would never have found
 this.*
 
-## 9. Reproducing
+---
+
+## 9. Closing the loop: RMC tuning its own retrieval
+
+Every stage of RMC is corrected by an outcome except the one that decides what
+gets recalled. Its criteria — the relevance prompt and a handful of constants —
+could only change when a person had an idea, and §4.2 is the record of how well
+that goes: **five of six hand-written proposals were regressions**, each
+plausible, each argued for.
+
+`rmc tune` runs the same loop without a person in it. Measure; show the model
+where retrieval was actually wrong, in cases rather than numbers, misses first;
+take one proposal; apply it in a sandbox; measure again; keep it only if
+**precision and recall are both at least as good**. A trade is a preference and
+preferences belong to the user.
+
+Three properties make it safe to leave running:
+
+- **It cannot reach a correctness gate.** Only recall-shaped constants are
+  tunable, and only within a range. A tuner that can move the thresholds it is
+  scored against can pass its own exam.
+- **A rejected change is reverted unconditionally.** Damage arriving labelled as
+  an improvement is worse than no loop at all.
+- **Failures are remembered and fed back into the next proposal.** A loop that
+  forgets re-proposes forever, and the failures are the more informative half:
+  that a plausible change made things worse is a fact about this store that
+  nothing else records.
+
+Two prerequisites had to exist first, and both are the same bug in §5 wearing a
+different hat. Prompts had to become overridable per store — they were the
+largest lever on judgement quality and the one part unchangeable without editing
+the package, so they were unmeasurable. And `criteria_version()` had to
+fingerprint the *resolved* prompt rather than the shipped one, or an override
+would answer from the cache of the text it replaced.
+
+**First run, one round.** It proposed something neither the author nor the model
+had raised in six manual attempts: classify the work as **BUILDING** (code is
+about to change) or **CONVERSING** (the user is thinking aloud and wants an
+answer) *before* judging any lesson, on the grounds that the same lesson is
+load-bearing in one mode and pure noise in the other.
+
+| | before | after |
+|---|---|---|
+| precision | 47% | **51%** |
+| recall | 77% | **88%** |
+
+Kept, because both improved. This is the first change to RMC's retrieval that
+no human proposed.
+
+*The honest caveat: n=1, on one store, scored against six episodes. What the
+result supports is that the loop can find and validate a non-obvious change —
+not that it will keep doing so.*
+
+## 10. Reproducing
 
 ```
 rmc status                                  # store shape, routing cost, precision
 rmc eval-recall --save NAME                 # score retrieval against observed use
 rmc eval-recall --model M --against NAME    # A/B a routing model
 rmc dream --dry-run                         # consolidation candidates, no writes
+rmc tune --rounds N                         # propose, measure, keep only wins
+rmc tune --history                          # every attempt, including the rejected
+rmc migrate [--apply]                       # convert a Claude skills library
 ```
 
 Saved runs live in `.rmc/evals/*.json`.
