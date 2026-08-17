@@ -486,6 +486,30 @@ REDIRECT = """<!doctype html>
 """
 
 
+def check() -> list[str]:
+    """Every internal link and anchor, verified against what was written.
+
+    Cheap, and it catches the failure a docs generator makes easiest: a page
+    renamed in NAV while a cross-reference in the prose still points at the old
+    slug. Nothing else notices until a reader does.
+    """
+    on_disk = {f.name for f in HERE.iterdir() if f.is_file()}
+    pages = sorted(HERE.glob("*.html"))
+    anchors = {f.name: set(re.findall(r'id="([^"]+)"', f.read_text(encoding="utf-8")))
+               for f in pages}
+    bad = []
+    for f in pages:
+        for href in re.findall(r'href="([^"]+)"', f.read_text(encoding="utf-8")):
+            if href.startswith(("http", "mailto:", "data:", "./")):
+                continue
+            target, _, frag = href.partition("#")
+            if target and target not in on_disk:
+                bad.append(f"{f.name} -> {href} (no such file)")
+            elif frag and frag not in anchors.get(target or f.name, set()):
+                bad.append(f"{f.name} -> {href} (no such anchor)")
+    return bad
+
+
 def main() -> None:
     for page in PAGES:
         (HERE / page.href).write_text(render(page), encoding="utf-8")
@@ -493,6 +517,10 @@ def main() -> None:
     (HERE / "docs.html").write_text(REDIRECT, encoding="utf-8")
     (HERE / "404.html").write_text(not_found(), encoding="utf-8")
     print(f"{len(PAGES)} pages + docs.html redirect + 404")
+    broken = check()
+    print("links: " + ("all resolve" if not broken else f"{len(broken)} BROKEN"))
+    for line in broken:
+        print("  " + line)
 
 
 def not_found() -> str:

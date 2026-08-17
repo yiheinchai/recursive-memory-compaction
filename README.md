@@ -641,3 +641,18 @@ python3 -m unittest discover -s tests
 assert what the harness does with an answer; *control-flow* tests run against a
 simulated knowledge world where a task is solved iff the required facts are in
 the lesson text, so compress → fail → descend → rescue genuinely executes.
+
+## Documentation
+
+The site under `docs/` is generated. Content lives in `docs/_sections/*.html`;
+`docs/build.py` wraps it in the shared navigation, search index and chrome, and
+verifies every internal link.
+
+```
+python3 docs/build.py
+```
+
+Edit a fragment, run the build, commit the output — GitHub Pages serves it
+directly. The configuration reference is read out of `rmc/config.py` at build
+time rather than retyped, because the hand-kept version drifted from the code
+and nobody noticed for weeks.
