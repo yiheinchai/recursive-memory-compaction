@@ -846,7 +846,11 @@ footer a { color: var(--muted); }
 .docs > * { min-width: 0; }
 .docs {
   gap: clamp(28px, 5vw, 64px);
-  padding: 44px 0 80px;
+  /* The horizontal value has to be restated. This element is `wrap docs`, and
+     `.wrap` supplies the gutter — but a later shorthand `padding` here resets
+     it to zero, so the text ran edge to edge. Invisible on a wide screen,
+     where `max-width` leaves margin anyway, and obvious on a phone. */
+  padding: 44px var(--gut) 80px;
   align-items: start;
 }
 .toc { position: sticky; top: 96px; font-size: 14.5px; }
