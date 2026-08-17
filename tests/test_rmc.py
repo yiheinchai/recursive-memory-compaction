@@ -166,6 +166,65 @@ class TestRedaction(unittest.TestCase):
         text = "Retry after 100ms then 400ms; commit 4050898 fixed it."
         self.assertEqual(redact(text), text)
 
+    def test_a_resource_name_is_not_a_credential(self) -> None:
+        """`AUTH_TOKENS_TABLE = "auth-tokens"` names a DynamoDB table.
+
+        Found by importing a real Terraform skill: the name contains
+        AUTH_TOKEN, so the assigned-secret rule fired and the stored lesson
+        taught a table name of [REDACTED]. That is not the recoverable kind of
+        mangle the over-redaction bias trades for — it is a lesson that now
+        says something false, and nothing downstream can tell.
+        """
+        text = 'AUTH_TOKENS_TABLE = "auth-tokens"'
+        self.assertEqual(redact(text), text)
+
+    def test_an_interpolation_is_not_a_credential(self) -> None:
+        """A variable reference is the *name of where* a secret lives."""
+        for text in (
+            'AUTH_TOKENS_TABLE = "${var.AUTH_TOKENS_TABLE}-${var.ENVIRONMENT}"',
+            'API_KEY = "${var.API_KEY}"',
+            "client_secret: $CLIENT_SECRET",
+        ):
+            self.assertEqual(redact(text), text, text)
+
+    def test_the_exemptions_do_not_open_a_hole(self) -> None:
+        """Each exemption needs positive evidence of harmlessness. Anything
+        that merely fails to look like a secret is still redacted."""
+        for text in (
+            'API_KEY = "sk_live_abcdef1234567890xyz"',
+            "client_secret: hunter2hunter2hunter2",
+            'AUTH_TOKEN = "eyJhbGciOiJIUzI1NiJ9abcdefgh"',
+            'password = "correcthorsebattery"',
+            'SESSION_TOKEN = "AQoDYXdzEJr1KlongenoughvaluE"',
+        ):
+            self.assertIn("[REDACTED]", redact(text), text)
+
+    def test_a_noreply_address_is_left_alone(self) -> None:
+        """It identifies nobody, and it appears inside literal commands.
+
+        `git -c user.email="noreply@anthropic.com"` pseudonymised into
+        `[email:anthropic.com]` is a lesson teaching a command that fails.
+        """
+        text = 'git -c user.name="Claude" -c user.email="noreply@anthropic.com" commit'
+        self.assertEqual(redact(text), text)
+
+    def test_a_real_address_is_still_pseudonymised(self) -> None:
+        self.assertEqual(
+            redact("mail alice.smith@customer.co.uk"), "mail [email:customer.co.uk]"
+        )
+
+    def test_a_configuration_keyword_is_not_a_secret(self) -> None:
+        """`secrets: inherit` is GitHub Actions syntax and is usually the
+        entire point of the lesson it appears in."""
+        self.assertEqual(redact("callers pass `secrets: inherit` through"),
+                         "callers pass `secrets: inherit` through")
+        self.assertIn("[REDACTED]", redact("secrets: sk_live_abcdefghijklmnop"))
+
+    def test_a_suffix_only_counts_as_the_last_segment(self) -> None:
+        """SESSION_TOKEN_URL is a URL; SESSION_TOKEN is a token."""
+        self.assertNotIn("[REDACTED]", redact('SESSION_TOKEN_URL = "https://a.internal/token"'))
+        self.assertIn("[REDACTED]", redact('URL_SESSION_TOKEN = "abcdefghijklmnop"'))
+
 
 # --------------------------------------------------------------------------- #
 # transcript parsing — facts only, no classification

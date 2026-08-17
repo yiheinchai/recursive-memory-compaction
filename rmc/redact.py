@@ -43,6 +43,90 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 # sometimes load-bearing context in a lesson.
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 
+# --------------------------------------------------------------------------- #
+# exemptions: evidence that a match is *not* a secret
+# --------------------------------------------------------------------------- #
+#
+# The bias toward over-redaction above is right and stays. These do not loosen
+# it — each requires positive evidence that the thing matched cannot be a
+# credential, rather than merely failing to look like one.
+#
+# What forced this: `AUTH_TOKENS_TABLE = "auth-tokens"` in a Terraform config.
+# The name contains `AUTH_TOKEN`, so `assigned-secret` fired, and an imported
+# infrastructure lesson was stored teaching a table name of `[REDACTED]`. That
+# is not a recoverable mangle — it is a lesson that now says something false,
+# and nothing downstream can tell.
+
+# A value that is a variable reference cannot be a secret: it is the name of
+# where the secret lives. `${var.X}`, `$X`, `{{ x }}`, `<your-key>`.
+_INTERPOLATION_RE = re.compile(
+    r"^(?:\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\{\{[^}]*\}\}|<[^>]*>|%[A-Za-z_]+%)"
+)
+
+# A name whose last segment names a *resource* is describing where something is,
+# not what the credential is. `AUTH_TOKENS_TABLE` is a table; `SESSION_TOKEN` is
+# a token. Only the final segment counts, and the list stays short.
+_RESOURCE_SUFFIXES = (
+    "table",
+    "tablename",
+    "bucket",
+    "queue",
+    "topic",
+    "arn",
+    "url",
+    "uri",
+    "endpoint",
+    "host",
+    "hostname",
+    "port",
+    "region",
+    "namespace",
+    "prefix",
+    "filename",
+    "filepath",
+    "path",
+)
+
+
+# Configuration keywords. A field whose value is one of these is declaring a
+# mode, not carrying a credential — `secrets: inherit` is GitHub Actions syntax,
+# and redacting it turned a workflow lesson into one that cannot be followed.
+_KEYWORD_VALUES = frozenset(
+    {
+        "inherit",
+        "true",
+        "false",
+        "none",
+        "null",
+        "nil",
+        "required",
+        "optional",
+        "enabled",
+        "disabled",
+        "auto",
+        "default",
+        "always",
+        "never",
+    }
+)
+
+
+def _not_a_secret(name: str, value: str) -> bool:
+    """Whether a `name = value` match has positively proved itself harmless."""
+    value = value.strip().strip("`'\"")
+    if _INTERPOLATION_RE.match(value):
+        return True
+    if value.lower() in _KEYWORD_VALUES:
+        return True
+    tail = re.split(r"[_.\-]", name.strip().lower())[-1]
+    return tail in _RESOURCE_SUFFIXES
+
+
+# Addresses that are no-reply by construction. They identify nobody, and they
+# appear inside literal commands — `git -c user.email="noreply@anthropic.com"`
+# — where pseudonymising them leaves a lesson teaching a command that is wrong.
+_NOREPLY_RE = re.compile(r"^(?:no[._-]?reply|donot[._-]?reply|do[._-]?not[._-]?reply)$", re.I)
+
 
 def _luhn_ok(digits: str) -> bool:
     total, alt = 0, False
@@ -72,11 +156,25 @@ def redact(text: str, *, keep_emails: bool = False) -> str:
 
             out = pattern.sub(_card, out)
         elif name in ("bearer", "assigned-secret"):
-            out = pattern.sub(lambda m: f"{m.group(1)}={PLACEHOLDER}", out)
+            def _assigned(m: re.Match[str]) -> str:
+                # Leave the original text alone when the match has proved
+                # itself harmless — including its spacing, since a config line
+                # is often the point of the lesson.
+                if _not_a_secret(m.group(1), m.group(2)):
+                    return m.group(0)
+                return f"{m.group(1)}={PLACEHOLDER}"
+
+            out = pattern.sub(_assigned, out)
         else:
             out = pattern.sub(PLACEHOLDER, out)
     if not keep_emails:
-        out = _EMAIL_RE.sub(lambda m: f"[email:{m.group(0).split('@')[-1]}]", out)
+        def _email(m: re.Match[str]) -> str:
+            local, _, domain = m.group(0).partition("@")
+            if _NOREPLY_RE.match(local):
+                return m.group(0)
+            return f"[email:{domain}]"
+
+        out = _EMAIL_RE.sub(_email, out)
     return out
 
 
