@@ -407,6 +407,108 @@ def judge_for(store, route):
 # --------------------------------------------------------------------------- #
 
 
+class TestSelfTuning(StoreCase):
+    """RMC changing its own retrieval criteria, and being stopped when wrong.
+
+    Every other stage is corrected by outcomes; the criteria that decide what
+    gets recalled could only change when a person had an idea, and people are
+    bad at this — of six hand-written proposals to the relevance prompt, five
+    made retrieval worse. So what matters here is not that it proposes, but
+    that it cannot keep a change that did not win, and cannot leave one behind.
+    """
+
+    def test_only_a_tunable_constant_may_be_moved(self) -> None:
+        """A loop that can reach the correctness gates can pass its own exam."""
+        from rmc.tune import _validate
+
+        _, _, why = _validate(self.store, {"kind": "config", "key": "compaction.threshold", "value": 0.5})
+        self.assertIn("not a tunable", why)
+
+    def test_a_constant_outside_its_range_is_refused(self) -> None:
+        from rmc.tune import _validate
+
+        _, _, why = _validate(self.store, {"kind": "config", "key": "recall.max_families", "value": 500})
+        self.assertIn("outside", why)
+
+    def test_a_prompt_missing_its_placeholders_is_refused(self) -> None:
+        """It would throw at format time and score as 'the judge could not
+        answer' — a catastrophic result for reasons unrelated to the idea."""
+        from rmc.tune import _validate
+
+        _, _, why = _validate(self.store, {"kind": "prompt", "text": "Decide relevance. " * 40})
+        self.assertIn("missing", why)
+
+    def test_a_valid_prompt_is_accepted(self) -> None:
+        from rmc.tune import _validate
+
+        kind, target, why = _validate(
+            self.store,
+            {"kind": "prompt", "text": "Judge the work. " * 30 + "{question} {candidates}"},
+        )
+        self.assertEqual((kind, target, why), ("prompt", "relevance", ""))
+
+    def test_a_reverted_config_change_leaves_nothing_behind(self) -> None:
+        """Damage arriving labelled as an improvement is worse than no loop."""
+        from rmc.tune import Sandbox
+
+        before = self.store.config.get("recall.max_families")
+        box = Sandbox(self.store)
+        box.apply_config("recall.max_families", 7)
+        self.assertEqual(self.store.config.get("recall.max_families"), 7)
+        box.revert()
+        self.assertEqual(self.store.config.get("recall.max_families"), before)
+
+    def test_a_reverted_prompt_change_leaves_nothing_behind(self) -> None:
+        from rmc.tune import Sandbox
+
+        path = self.store.root / "prompts" / "relevance.md"
+        box = Sandbox(self.store)
+        box.apply_prompt("relevance", "experimental {question} {candidates}")
+        self.assertTrue(path.exists())
+        box.revert()
+        self.assertFalse(path.exists(), "an experiment must not survive its own rejection")
+
+    def test_an_override_is_actually_used(self) -> None:
+        from rmc.judge import RELEVANCE, prompt
+
+        (self.store.root / "prompts").mkdir(parents=True, exist_ok=True)
+        (self.store.root / "prompts" / "relevance.md").write_text("mine {question} {candidates}")
+        self.assertEqual(prompt(self.store, "relevance", RELEVANCE), "mine {question} {candidates}")
+
+    def test_an_override_changes_the_criteria_fingerprint(self) -> None:
+        """Otherwise every cached verdict answers with the text it replaced, and
+        the experiment reports a confident null — the same failure that made a
+        full prompt rewrite return a byte-identical eval report."""
+        from rmc.judge import criteria_version
+
+        before = criteria_version(self.store)
+        (self.store.root / "prompts").mkdir(parents=True, exist_ok=True)
+        (self.store.root / "prompts" / "relevance.md").write_text("different {question} {candidates}")
+        self.assertNotEqual(criteria_version(self.store), before)
+
+    def test_an_unreadable_override_falls_back_rather_than_failing(self) -> None:
+        """Recall runs in a hook. An experiment must never take memory offline."""
+        from rmc.judge import RELEVANCE, prompt
+
+        (self.store.root / "prompts").mkdir(parents=True, exist_ok=True)
+        (self.store.root / "prompts" / "relevance.md").write_text("   ")
+        self.assertEqual(prompt(self.store, "relevance", RELEVANCE), RELEVANCE)
+
+    def test_failed_attempts_are_remembered(self) -> None:
+        """A loop that forgets its failures re-proposes them forever, and the
+        failures are the more informative half."""
+        from rmc.tune import Attempt, Ledger
+
+        ledger = Ledger(self.store)
+        ledger.add(Attempt(at="t", kind="config", target="recall.max_depth",
+                           hypothesis="deeper finds more", kept=False,
+                           before={"precision": 0.48, "recall": 1.0},
+                           after={"precision": 0.4, "recall": 0.8},
+                           verdict="reverted — dropped 3 lesson(s) that had helped"))
+        self.assertIn("deeper finds more", ledger.history())
+        self.assertIn("reverted", ledger.history())
+
+
 class TestWarmRoutingPrefix(StoreCase):
     """The candidate list is identical between prompts; only the question moves.
 

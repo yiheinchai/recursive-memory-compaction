@@ -38,14 +38,49 @@ from .util import count_tokens, truncate
 # schemas
 # --------------------------------------------------------------------------- #
 
-def criteria_version() -> str:
-    """Fingerprint of the prompts that define a judgement.
+def criteria_version(store: Any = None) -> str:
+    """Fingerprint of the prompts that define a judgement, as resolved.
 
-    Cheap, and it makes every cached verdict self-invalidating: edit a prompt
+    Cheap, and it makes every cached verdict self-invalidating: change a prompt
     and the old answers become unreachable rather than silently authoritative.
+
+    Resolved, not declared — a store may override any of these on disk, and a
+    fingerprint of the shipped text would leave every override answering with
+    the cache of the text it replaced. That is the exact failure this function
+    was added to prevent, one level up.
     """
-    material = (RELEVANCE + WARM_RELEVANCE + RELATED).encode("utf-8")
-    return hashlib.sha256(material).hexdigest()[:8]
+    material = "".join(
+        prompt(store, name, default)
+        for name, default in (
+            ("relevance", RELEVANCE),
+            ("warm_relevance", WARM_RELEVANCE),
+            ("related", RELATED),
+        )
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:8]
+
+
+def prompt(store: Any, name: str, default: str) -> str:
+    """The text to use for a judgement, allowing a store-local override.
+
+    Prompts are the largest lever on judgement quality and were the one part of
+    the system that could not be changed without editing the package. That made
+    them untunable in place, and untunable means unmeasurable: `rmc tune`
+    proposes a wording, scores it against recorded outcomes, and keeps it only
+    if it wins — none of which is possible while the text is a module constant.
+
+    A malformed or unreadable override falls back to the shipped text rather
+    than failing the call. Recall runs in a hook; an experiment must never be
+    able to take memory offline.
+    """
+    if store is None:
+        return default
+    try:
+        path = store.root / "prompts" / f"{name}.md"
+        text = path.read_text(encoding="utf-8").strip() if path.exists() else ""
+        return text or default
+    except Exception:
+        return default
 
 
 RELEVANCE_SCHEMA = {
@@ -298,7 +333,7 @@ class Judge:
         """
         who = f"{getattr(self.adapter, 'name', '?')}:{getattr(self.adapter, 'model', None) or 'default'}"
         return hashlib.sha256(
-            "\x1f".join((criteria_version(), who, *parts)).encode("utf-8")
+            "\x1f".join((criteria_version(self.store), who, *parts)).encode("utf-8")
         ).hexdigest()[:16]
 
     def ask(
@@ -406,13 +441,17 @@ class Judge:
         # not carry them again. Repeating them defeats the entire point — the
         # copy in the prompt is new text at full price, and it is the copy the
         # model reads, so the cached one is paid for and ignored.
-        prompt = (
-            WARM_RELEVANCE.format(question=truncate(question, 3000))
+        text = (
+            prompt(self.store, "warm_relevance", WARM_RELEVANCE).format(
+                question=truncate(question, 3000)
+            )
             if session is not None
-            else RELEVANCE.format(question=truncate(question, 3000), candidates=rendered)
+            else prompt(self.store, "relevance", RELEVANCE).format(
+                question=truncate(question, 3000), candidates=rendered
+            )
         )
         data = self.ask(
-            prompt,
+            text,
             RELEVANCE_SCHEMA,
             cache_key=self.key("relevance", question.strip(), *(n.id for n in candidates)),
             session=session,
@@ -491,7 +530,9 @@ class Judge:
             return []
         rendered = "\n\n".join(_render(node) for node in candidates)
         data = self.ask(
-            RELATED.format(new=truncate(new_lesson, 3000), candidates=rendered),
+            prompt(self.store, "related", RELATED).format(
+                new=truncate(new_lesson, 3000), candidates=rendered
+            ),
             RELEVANCE_SCHEMA,
             cache_key=self.key("related", new_lesson.strip(), *(n.id for n in candidates)),
         )

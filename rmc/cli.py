@@ -991,6 +991,57 @@ def cmd_hook(args: argparse.Namespace) -> int:
     return dispatch(args.event)
 
 
+def cmd_tune(args: argparse.Namespace) -> int:
+    """Close the loop on the one stage that could only improve when asked to.
+
+    Every other stage of RMC is corrected by outcomes. The criteria that decide
+    what gets recalled were changeable only by a person having an idea — and
+    people are bad at this: of six hand-written proposals to the relevance
+    prompt, five made retrieval worse. So the model proposes, the recorded
+    outcomes decide, and the losers are written down so nobody retries them.
+    """
+    from . import tune as tuner
+
+    store = need_store(args)
+    if store is None:
+        return 1
+
+    if args.history:
+        entries = tuner.Ledger(store).all()
+        if not entries:
+            print(dim("nothing tried yet — run `rmc tune`"))
+            return 0
+        for attempt in entries:
+            mark = green("kept") if attempt.kept else dim("no")
+            print(f"{mark}  {attempt.line()}")
+        return 0
+
+    adapter = make_adapter(store, args)
+    attempts = tuner.run(store, adapter, rounds=args.rounds, dry_run=args.dry_run)
+    if not attempts:
+        print(dim("nothing to tune against yet"))
+        print(dim("recall can only be improved once some work has been done with lessons in play"))
+        return 0
+
+    for attempt in attempts:
+        head = green("KEPT") if attempt.kept else dim("reverted")
+        print(f"{head}  {attempt.kind}: {attempt.target}")
+        print(f"      {attempt.hypothesis}")
+        if attempt.after:
+            print(
+                dim(
+                    f"      precision {attempt.before['precision']:.0%} -> {attempt.after['precision']:.0%}"
+                    f"   recall {attempt.before['recall']:.0%} -> {attempt.after['recall']:.0%}"
+                    f"   noise {int(attempt.before['noise_tokens'])} -> {int(attempt.after['noise_tokens'])}"
+                )
+            )
+        print(dim(f"      {attempt.verdict}"))
+    kept = sum(1 for a in attempts if a.kept)
+    print()
+    print(f"{kept} of {len(attempts)} change(s) kept. Every attempt is in `rmc tune --history`.")
+    return 0
+
+
 def cmd_eval_recall(args: argparse.Namespace) -> int:
     """Score the one stage that was never scored.
 
@@ -1337,6 +1388,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--against", metavar="NAME", help="compare this run to a saved one")
     add_agent_flags(p)
     p.set_defaults(func=cmd_eval_recall)
+
+    p = sub.add_parser(
+        "tune",
+        help="let RMC propose and measure its own retrieval improvements",
+    )
+    p.add_argument("--rounds", type=int, default=1, help="proposals to try")
+    p.add_argument("--dry-run", action="store_true", help="propose without measuring or applying")
+    p.add_argument("--history", action="store_true", help="show past attempts and stop")
+    add_agent_flags(p)
+    p.set_defaults(func=cmd_tune)
 
     p = sub.add_parser("tree", help="visualise the lesson tree")
     p.add_argument("--family")
