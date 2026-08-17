@@ -1,27 +1,60 @@
-<h2 id="migrate">Coming from Claude skills</h2>
+<h2 id="migrate">Coming from Claude or Codex skills</h2>
 <p>
   If you already keep engineering knowledge as a directory of
   <code>SKILL.md</code> files &mdash; especially one grown by an introspection
   skill that writes new skills as it learns &mdash; you have built a manual
-  version of this. Migration converts it.
+  version of this. Migration copies it across.
 </p>
-<pre>rmc migrate                    <span class="c"># plan: scans ./.claude/skills and ~/.claude/skills</span>
+<pre>rmc migrate                    <span class="c"># plan: scans ./.claude/skills, ~/.claude/skills, and the .codex equivalents</span>
 rmc migrate --apply            <span class="c"># write the lessons</span>
-rmc migrate --path ~/other/skills --limit 5</pre>
+rmc migrate --path ~/other/skills --limit 5
+rmc migrate --apply --all      <span class="c"># include the skill-writing skills too</span></pre>
+
+<h3>It is a copy, and deliberately nothing else</h3>
 <p>
-  It is not a file conversion. A skill is a document holding several separate
-  claims; a lesson is one claim plus the situation that summons it. So each
-  skill is read and split, and three rules govern the result:
+  One skill becomes one lesson. The body is copied byte for byte, the
+  <code>description:</code> becomes the gist, the <code>name:</code> the title,
+  the directory name the family. <b>No model calls at all</b> &mdash; importing
+  a five-thousand-line library costs reading five thousand lines off disk.
 </p>
+<div class="note">
+  <b>This reversed an earlier design, and the reason is worth knowing.</b>
+  Migration used to ask a model to split each skill into atomic lessons, on the
+  argument that a skill is several claims in a trench coat while a lesson is one
+  claim plus its trigger. That is true. It also cost a call per document, and
+  every call was a chance to paraphrase away the exact flag, the exact error
+  string, the exact constant &mdash; the specifics that make a lesson worth
+  retrieving. On one real library, 24 skills became 122 lessons that no longer
+  said quite what the originals said.
+</div>
+<p>
+  The constraint that justified splitting was retrieval: a long document was
+  expensive to route past and hard to match. Both halves of that have gone.
+</p>
+<ul>
+  <li><b>Selection is a search now</b>, not a rendered candidate list, so a long
+    lesson costs nothing to route past. Length stopped being a retrieval tax.</li>
+  <li><b>Compaction is driven by observed use</b>, so a lesson that turns out to
+    be four-fifths padding gets cut down by evidence &mdash; rather than by a
+    guess made at import time, before anything is known about which parts
+    matter.</li>
+</ul>
+<p>
+  So import the original unedited, and let the stage that measures which parts do
+  work be the thing that shortens it. Import cheaply, condense on evidence.
+</p>
+
+<h3>What it will not import</h3>
 <table>
   <tr><th>Rule</th><th>Why</th></tr>
   <tr>
-    <td>Capture machinery is <b>not</b> imported</td>
-    <td>Skills whose subject is writing, indexing or syncing skills &mdash;
+    <td>Skill-writing machinery is skipped</td>
+    <td>Skills whose subject is writing or syncing skills &mdash;
     <code>introspect</code>, <code>create-skill</code>, <code>sync-skills</code>
     &mdash; are reported as superseded. RMC does that itself; importing them
     would fill the store with instructions for maintaining the system you are
-    leaving.</td>
+    leaving. It is a short name list, not a judgement, so <code>--all</code>
+    overrides it.</td>
   </tr>
   <tr>
     <td>Nothing is deleted</td>
@@ -29,19 +62,30 @@ rmc migrate --path ~/other/skills --limit 5</pre>
     seen <code>rmc recall</code> return the same knowledge.</td>
   </tr>
   <tr>
-    <td>Everything goes through normal placement</td>
-    <td>Bulk import is exactly where reconciliation matters: a library grown
-    over months contains near-duplicates and outright contradictions, and a
-    fast path would import both sides of a disagreement in silence.</td>
+    <td>The same skill installed twice imports once</td>
+    <td>Project-local and global copies of one library are common, and worktree
+    checkouts hold a full second copy. Deduplicated by directory name &mdash; a
+    string comparison, not a model call.</td>
   </tr>
 </table>
 <p>
-  The <code>description:</code> field of a skill is already a gist &mdash; it
-  states when the skill applies &mdash; so it carries across directly, which is
-  what lets recall fire on knowledge you previously had to remember to invoke.
+  The list errs toward importing. An early draft skipped <code>sync-repos</code>
+  and <code>handoff</code> on the strength of their names; the first clones git
+  repositories and the second writes a runbook for a human, and both are exactly
+  the kind of hard-won procedure worth keeping. Wrongly importing something costs
+  a lesson nobody retrieves; wrongly skipping one loses knowledge silently, and
+  you have no reason to go looking for it.
 </p>
+
+<h3>Afterwards</h3>
 <p>
-  Afterwards, check a few things you know a skill covered:
+  Check a few things you know a skill covered:
   <code>rmc recall -p "deploy the schema registry"</code>. When RMC returns the
   same knowledge, the superseded skills are the safest to delete first.
+</p>
+<p>
+  Imported lessons are long, and that is fine &mdash; they cost nothing per
+  prompt, because the store is searched rather than sent. If a skill referred to
+  files beside it (a <code>references/</code> directory, a script), the lesson
+  carries a line naming where it came from, so those citations still resolve.
 </p>

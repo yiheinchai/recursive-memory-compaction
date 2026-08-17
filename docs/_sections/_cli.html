@@ -123,10 +123,13 @@
   See <a href="tuning.html">Self-tuning</a>.
 </p>
 
-<h3><code>rmc migrate [--path DIR] [--apply] [--limit N]</code></h3>
+<h3><code>rmc migrate [--path DIR] [--apply] [--limit N] [--all]</code></h3>
 <p>
-  Convert a Claude skills library into lessons. Plans by default; nothing is
-  written without <code>--apply</code>, and nothing is ever deleted. See
+  Copy a Claude or Codex skills library into lessons, verbatim: one skill, one
+  lesson, body byte for byte, <b>no model calls</b>. Plans by default; nothing is
+  written without <code>--apply</code>, and nothing is ever deleted.
+  <code>--all</code> also imports the skill-writing skills that are otherwise
+  reported as superseded. See
   <a href="migrate.html">Migrate from Claude skills</a>.
 </p>
 
@@ -139,7 +142,7 @@
 <tr><td><code>agent</code></td><td><code>claude</code></td><td>default backend</td></tr>
 <tr><td><code>recall.enabled</code></td><td><code>true</code></td><td>inject lessons at all</td></tr>
 <tr><td><code>recall.selector</code></td><td><code>agentic</code></td><td><code>agentic</code> — a fork of your session searches the store; <code>judge</code> — the apex walk, and the eval baseline</td></tr>
-<tr><td><code>recall.selector_timeout_s</code></td><td><code>45</code></td><td>bound on the search, since the prompt is blocked meanwhile</td></tr>
+<tr><td><code>recall.selector_timeout_s</code></td><td><code>60</code></td><td>bound on the search, since the prompt is blocked meanwhile</td></tr>
 <tr><td><code>recall.selector_max_tool_calls</code></td><td><code>6</code></td><td>searches allowed before it must answer with what it has</td></tr>
 <tr><td><code>recall.strategy</code></td><td><code>delta-patch</code></td><td><code>delta-patch</code>, <code>delta-jump</code>, or <code>stepwise</code></td></tr>
 <tr><td><code>recall.max_pack_tokens</code></td><td><code>1200</code></td><td>ceiling on injected context</td></tr>

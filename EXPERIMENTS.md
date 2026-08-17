@@ -483,7 +483,68 @@ and recall to 81%. The difference here is that a rule must name a *kind of task*
 and an unconditioned one is refused at mint time. If that distinction does not
 hold up in practice, this should be reverted rather than tuned.
 
-## 12. Reproducing
+## 12. Migration as a copy, and two redaction bugs it exposed
+
+**The change.** `rmc migrate` used to ask a model to split each skill into
+atomic lessons. It now copies: one skill, one lesson, body byte for byte, zero
+model calls.
+
+Measured on the hyper-engineering library (24 skills, 5,414 lines):
+
+| | model-split (before) | verbatim copy (after) |
+|---|---|---|
+| model calls | 24 split + 1 placement per lesson | **0** |
+| lessons produced | 122 | 21 |
+| bodies matching source | n/a — all rewritten | **21 / 21 exact** |
+| stored tokens | — | 96,250 |
+| selection cost per prompt | — | **0** (index is searched, not sent) |
+
+The old design was not silly, it was aimed at a constraint that has since gone.
+Splitting existed because a long document was expensive to route past and hard
+to match. Selection is a search now, so length is not a retrieval tax; and
+compaction is driven by observed use, so a bloated lesson gets cut by evidence
+rather than by a guess made before anything is known about which parts matter.
+What splitting cost was one chance per document to paraphrase away the exact
+flag, the exact error string, the exact constant.
+
+**Two redaction bugs, found only because the copy could be checked.** A verbatim
+import is falsifiable — diff the stored body against the source — and 5 of 21
+did not match:
+
+```
+AUTH_TOKENS_TABLE = "auth-tokens"        -> AUTH_TOKENS_TABLE=[REDACTED]
+git -c user.email="noreply@anthropic.com" -> [email:anthropic.com]
+secrets: inherit                          -> secrets=[REDACTED]
+```
+
+A DynamoDB table whose name contains `AUTH_TOKEN`, a no-reply address inside a
+literal git command, and a GitHub Actions keyword. The redactor's stated bias is
+toward over-redaction — "a mangled lesson is recoverable, a leaked key is not" —
+and that bias is right and stays. But these are not recoverable mangles: the
+lesson now *says something false* about infrastructure, and nothing downstream
+can tell.
+
+The fix does not loosen the bias. Three exemptions, each requiring **positive
+evidence that a match cannot be a credential** rather than merely failing to
+look like one: a value that is a variable reference (`${var.X}`), a value that
+is a configuration keyword (`inherit`, `true`), a name whose *final* segment
+names a resource (`_TABLE`, `_URL`) — and a no-reply local part on an email.
+`SESSION_TOKEN_URL` is exempt; `URL_SESSION_TOKEN` is not.
+
+*The general point: these had presumably been corrupting stored lessons since
+the redactor was written. Nothing surfaced them until a stage had an output that
+could be diffed against a known input. A pipeline whose correctness cannot be
+checked mechanically will hide this class of bug indefinitely.*
+
+**A latency result, and the first real one.** On the migrated 51-lesson store,
+one cold selection **timed out at 45s** — the risk §11 flagged, arriving as soon
+as lessons were thousands of tokens rather than hundreds. The cause was not
+search breadth but a single whole-file read of an 18k-token lesson. Steering the
+prompt toward `grep -C` over opening a file, plus 45s → 60s of headroom, fixed
+it: the same prompt then completed in 4 searches. Selection over the whole store
+was never the expensive part; reading one long candidate was.
+
+## 13. Reproducing
 
 ```
 rmc status                                  # store shape, selection cost, precision
@@ -493,7 +554,7 @@ rmc eval-recall --arm judge --save base     # the 48% / 100% baseline
 rmc eval-recall --arm agentic --against base
 rmc tune --rounds N                         # propose, measure, keep only wins
 rmc tune --history                          # every attempt, including the rejected
-rmc migrate [--apply]                       # convert a Claude skills library
+rmc migrate [--apply]                       # copy a skills library across, verbatim
 ```
 
 Saved runs live in `.rmc/evals/*.json`.

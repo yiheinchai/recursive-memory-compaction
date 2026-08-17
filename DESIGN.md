@@ -155,7 +155,7 @@ Three things bound it, and none of them is optimism:
 - `recall.selector_max_tool_calls` (6) — the prompt tells the fork to answer
   with what it has once spent. An unbounded search always has another phrasing
   to try.
-- `recall.selector_timeout_s` (45) — past this the selector is abandoned.
+- `recall.selector_timeout_s` (60) — past this the selector is abandoned.
 - Selection lessons, which are supposed to make the search converge. If they do
   not, this is slower than what it replaced, and §3.4's measurement is what says
   so.
@@ -215,7 +215,7 @@ recall:
   max_pack_tokens: 1200
   max_families: 3            # lessons served per prompt
   selector: agentic          # agentic | judge
-  selector_timeout_s: 45     # bound on the search
+  selector_timeout_s: 60     # bound on the search
   selector_max_tool_calls: 6 # searches before it must answer
   max_expansions: 3          # descents during a failure, see §4
   strategy: delta-patch      # delta-patch | delta-jump | stepwise

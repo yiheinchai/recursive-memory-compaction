@@ -1,40 +1,51 @@
 """Bringing an existing skills library into RMC.
 
 People who need RMC have usually already built a worse version of it by hand.
-The common shape is a directory of Claude skills grown by introspection: an
-agent notices it learned something, writes a `SKILL.md`, and a companion skill
-keeps an index of them. It works, and it has three costs RMC exists to remove.
+The common shape is a directory of Claude or Codex skills grown by
+introspection: an agent notices it learned something, writes a `SKILL.md`, and a
+companion skill keeps an index of them. It works, and it has three costs RMC
+exists to remove.
 
 * **Recall is manual.** A skill fires when its `description` matches what the
   user typed, or when the agent remembers to reach for it. Knowledge that is
   not recognised is not retrieved, and nobody finds out.
 * **Nothing consolidates.** Twenty skills that share a procedure stay twenty
-  skills. The library grows monotonically and the index grows with it.
+  skills, and each keeps every line it ever accumulated.
 * **Nothing is scored.** A skill that has never once changed an outcome is
   indistinguishable from the one that saves an hour a week.
 
-Migration is therefore not a file conversion. A skill is a *document*, often
-hundreds of lines holding many separate claims, and a lesson is one claim with
-the situation that summons it. Splitting one into the other is a judgement, so
-the model does it; this module supplies the files, the structure and the
-routing.
+**Migration is a file conversion, and deliberately nothing more.** One skill
+becomes one lesson: the body copied byte for byte, `description` becoming the
+gist, `name` the title, the directory name the family. No model call, no
+splitting, no rewriting. A library of 5,000 lines imports for the cost of
+reading 5,000 lines off disk.
 
-Three decisions shape the result.
+This is a reversal, and the reasoning behind the previous design is worth
+recording because it was not silly — it was aimed at the wrong constraint.
 
-**Not everything should come across.** A skills library contains both knowledge
-and the machinery that captured it — `introspect`, `create-skill`,
-`sync-skills`, an index file. Importing the machinery would fill the store with
-lessons about how to maintain a system the user is leaving. Those are reported
-as superseded, not converted.
+The old path asked a model to split each skill into atomic lessons, on the
+argument that a skill is several claims in a trench coat while a lesson is one
+claim plus its trigger. That was true, and it cost a model call per skill, and
+every one of those calls was a chance to paraphrase away the exact flag, the
+exact error string, the exact constant — the things that make a lesson worth
+retrieving at all. Twenty-four skills became a hundred and twenty-two lessons
+that no longer said quite what the originals said.
+
+The constraint it was solving was retrieval: a long document was expensive to
+route and hard to match. Both halves of that have since gone away.
+
+* Selection is a **search** now, not a rendered candidate list, so a long lesson
+  costs nothing to route past. Length stopped being a retrieval tax.
+* Compaction is driven by **observed use**, so a lesson that turns out to be
+  four-fifths padding gets cut down by evidence rather than by a guess made at
+  import time, before anything is known about which parts matter.
+
+So the right thing to import is the original, unedited, and let the system that
+measures which parts do work be the thing that shortens it. Import cheaply,
+condense on evidence.
 
 **Nothing is deleted.** Migration only ever adds. What to remove afterwards is
-the user's call, made once they can see that RMC actually recalls the same
-knowledge, and the report ends by naming the candidates rather than acting.
-
-**Everything goes through normal placement.** Imported lessons are reconciled,
-deduplicated and conflict-checked exactly like any other, because a library
-built over months contains contradictions, and a bulk path that skipped that
-would import both sides in silence.
+the user's call, made once they can see that RMC recalls the same knowledge.
 """
 
 from __future__ import annotations
@@ -44,81 +55,28 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
-SPLIT = """RMC:migrate
-
-A team has been keeping engineering knowledge as "skills": markdown documents
-an agent loads when it recognises the situation in the document's description.
-They are moving to a memory system that retrieves automatically, and this
-document has to be turned into what that system stores.
-
-The unit here is a **lesson**: one claim, plus the situation that should make a
-future agent reach for it. A skill is usually several of those in a trench
-coat — a runbook with three traps and a piece of hard-won environment
-knowledge — so split it. Do not split further than the claims go: two paragraphs
-that only make sense together are one lesson.
-
-First decide whether this document should come across at all.
-
-Skip it if it is **machinery for capturing knowledge rather than knowledge**:
-skills whose subject is writing skills, indexing them, syncing them, reflecting
-in order to produce them, or handing off between sessions. The new system does
-all of that itself, so importing them would fill it with instructions for
-maintaining the system being replaced. Set `verdict` to `superseded` and say in
-`reason` which part replaces it.
-
-Skip it also if there is no durable knowledge in it — a stub, a pure
-index, or a file that only points at other files. Use `empty`.
-
-Otherwise `import`, and write the lessons.
-
-For each lesson:
-
-- `body` — the claim, written as instruction to a future agent, in enough
-  detail to act on without the original document. Keep the specifics that make
-  it worth having: the exact command, the flag, the constant, the error string,
-  the path. A lesson stripped to a principle is not worth retrieving. Where the
-  skill records a trap or a failed approach, keep that too — knowing what does
-  not work is most of the value.
-- `title` — a short noun phrase naming the claim, not the topic.
-- `gist` — one line, at most 25 words, naming *when this applies*. The skill's
-  own `description` field was written for exactly this purpose; reuse what is
-  good in it. Identify the situation, do not summarise the advice.
-- `family` — a short kebab-case slug for the recurring situation. Prefer an
-  existing subject over inventing one per lesson.
-
-Two things to leave behind. Anything about how to invoke the skill itself
-("run /deploy-schema", "this skill uses X") describes the old system's
-plumbing. And anything that was true only of one incident, unless the document
-presents it as a rule.
-
-SKILL FILE: {path}
-
-<<<SKILL
-{body}
-SKILL>>>
-"""
-
-SPLIT_SCHEMA = {
-    "type": "object",
-    "required": ["verdict"],
-    "properties": {
-        "verdict": {"type": "string", "enum": ["import", "superseded", "empty"]},
-        "reason": {"type": "string"},
-        "lessons": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "required": ["body", "gist"],
-                "properties": {
-                    "body": {"type": "string"},
-                    "title": {"type": "string"},
-                    "gist": {"type": "string"},
-                    "family": {"type": "string"},
-                },
-            },
-        },
-    },
-}
+# Skills whose subject is *writing and maintaining skills*. Importing these
+# fills a new memory with instructions for operating the system being replaced.
+#
+# A name list, not a judgement — which is why it is visible here, printed in the
+# report, and overridable with `--all`. The alternative was a model call per
+# skill to decide, which is most of the cost this rewrite removes, spent on the
+# easiest question in the process.
+#
+# **The list is deliberately narrow, and errs toward importing.** A first draft
+# included `sync-repos` and `handoff` on the strength of their names; the first
+# clones git repositories and the second writes a runbook for a human, and both
+# are exactly the kind of hard-won procedure worth keeping. Wrongly importing
+# something costs a lesson nobody retrieves. Wrongly skipping one loses
+# knowledge silently, and the user has no reason to go looking for it. So a name
+# only belongs here if it cannot plausibly mean anything but skill-writing.
+CAPTURE_MACHINERY = (
+    "create-skill",
+    "skill-creator",
+    "sync-skills",
+    "introspect",
+    "capture-knowledge",
+)
 
 
 @dataclass
@@ -132,16 +90,47 @@ class Skill:
     def lines(self) -> int:
         return self.body.count("\n") + 1
 
+    @property
+    def slug(self) -> str:
+        """The directory name, which is already kebab-case and stable.
+
+        Preferred over the `name` field, which is prose ("Terraform Migrate")
+        and varies in style across a library.
+        """
+        return _slug(self.path.parent.name or self.name)
+
+    @property
+    def siblings(self) -> list[Path]:
+        """Files beside the skill that it may refer to.
+
+        A skill with a `references/` directory or a script next to it is a
+        document with attachments, and a copy that says nothing about them
+        produces a lesson citing files the reader cannot find.
+        """
+        try:
+            return sorted(
+                p
+                for p in self.path.parent.rglob("*")
+                if p.is_file() and p != self.path and not p.name.startswith(".")
+            )
+        except Exception:
+            return []
+
 
 @dataclass
 class Outcome:
     skill: Skill
-    verdict: str = ""
+    verdict: str = ""  # import | superseded | empty
     reason: str = ""
     imported: list[str] = field(default_factory=list)
     duplicates: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
     error: str = ""
+
+
+def _slug(text: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", "-", str(text).strip().lower())
+    return cleaned.strip("-")[:48] or "general"
 
 
 def _frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -165,7 +154,7 @@ def _frontmatter(text: str) -> tuple[dict[str, str], str]:
         if match:
             key = match.group(1).strip()
             value = match.group(2).strip()
-            fields[key] = "" if value == ">" or value == "|" else value
+            fields[key] = "" if value in (">", "|") else value
         elif key and line.strip():
             # Folded scalars (`description: >`) continue on indented lines.
             fields[key] = (fields[key] + " " + line.strip()).strip()
@@ -177,8 +166,7 @@ def discover(root: Path) -> Iterator[Skill]:
 
     Worktrees and vendored copies are excluded. A checkout under
     `.claude/worktrees/` holds a full second copy of the library, and importing
-    both would double every lesson and then ask the model to reconcile each pair
-    against its own twin.
+    both would double every lesson.
     """
     skip = ("/worktrees/", "/node_modules/", "/.git/")
     for path in sorted(root.rglob("SKILL.md")):
@@ -199,86 +187,107 @@ def discover(root: Path) -> Iterator[Skill]:
         )
 
 
-def default_roots() -> list[Path]:
-    """Where Claude keeps skills: this project, then the user's own."""
-    found = []
-    for candidate in (Path.cwd() / ".claude" / "skills", Path.home() / ".claude" / "skills"):
-        if candidate.is_dir():
-            found.append(candidate)
-    return found
+HOSTS = (".claude", ".codex")
 
 
-def split(adapter: Any, store: Any, skill: Skill) -> tuple[str, str, list[dict[str, str]]]:
-    """Ask the model what, if anything, this document should become."""
-    from .util import truncate
+def candidate_roots(cwd: Path | None = None, home: Path | None = None) -> list[Path]:
+    """Everywhere a skills library might live, whether or not it does.
 
-    run = adapter.run(
-        SPLIT.format(path=skill.path.name, body=truncate(skill.body, 24000)),
-        schema=SPLIT_SCHEMA,
-        timeout=int(store.config.get("limits.agent_timeout_s", 180)),
-    )
-    if not run.ok or not run.data:
-        return "", (run.error or "no answer")[:160], []
-    data = run.data
-    lessons = [
-        lesson
-        for lesson in (data.get("lessons") or [])
-        if isinstance(lesson, dict) and str(lesson.get("body") or "").strip()
-    ]
-    return str(data.get("verdict") or ""), str(data.get("reason") or ""), lessons
+    Both hosts, because a library assembled for one is usually the same
+    knowledge as the library assembled for the other, and a migration that
+    silently covered half of it would look like it had finished.
+    """
+    cwd = cwd or Path.cwd()
+    home = home or Path.home()
+    return [base / host / "skills" for base in (cwd, home) for host in HOSTS]
 
 
-def absorb(store: Any, adapter: Any, lesson: dict[str, str]) -> tuple[str, str]:
-    """Store one lesson through the ordinary placement path.
+def default_roots(cwd: Path | None = None, home: Path | None = None) -> list[Path]:
+    """The candidates that actually exist."""
+    return [c for c in candidate_roots(cwd, home) if c.is_dir()]
 
-    Bulk import is exactly where reconciliation matters most: a library grown
-    over months has near-duplicates and outright contradictions in it, and a
-    fast path that appended everything would import both sides of a
-    disagreement without noticing. Returns (action, node id).
+
+def to_node(skill: Skill) -> Any:
+    """One skill, as one lesson, with the body untouched.
+
+    The only thing added is a provenance line. It is not decoration: a skill
+    that ships a `references/` directory refers to those files by relative path,
+    and a copy of the document alone leaves the reader with citations that
+    resolve to nothing.
     """
     from .node import Node
-    from .placement import apply, decide
-    from .summary import refresh
     from .util import new_id
 
-    family = re.sub(r"[^a-z0-9]+", "-", str(lesson.get("family") or "general").lower()).strip("-")
-    node = Node(
+    body = skill.body.strip()
+    siblings = skill.siblings
+    note = f"\n\n---\nImported verbatim from `{skill.path}`."
+    if siblings:
+        note += (
+            f" {len(siblings)} file(s) beside it hold detail this document refers to"
+            " — read them from that directory when it cites one."
+        )
+    return Node(
         id=new_id("n"),
-        family=family or "general",
-        body=str(lesson["body"]).strip(),
+        family=skill.slug,
+        body=body + note,
         level=0,
-        title=str(lesson.get("title") or "").strip(),
-        gist=str(lesson.get("gist") or "").strip(),
+        title=skill.name.strip() or skill.slug,
+        # The skill's `description` was written to answer "when should an agent
+        # reach for this", which is exactly what a gist is for. Copied whole
+        # rather than shortened: it is what the selector's search matches
+        # against, and every trigger word dropped is a way the lesson stops
+        # being findable.
+        gist=" ".join(skill.description.split()),
         origin="migrated",
     )
+
+
+def absorb(store: Any, node: Any) -> tuple[str, str]:
+    """Write one lesson straight to the store.
+
+    No placement call. Reconciliation exists because a lesson minted from a
+    session may restate or contradict something already known — but a skills
+    library is a set of distinct documents the user already curated, and asking
+    a model to compare each against the whole store is a call per skill for a
+    question the directory structure has already answered. The dedup that does
+    apply here is by skill name, and that is a string comparison in ``run``.
+
+    What is left undone is honest and recoverable: reflection reconciles these
+    lessons as they are actually used, which is when there is evidence about
+    which of two overlapping lessons is the one that works.
+    """
     with store.lock("write", wait_s=90) as lock:
         if not lock.acquired:
             return "locked", ""
         store.invalidate()
-        decision = decide(store, adapter, body=node.body, family_hint=node.family)
-        result = apply(store, decision, node)
-        if result.node is not None and not result.node.gist.strip():
-            refresh(store, adapter, result.node)
-    return decision.action, (result.node.id if result.node else "")
+        store.save_node(node)
+    return "new", node.id
 
 
 def run(
     store: Any,
-    adapter: Any,
-    roots: list[Path],
+    adapter: Any = None,
+    roots: list[Path] | None = None,
     *,
     apply_changes: bool = False,
     limit: int = 0,
+    include_machinery: bool = False,
 ) -> list[Outcome]:
-    """Convert a skills library. Reads everything; writes only if asked."""
-    skills = [s for root in roots for s in discover(root)]
+    """Convert a skills library. Reads everything; writes only if asked.
+
+    ``adapter`` is accepted and unused. Migration costs no model calls at all
+    now, and keeping the parameter means the CLI and any existing caller do not
+    have to know that.
+    """
+    skills = [s for root in (roots or []) for s in discover(root)]
     seen: set[str] = set()
-    unique = []
+    unique: list[Skill] = []
     for skill in skills:
         # The same library is often installed both per-project and globally.
-        if skill.name in seen:
+        key = skill.slug
+        if key in seen:
             continue
-        seen.add(skill.name)
+        seen.add(key)
         unique.append(skill)
     if limit:
         unique = unique[:limit]
@@ -286,27 +295,22 @@ def run(
     outcomes: list[Outcome] = []
     for skill in unique:
         outcome = Outcome(skill=skill)
-        verdict, reason, lessons = split(adapter, store, skill)
-        outcome.verdict, outcome.reason = verdict, reason
-        if not verdict:
-            outcome.error = reason
+        if not include_machinery and skill.slug in CAPTURE_MACHINERY:
+            outcome.verdict = "superseded"
+            outcome.reason = "captures knowledge rather than holding it; RMC does this itself"
             outcomes.append(outcome)
             continue
 
-        if verdict == "import" and apply_changes:
-            for lesson in lessons:
-                action, ident = absorb(store, adapter, lesson)
-                label = f"{lesson.get('title') or lesson.get('family') or ident}"
-                if action == "duplicate":
-                    outcome.duplicates.append(label)
-                elif action == "conflict":
-                    outcome.conflicts.append(label)
-                else:
-                    outcome.imported.append(f"{label} [{ident}]")
-        elif verdict == "import":
-            outcome.imported = [
-                str(lesson.get("title") or lesson.get("family") or "untitled")
-                for lesson in lessons
-            ]
+        node = to_node(skill)
+        outcome.verdict = "import"
+        label = f"{node.title} [{node.family}]"
+        if apply_changes:
+            action, ident = absorb(store, node)
+            if action == "locked":
+                outcome.error = "another process holds the store lock"
+            else:
+                outcome.imported.append(f"{label} ({node.tokens} tok) [{ident}]")
+        else:
+            outcome.imported.append(f"{label} ({node.tokens} tok)")
         outcomes.append(outcome)
     return outcomes

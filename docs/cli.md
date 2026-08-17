@@ -142,6 +142,28 @@ Ask a model whether the session contained a reusable lesson, and mint a level-0
 node if so. Deliberately conservative — "nothing captured" is the common and
 correct outcome.
 
+### `rmc migrate [--path DIR] [--apply] [--limit N] [--all]`
+Copy a Claude or Codex skills library into lessons, **verbatim**: one skill
+becomes one lesson, the body byte for byte, `description:` as the gist, `name:`
+as the title, the directory name as the family.
+
+**No model calls.** Importing a five-thousand-line library costs reading five
+thousand lines off disk.
+
+| Flag | Meaning |
+|---|---|
+| `--path DIR` | directory to scan (repeatable); defaults to both hosts, project and home |
+| `--apply` | write the lessons; without it, nothing is written |
+| `--limit N` | skills to process; 0 is all |
+| `--all` | also import skills whose subject is writing skills |
+
+Skips skill-writing machinery (`introspect`, `create-skill`, `sync-skills`) —
+importing those fills a new memory with instructions for maintaining the system
+being replaced. It is a short name list rather than a judgement, it errs toward
+importing, and `--all` overrides it.
+
+Nothing is ever deleted, and the same skill installed in two places imports once.
+
 ### `rmc index [--rebuild] [--gists]`
 Write `.rmc/index.md` — one line per lesson, and the only thing the selector
 looks at before deciding what to open. It is **searched, never injected**, which
@@ -223,7 +245,7 @@ Any key can be overridden per-run by an environment variable:
 | `agent` | `claude` | default backend |
 | `recall.enabled` | `true` | inject lessons at all |
 | `recall.selector` | `agentic` | `agentic` — a fork of your session searches the store; `judge` — the apex walk, and the eval baseline |
-| `recall.selector_timeout_s` | `45` | bound on the search, since the prompt is blocked meanwhile |
+| `recall.selector_timeout_s` | `60` | bound on the search, since the prompt is blocked meanwhile |
 | `recall.selector_max_tool_calls` | `6` | searches allowed before it must answer with what it has |
 | `recall.strategy` | `delta-patch` | `delta-patch`, `delta-jump`, or `stepwise` |
 | `recall.max_pack_tokens` | `1200` | ceiling on injected context |

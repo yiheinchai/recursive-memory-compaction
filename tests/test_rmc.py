@@ -543,12 +543,16 @@ class TestChunksAreJudgedTogether(StoreCase):
 
 
 class TestSkillMigration(StoreCase):
-    """People who need RMC have usually built a worse version of it by hand.
+    """A skills library is months of work, so migration copies rather than rewrites.
 
-    A skills library is months of work, so the conversion has to be honest
-    about what it is doing: never delete, never import the machinery being
-    replaced, and never bulk-append past the reconciliation that catches the
-    contradictions such a library inevitably contains.
+    The earlier design asked a model to split each skill into atomic lessons.
+    Every one of those calls was a chance to paraphrase away the exact flag, the
+    exact error string, the exact constant — the specifics that make a lesson
+    worth retrieving. Now that selection searches rather than routing over a
+    rendered list, length costs nothing, and compaction shortens a lesson from
+    observed use instead of from a guess made before anything is known.
+
+    So what these tests hold is: bytes survive, and it costs no model calls.
     """
 
     def skill(self, name, text):
@@ -587,9 +591,7 @@ class TestSkillMigration(StoreCase):
         self.assertIn("knowledge", found[0].body)
 
     def test_worktree_copies_are_not_imported_twice(self) -> None:
-        """A worktree holds a full second copy of the library. Importing both
-        doubles every lesson and then asks the model to reconcile each against
-        its own twin."""
+        """A worktree holds a full second copy of the library."""
         from rmc.migrate import discover
 
         self.skill("real", "---\nname: real\n---\nContent.")
@@ -604,61 +606,117 @@ class TestSkillMigration(StoreCase):
         root = self.skill("hollow", "---\nname: hollow\n---\n")
         self.assertEqual([s.name for s in discover(root) if s.name == "hollow"], [])
 
-    def test_planning_writes_nothing(self) -> None:
-        """A skills library is months of work; the conversion is shown before
-        it happens."""
+    # -- the verbatim contract ------------------------------------------- #
+
+    LONG = """---
+name: Deploy Schema
+description: >
+  Publish a schema to the registry. Use when the user asks to deploy a schema,
+  bump a contract version, or fix a registry mismatch.
+---
+
+# Deploying a schema
+
+## 1. Bump the version
+
+Set `SCHEMA_REGISTRY_URL=https://registry.internal:8081` first — the default
+points at prod and the failure is silent.
+
+## 2. Publish
+
+Run `pnpm schema:publish --env staging`. A 409 means the version already
+exists; bump, do not force.
+"""
+
+    def test_the_body_survives_byte_for_byte(self) -> None:
+        """The whole point. A paraphrase loses the port, the flag, the 409."""
+        from rmc.migrate import discover, to_node
+
+        root = self.skill("deploy-schema", self.LONG)
+        skill = next(s for s in discover(root) if s.slug == "deploy-schema")
+        node = to_node(skill)
+        self.assertIn(skill.body, node.body)
+        for exact in ("SCHEMA_REGISTRY_URL=https://registry.internal:8081",
+                      "pnpm schema:publish --env staging", "409"):
+            self.assertIn(exact, node.body)
+
+    def test_one_skill_becomes_exactly_one_lesson(self) -> None:
         from rmc.migrate import run
 
-        root = self.skill("deploy", "---\nname: deploy\n---\nAlways set PG_PORT first.")
-        adapter = MockAdapter(router=lambda prompt, schema: {
-            "verdict": "import",
-            "lessons": [{"body": "Set PG_PORT before deploying.", "gist": "when deploying",
-                         "title": "Set PG_PORT", "family": "deploy"}],
-        })
+        root = self.skill("deploy-schema", self.LONG)
+        run(self.store, roots=[root], apply_changes=True)
+        self.store.invalidate()
+        self.assertEqual(len([n for n in self.store.nodes() if n.origin == "migrated"]), 1)
+
+    def test_it_costs_no_model_calls(self) -> None:
+        """The reason this rewrite exists: importing a library should cost
+        reading it off disk, not a call per document."""
+        from rmc.migrate import run
+
+        root = self.skill("deploy-schema", self.LONG)
+        adapter = MockAdapter()
+        run(self.store, adapter, roots=[root], apply_changes=True)
+        self.assertEqual(adapter.calls, [], "migration must not spend a model call")
+
+    def test_the_description_becomes_the_gist(self) -> None:
+        """A skill's description already answers 'when should I reach for
+        this', which is exactly what a gist is — and it is what the selector's
+        search matches on, so it is copied whole rather than shortened."""
+        from rmc.migrate import discover, to_node
+
+        root = self.skill("deploy-schema", self.LONG)
+        node = to_node(next(s for s in discover(root) if s.slug == "deploy-schema"))
+        self.assertIn("registry mismatch", node.gist)
+        self.assertNotIn("\n", node.gist, "a gist is one index line and must not wrap")
+
+    def test_the_family_comes_from_the_directory_not_the_prose_name(self) -> None:
+        from rmc.migrate import discover, to_node
+
+        root = self.skill("deploy-schema", self.LONG)
+        node = to_node(next(s for s in discover(root) if s.slug == "deploy-schema"))
+        self.assertEqual(node.family, "deploy-schema")
+        self.assertEqual(node.title, "Deploy Schema")
+
+    def test_companion_files_are_pointed_at(self) -> None:
+        """A skill with a references/ directory cites files by relative path;
+        copying the document alone leaves citations resolving to nothing."""
+        from rmc.migrate import discover, to_node
+
+        root = self.skill("deploy-schema", self.LONG)
+        refs = root / "deploy-schema" / "references"
+        refs.mkdir(parents=True, exist_ok=True)
+        (refs / "registry.md").write_text("detail", encoding="utf-8")
+        node = to_node(next(s for s in discover(root) if s.slug == "deploy-schema"))
+        self.assertIn("file(s) beside it", node.body)
+        self.assertIn(str(root / "deploy-schema" / "SKILL.md"), node.body)
+
+    def test_provenance_is_recorded_even_with_no_companions(self) -> None:
+        from rmc.migrate import discover, to_node
+
+        root = self.skill("deploy-schema", self.LONG)
+        node = to_node(next(s for s in discover(root) if s.slug == "deploy-schema"))
+        self.assertIn("Imported verbatim from", node.body)
+
+    def test_planning_writes_nothing(self) -> None:
+        from rmc.migrate import run
+
+        root = self.skill("deploy-schema", self.LONG)
         before = len(list(self.store.nodes()))
-        outcomes = run(self.store, adapter, [root], apply_changes=False)
+        outcomes = run(self.store, roots=[root], apply_changes=False)
         self.store.invalidate()
         self.assertEqual(len(list(self.store.nodes())), before)
         self.assertEqual(outcomes[0].verdict, "import")
         self.assertEqual(len(outcomes[0].imported), 1)
-
-    def test_applying_routes_through_normal_placement(self) -> None:
-        """Bulk import is where reconciliation matters most — a library grown
-        over months contains both sides of some disagreements."""
-        from rmc.migrate import run
-
-        root = self.skill("deploy", "---\nname: deploy\n---\nAlways set PG_PORT first.")
-
-        def route(prompt, schema):
-            if "RMC:migrate" in prompt:
-                return {"verdict": "import", "lessons": [
-                    {"body": "Set PG_PORT before deploying.", "gist": "when deploying",
-                     "title": "Set PG_PORT", "family": "deploy"}]}
-            return {"picks": []}
-
-        run(self.store, MockAdapter(router=route), [root], apply_changes=True)
-        self.store.invalidate()
-        stored = [n for n in self.store.nodes() if n.origin == "migrated"]
-        self.assertEqual(len(stored), 1)
-        self.assertEqual(stored[0].family, "deploy")
-        self.assertTrue(stored[0].gist, "a migrated lesson must be routable immediately")
 
     def test_the_source_skill_is_never_touched(self) -> None:
         """Whether to retire a skill is the user's call, made after seeing RMC
         recall the same knowledge."""
         from rmc.migrate import run
 
-        root = self.skill("deploy", "---\nname: deploy\n---\nAlways set PG_PORT first.")
-        path = root / "deploy" / "SKILL.md"
+        root = self.skill("deploy-schema", self.LONG)
+        path = root / "deploy-schema" / "SKILL.md"
         original = path.read_text()
-
-        def route(prompt, schema):
-            if "RMC:migrate" in prompt:
-                return {"verdict": "import", "lessons": [
-                    {"body": "Set PG_PORT first.", "gist": "when deploying", "family": "deploy"}]}
-            return {"picks": []}
-
-        run(self.store, MockAdapter(router=route), [root], apply_changes=True)
+        run(self.store, roots=[root], apply_changes=True)
         self.assertEqual(path.read_text(), original)
 
     def test_capture_machinery_is_reported_not_imported(self) -> None:
@@ -667,19 +725,51 @@ class TestSkillMigration(StoreCase):
         from rmc.migrate import run
 
         root = self.skill("introspect", "---\nname: introspect\n---\nReflect and write a skill.")
-        adapter = MockAdapter(router=lambda prompt, schema: {
-            "verdict": "superseded", "reason": "RMC captures automatically"})
-        outcomes = run(self.store, adapter, [root], apply_changes=True)
+        outcomes = run(self.store, roots=[root], apply_changes=True)
         self.store.invalidate()
         self.assertEqual(outcomes[0].verdict, "superseded")
         self.assertEqual([n for n in self.store.nodes() if n.origin == "migrated"], [])
 
-    def test_a_model_failure_is_reported_not_swallowed(self) -> None:
+    def test_machinery_can_be_imported_on_request(self) -> None:
+        """It is a name list, not a judgement, so it has to be overridable."""
         from rmc.migrate import run
 
-        root = self.skill("deploy", "---\nname: deploy\n---\nSomething.")
-        outcomes = run(self.store, MockAdapter(router=lambda p, s: None), [root])
-        self.assertTrue(outcomes[0].error)
+        root = self.skill("introspect", "---\nname: introspect\n---\nReflect and write a skill.")
+        outcomes = run(self.store, roots=[root], apply_changes=True, include_machinery=True)
+        self.store.invalidate()
+        self.assertEqual(outcomes[0].verdict, "import")
+        self.assertEqual(len([n for n in self.store.nodes() if n.origin == "migrated"]), 1)
+
+    def test_the_same_skill_installed_twice_imports_once(self) -> None:
+        """Project-local and global installs of one library are common."""
+        from rmc.migrate import run
+
+        a = self.skill("deploy-schema", self.LONG)
+        b = self.base / "other"
+        (b / "deploy-schema").mkdir(parents=True, exist_ok=True)
+        (b / "deploy-schema" / "SKILL.md").write_text(self.LONG, encoding="utf-8")
+        outcomes = run(self.store, roots=[a, b], apply_changes=True)
+        self.store.invalidate()
+        self.assertEqual(len(outcomes), 1)
+        self.assertEqual(len([n for n in self.store.nodes() if n.origin == "migrated"]), 1)
+
+    def test_both_hosts_are_searched(self) -> None:
+        """A library assembled for one host is usually the same knowledge as
+        the one assembled for the other; covering half would look finished."""
+        from rmc.migrate import candidate_roots
+
+        roots = candidate_roots(cwd=self.base / "proj", home=self.base / "home")
+        self.assertIn(self.base / "proj" / ".claude" / "skills", roots)
+        self.assertIn(self.base / "proj" / ".codex" / "skills", roots)
+        self.assertIn(self.base / "home" / ".claude" / "skills", roots)
+        self.assertIn(self.base / "home" / ".codex" / "skills", roots)
+
+    def test_only_directories_that_exist_are_scanned(self) -> None:
+        from rmc.migrate import default_roots
+
+        (self.base / "home" / ".codex" / "skills").mkdir(parents=True)
+        found = default_roots(cwd=self.base / "proj", home=self.base / "home")
+        self.assertEqual(found, [self.base / "home" / ".codex" / "skills"])
 
 
 class TestSelfTuning(StoreCase):

@@ -66,8 +66,8 @@ NAV: list[Group] = [
         Page("tasks", "Everyday tasks",
              "Reading what RMC knows, teaching it directly, and reading its own numbers.",
              ["tasks"]),
-        Page("migrate", "Migrate from Claude skills",
-             "Convert an existing SKILL.md library into lessons that recall automatically.",
+        Page("migrate", "Migrate from skills",
+             "Copy an existing SKILL.md library across verbatim, for no model calls.",
              ["migrate"]),
     ]),
     Group("Reference", [

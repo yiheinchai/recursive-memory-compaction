@@ -1111,12 +1111,16 @@ def cmd_hook(args: argparse.Namespace) -> int:
 
 
 def cmd_migrate(args: argparse.Namespace) -> int:
-    """Convert a hand-built skills library into lessons.
+    """Copy a hand-built skills library into lessons, verbatim.
 
     Plans by default. A skills library is months of work and importing it is a
     bulk write into the user's memory, so the conversion is shown before it
     happens — and nothing is ever deleted, because whether to retire a skill is
     a decision the user should make after seeing RMC recall the same knowledge.
+
+    Costs no model calls. One skill becomes one lesson with its body untouched;
+    what to shorten is decided later by which parts are observed doing work,
+    not guessed at import time.
     """
     from . import migrate as mig
 
@@ -1127,17 +1131,24 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     roots = [r for r in roots if r.is_dir()]
     if not roots:
         print(dim("no skills directory found"))
-        print(dim("looked in ./.claude/skills and ~/.claude/skills; pass --path to point elsewhere"))
+        print(dim("looked in ./.claude/skills, ~/.claude/skills, ./.codex/skills and"))
+        print(dim("~/.codex/skills; pass --path to point elsewhere"))
         return 0
 
     print(dim("scanning " + ", ".join(str(r) for r in roots)))
-    adapter = make_adapter(store, args)
-    outcomes = mig.run(store, adapter, roots, apply_changes=args.apply, limit=args.limit)
+    outcomes = mig.run(
+        store,
+        roots=roots,
+        apply_changes=args.apply,
+        limit=args.limit,
+        include_machinery=args.all,
+    )
     if not outcomes:
         print(dim("no skills found"))
         return 0
 
-    imported = superseded = empty = failed = 0
+    imported = superseded = failed = 0
+    lines = 0
     for out in outcomes:
         name = out.skill.name
         if out.error:
@@ -1146,22 +1157,21 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         elif out.verdict == "superseded":
             superseded += 1
             print(f"{dim('superseded')} {name} — {out.reason[:88]}")
-        elif out.verdict == "empty":
-            empty += 1
-            print(f"{dim('nothing')}    {name} — {out.reason[:88]}")
         else:
             imported += 1
-            verb = "imported" if args.apply else "would import"
-            print(f"{green(verb)}   {name} ({out.skill.lines} lines) -> {len(out.imported)} lesson(s)")
+            lines += out.skill.lines
+            verb = "copied" if args.apply else "would copy"
             for label in out.imported:
-                print(dim(f"             {label}"))
-            for label in out.duplicates:
-                print(dim(f"             (already knew: {label})"))
-            for label in out.conflicts:
-                print(f"             {red('conflicts with an existing lesson')}: {label}")
+                print(f"{green(verb)}     {label}")
 
     print()
-    print(f"{imported} skill(s) to convert, {superseded} superseded by RMC, {empty} with nothing in them")
+    print(
+        f"{imported} skill(s) copied verbatim ({lines} lines), "
+        f"{superseded} superseded by RMC"
+    )
+    print(dim("no model calls — the bodies are unchanged, so nothing was paraphrased away"))
+    if superseded and not args.all:
+        print(dim("pass --all to import the superseded ones too"))
     if not args.apply:
         print()
         print("Nothing was written. Re-run with --apply to import.")
@@ -1171,6 +1181,7 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     print("Your skills are untouched — migration only adds.")
     print(dim("Check `rmc recall -p \"<something a skill covered>\"` returns the same knowledge"))
     print(dim("before retiring any of them. The superseded ones above are the safest to remove."))
+    print(dim("These import long. Compaction shortens them from observed use, not on a guess."))
     return 0
 
 
@@ -1584,11 +1595,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "migrate",
-        help="bring an existing Claude skills library into RMC",
+        help="copy an existing Claude or Codex skills library into RMC, verbatim",
     )
     p.add_argument("--path", action="append", help="directory to scan (repeatable)")
     p.add_argument("--apply", action="store_true", help="write the lessons; without this it only plans")
     p.add_argument("--limit", type=int, default=0, help="skills to process; 0 is all")
+    p.add_argument(
+        "--all",
+        action="store_true",
+        help="also import skills whose subject is capturing knowledge (create-skill, sync-skills, ...)",
+    )
     add_agent_flags(p)
     p.set_defaults(func=cmd_migrate)
 

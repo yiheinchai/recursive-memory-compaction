@@ -110,7 +110,13 @@ DEFAULTS: dict[str, Any] = {
         # than one question, and each costs a round trip. This is the number
         # that decides whether selection is felt as lag, so it is also the first
         # thing to lower if it is.
-        "selector_timeout_s": 45,
+        #
+        # Raised from 45 after a migrated store timed out: a library imported
+        # verbatim holds lessons of several thousand tokens, and one whole-file
+        # read of one of those can exhaust the window on its own. The prompt now
+        # steers toward grep-with-context for that reason; this is the headroom
+        # for when it still needs a look.
+        "selector_timeout_s": 60,
         # Searches the selector may run before it must answer with what it has.
         # An unbounded search is the failure mode here: there is always another
         # phrasing to try, and the user is waiting the whole time.
