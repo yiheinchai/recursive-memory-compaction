@@ -290,7 +290,14 @@ pre:hover .copy, .copy:focus{ opacity: 1; }
     transform: translateX(-102%); transition: transform .18s ease; z-index: 50;
     max-height: none;
   }
-  .side.open{ transform: none; }
+  .side.open{ transform: none; box-shadow: 0 0 40px rgba(0,0,0,.18); }
+  /* A drawer with nothing behind it reads as part of the page, and there is
+     no obvious way to dismiss it without picking a destination. */
+  .scrim{
+    position: fixed; inset: var(--topbar-h) 0 0; background: rgba(0,0,0,.34);
+    z-index: 45; opacity: 0; pointer-events: none; transition: opacity .18s ease;
+  }
+  .scrim.on{ opacity: 1; pointer-events: auto; }
   .doc{ padding-top: 26px; }
   .doc h1{ font-size: 30px; }
   .pager{ grid-template-columns: 1fr; }

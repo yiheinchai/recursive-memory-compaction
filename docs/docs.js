@@ -27,17 +27,27 @@
   var burger = $('.burger');
   var side = $('#side');
   if (burger && side) {
-    burger.addEventListener('click', function () {
-      var open = side.classList.toggle('open');
+    var scrim = document.createElement('div');
+    scrim.className = 'scrim';
+    document.body.appendChild(scrim);
+
+    var setDrawer = function (open) {
+      side.classList.toggle('open', open);
+      scrim.classList.toggle('on', open);
       burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+
+    burger.addEventListener('click', function () {
+      setDrawer(!side.classList.contains('open'));
+    });
+    scrim.addEventListener('click', function () { setDrawer(false); });
+    addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') setDrawer(false);
     });
     // Tapping a link should navigate, not leave the drawer covering the page
     // you just navigated to.
     side.addEventListener('click', function (e) {
-      if (e.target.tagName === 'A') {
-        side.classList.remove('open');
-        burger.setAttribute('aria-expanded', 'false');
-      }
+      if (e.target.tagName === 'A') setDrawer(false);
     });
   }
 

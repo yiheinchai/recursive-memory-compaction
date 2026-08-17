@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>04 Consolidation — RMC</title>
-<meta name="description" content="Building abstraction from what gets used together.">
-<meta property="og:title" content="04 Consolidation — RMC docs">
-<meta property="og:description" content="Building abstraction from what gets used together.">
+<title>Integration — RMC</title>
+<meta name="description" content="How RMC attaches to Claude Code and Codex, and what it writes where.">
+<meta property="og:title" content="Integration — RMC docs">
+<meta property="og:description" content="How RMC attaches to Claude Code and Codex, and what it writes where.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%230a0a0a'/><rect x='6' y='7' width='20' height='3' fill='white'/><rect x='9' y='14' width='14' height='3' fill='white'/><rect x='12' y='21' width='8' height='3' fill='white'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -59,14 +59,14 @@ try {
 <div class="grp">Reference</div>
 <a href="cli.html">CLI reference</a>
 <a href="configuration.html">Configuration</a>
-<a href="integration.html">Integration</a>
+<a href="integration.html" class="on" aria-current="page">Integration</a>
 <a href="data-model.html">Data model</a>
 <div class="grp">How it works</div>
 <a href="concepts.html">The loop and the rule</a>
 <a href="recall.html">01 Recall</a>
 <a href="reflection.html">02 Reflection</a>
 <a href="attribution.html">03 Attribution</a>
-<a href="consolidation.html" class="on" aria-current="page">04 Consolidation</a>
+<a href="consolidation.html">04 Consolidation</a>
 <a href="compression.html">05 Compression</a>
 <a href="descent.html">06 Descent</a>
 <a href="dreaming.html">07 Dreaming</a>
@@ -76,72 +76,110 @@ try {
 <a href="limits.html">Known limits</a>
 </nav></aside>
 <main class="doc">
-<div class="crumbs"><a href="quickstart.html">Docs</a><span>/</span><span>04 Consolidation</span></div>
-<h1>04 Consolidation</h1>
-<p class="lead">Building abstraction from what gets used together.</p>
+<div class="crumbs"><a href="quickstart.html">Docs</a><span>/</span><span>Integration</span></div>
+<h1>Integration</h1>
+<p class="lead">How RMC attaches to Claude Code and Codex, and what it writes where.</p>
 <div class="prose">
-
-    <p>New knowledge is reconciled with old before it is stored, never appended blindly.</p>
-
-    <h3 id="scope-decided-first">Scope, decided first<a class="anchor" href="#scope-decided-first" aria-label="Link to this section">#</a></h3>
-    <p>
-      Where a lesson lands decides whether it can ever be found again. A lesson
-      about a vendor API filed under one repo is invisible from every other one,
-      so nothing downstream can rescue it — not recall, not co-use, not
-      dreaming.
-    </p>
-    <p>
-      So <code>scope</code> asks: does this depend on <i>this repository</i>, or
-      would it be true for anyone using these tools anywhere? Global lessons go
-      to <code>~/.rmc</code>, project lessons stay local. The error is
-      asymmetric: a global lesson filed locally is <b>lost</b>, a project lesson
-      filed globally is merely noise.
-    </p>
-
-    <h3 id="then-the-relation">Then the relation<a class="anchor" href="#then-the-relation" aria-label="Link to this section">#</a></h3>
-    <p>
-      <code>related</code> walks the graph for lessons on the same subject, and
-      <code>reconcile</code> classifies:
-    </p>
-    <div class="scroll">
-    <table>
-      <tr><th>Relation</th><th>Action</th></tr>
-      <tr><td><code>duplicate</code></td><td>nothing stored; the hit is recorded</td></tr>
-      <tr><td><code>refines</code></td><td>fold into the matched lesson's own lineage, then patch its ancestors</td></tr>
-      <tr><td><code>contradicts</code></td><td>keep both, mark both <code>disputed</code>, attach a question</td></tr>
-      <tr><td><code>specialises</code></td><td>attach as a sibling; a merge may later generalise both</td></tr>
-      <tr><td><code>orthogonal</code></td><td>new family</td></tr>
-    </table>
-    </div>
-    <p>
-      <b>Refinement must reach the apex.</b> Folding detail into a level-0 node
-      leaves every ancestor missing it. Rather than invalidating working
-      compressions, the detail is registered as a rescue on each ancestor, so
-      recall re-attaches it immediately and <code>repair</code> folds it in
-      permanently once it proves necessary.
-    </p>
-    <p>
-      <b>Contradictions are never resolved silently.</b> Last-write-wins is how
-      a memory rots. Both lessons stay servable, and the question is raised at
-      recall time:
-    </p>
-<pre>&gt; Unresolved: Is 5434 the new permanent host port mapping, or was 5433
-&gt; only temporarily unavailable at the time?</pre>
-    <p>
-      <code>rmc conflicts</code> lists them,
-      <code>rmc resolve &lt;id&gt; [--drop]</code> settles them.
-    </p>
-
-    <!-- ================================================ 05 compress -->
+<p>How RMC attaches to Claude Code and Codex, and what it writes where.</p>
+<h2 id="claude-code">Claude Code<a class="anchor" href="#claude-code" aria-label="Link to this section">#</a></h2>
+<h3 id="as-a-plugin-recommended">As a plugin (recommended)<a class="anchor" href="#as-a-plugin-recommended" aria-label="Link to this section">#</a></h3>
+<pre>/plugin marketplace add yiheinchai/rmc
+/plugin install rmc@rmc</pre>
+<p>The plugin ships the hooks, the <code>recursive-memory</code> skill and the <code>/rmc</code> command. Hook commands resolve through <code>${CLAUDE_PLUGIN_ROOT}/bin/rmc</code>, so nothing needs to be on your <code>PATH</code> and no Python environment is required.</p>
+<h3 id="by-hand">By hand<a class="anchor" href="#by-hand" aria-label="Link to this section">#</a></h3>
+<pre>rmc install --target claude                 # this repo only
+rmc install --target claude --scope user    # every repo
+rmc install --target claude --dry-run       # show what it would write</pre>
+<p>This edits <code>.claude/settings.json</code> (or <code>~/.claude/settings.json</code>) additively. Each entry RMC adds is tagged <code>&quot;_rmc&quot;: true</code>, and <code>rmc uninstall</code> removes only tagged entries — hooks you configured yourself are left alone.</p>
+<h3 id="hooks-used">Hooks used<a class="anchor" href="#hooks-used" aria-label="Link to this section">#</a></h3>
+<div class='scroll'><table>
+<tr><th>Event</th><th>Command</th><th>Purpose</th><th>Budget</th></tr>
+<tr><td><code>UserPromptSubmit</code></td><td><code>rmc hook user-prompt-submit</code></td><td>serve the lessons that bear on this prompt</td><td>30s; instant while the store fits the budget</td></tr>
+<tr><td><code>Stop</code></td><td><code>rmc hook stop</code></td><td>after a substantial turn, reflect — off-thread by default</td><td>15s, nothing inline</td></tr>
+<tr><td><code>SessionEnd</code></td><td><code>rmc hook session-end</code></td><td>parse the transcript, then detach the whole learner</td><td>30s; returns in ~0.1s, always</td></tr>
+</table></div>
+<p><code>UserPromptSubmit</code> returns:</p>
+<pre>{&quot;hookSpecificOutput&quot;: {&quot;hookEventName&quot;: &quot;UserPromptSubmit&quot;,
+                        &quot;additionalContext&quot;: &quot;## Recalled lessons (RMC) …&quot;}}</pre>
+<p>Injected text is explicitly framed as prior knowledge rather than user instruction, so a stale lesson cannot impersonate a request.</p>
+<h3 id="seeing-it-happen">Seeing it happen<a class="anchor" href="#seeing-it-happen" aria-label="Link to this section">#</a></h3>
+<p>An injection is never silent. While the hook runs you see its status line, and when it injects, the hook returns a <code>systemMessage</code> that Claude Code shows you:</p>
+<pre>⋯ Recalling lessons…
+⋯ RMC · recalled 2 lessons (312 tok): retry, k8s-deploys   +1 patch</pre>
+<p>Unresolved contradictions are flagged there too. For the full picture — what was offered to the model, what it decided and why, and the exact text injected — run <code>rmc trace --prompt &quot;...&quot;</code>.</p>
+<p>Recall costs a model call on the hot path **only once the store outgrows <code>max_pack_tokens</code>**. Below that everything is served unfiltered, with no call at all, in milliseconds — there is nothing to choose between. That is deliberate — injecting the wrong lesson is worse than injecting none, and only a reader can tell the difference — but it is a real latency cost, so it is cached by prompt and can be switched off with <code>rmc config recall.enabled false</code>.</p>
+<h3 id="where-reflection-runs">Where reflection runs<a class="anchor" href="#where-reflection-runs" aria-label="Link to this section">#</a></h3>
+<p><code>learning.nudge_mode</code> picks the trade:</p>
+<div class='scroll'><table>
+<tr><th>Mode</th><th>Context the reflector sees</th><th>Cost</th><th>Interrupts you</th></tr>
+<tr><td><code>background</code> (default)</td><td>a transcript digest, ~3k tokens</td><td>one small call</td><td>no</td></tr>
+<tr><td><code>fork</code></td><td>the whole session, inherited</td><td>~0.1× its tokens via cache reads</td><td>no</td></tr>
+<tr><td><code>block</code></td><td>the agent&#x27;s own live context</td><td>none extra</td><td><b>yes</b> — one turn</td></tr>
+<tr><td><code>off</code></td><td>—</td><td>none until session end</td><td>no</td></tr>
+</table></div>
+<p><code>fork</code> spawns <code>claude --resume &lt;id&gt; --fork-session</code> detached. <code>--fork-session</code> allocates a new session id, so the live session is never written to. It is affordable because prompt-cache reads bill at <b>0.1×</b> and the cache keys on prefix <em>content</em> rather than session identity — the fork hits what the live session just wrote. Claude Code uses a 1-hour cache TTL, which covers the reflection cooldown comfortably.</p>
+<p>It is not the default because 10% of a very large context still exceeds a 3k digest, and the digest has proven able to identify conceptual corrections rather than only mechanical ones. Pick <code>fork</code> when fidelity matters more than tokens — the digest necessarily drops nuance, and a conceptual mistake can live in the nuance.</p>
+<p>Every spawned reflector runs with <code>RMC_CHILD=1</code>; without it the fork fires these same hooks and forks itself, forever.</p>
+<h3 id="overlapping-reflectors">Overlapping reflectors<a class="anchor" href="#overlapping-reflectors" aria-label="Link to this section">#</a></h3>
+<p>Reflectors can overlap — a slow one can still be running when the next fires. They are not prevented from doing so, because two reflectors looking at different windows may legitimately find different things.</p>
+<p>What is prevented is recording the same lesson twice, and the defence is <b>reconciliation, not scheduling</b>. Every capture is checked against what is already known and a duplicate is stored as nothing. A minimum time apart would not achieve this: whatever gap you pick, a reflector that outlives it reopens the race, and two reflectors an hour apart can still reach the same conclusion.</p>
+<p>The one thing scheduling cannot fix is a <em>read-decide-write</em> race: if both reflectors read the store before either writes, both conclude &quot;new&quot;. So <code>rmc add</code> holds a write lock across decide-and-write, and a writer <b>waits</b> for it rather than skipping — losing the lock and giving up would silently drop a lesson. Stale locks (from a killed reflector) expire rather than wedging the store.</p>
+<p><code>rmc absorb</code> additionally takes a lock of its own and <em>skips</em> if another absorb holds it, since two digest passes over the same transcript would only duplicate work.</p>
+<h3 id="failure-behaviour">Failure behaviour<a class="anchor" href="#failure-behaviour" aria-label="Link to this section">#</a></h3>
+<p>Every hook path is wrapped and returns exit 0. A broken store, an unparseable transcript or a raised exception all degrade to &quot;inject nothing&quot; rather than interrupting the session. This is deliberate: a memory system that can break someone&#x27;s editor will be uninstalled, and correctly so.</p>
+<p><code>SessionEnd</code> gets a stricter rule still. The host is shutting down and will cancel a hook that is still running, so slow work there is not late — it never happens. Judging a session takes a model call, so the hook does none of it: it parses the transcript, decides whether the session is even worth learning from, and hands everything else to a detached <code>rmc absorb</code>. It returns in about 0.1s.</p>
+<p><code>absorb</code> runs judge → learn → compress in that order, in one process. They were briefly three parallel spawns, which raced: compaction is only eligible once the judgement has recorded the successes that make a node due, so it usually lost.</p>
+<h2 id="codex">Codex<a class="anchor" href="#codex" aria-label="Link to this section">#</a></h2>
+<p>Codex&#x27;s hook schema is less settled than Claude Code&#x27;s, so the reliable route is an instruction block appended to <code>AGENTS.md</code>:</p>
+<pre>rmc install --target codex</pre>
+<p>which appends a marked block telling the agent to run <code>rmc recall --prompt &quot;…&quot;</code> before non-trivial work. If <code>~/.codex/hooks.json</code> already exists, a <code>UserPromptSubmit</code> entry is added there as well.</p>
+<p>Codex also works as an <b>execution backend</b> regardless of how recall is wired — it is often the better choice for background compaction, since `codex exec --ephemeral --output-schema` gives native structured output:</p>
+<pre>rmc config agent codex
+rmc compact --due --agent codex</pre>
+<h2 id="what-gets-written">What gets written<a class="anchor" href="#what-gets-written" aria-label="Link to this section">#</a></h2>
+<pre>.rmc/
+  config.yaml        settings (see `rmc config`)
+  nodes/&lt;family&gt;/    lesson nodes — the tree. Worth committing.
+  episodes/          the replay corpus. Worth committing.
+  sessions/          per-session scratch. Machine-local.
+  events.jsonl       telemetry. Machine-local.
+  judge-cache.json   cached judgements. Machine-local.
+  background.log     output from detached learning runs (`rmc absorb`).</pre>
+<h3 id="two-scopes">Two scopes<a class="anchor" href="#two-scopes" aria-label="Link to this section">#</a></h3>
+<p>If <code>~/.rmc</code> exists it is layered underneath the project store. Lessons from both are recalled; new ones are written to the project. This is how a cross-project principle (&quot;prefer the model&#x27;s judgement over a similarity score&quot;) and a repo-specific fact (&quot;this suite needs <code>PAYMENTS_PG_PORT</code>&quot;) each live at the right scope instead of one being in the wrong place.</p>
+<pre>rmc init ~                      # create the global store
+RMC_HOME=~/.rmc rmc add &quot;...&quot;   # teach it something that follows you everywhere</pre>
+<p>Editing a global lesson from inside a repo writes back to the global store rather than forking a local copy that then drifts.</p>
+<p><code>.rmc/.gitignore</code> excludes <code>sessions/</code> and <code>events.jsonl</code> by default, so committing <code>.rmc/</code> shares the lessons and their regression corpus with your team without the machine-local noise.</p>
+<h3 id="privacy">Privacy<a class="anchor" href="#privacy" aria-label="Link to this section">#</a></h3>
+<p>Everything written to disk passes through <code>redact.py</code> first: API keys, tokens, private keys, card numbers and <code>secret=…</code> assignments are replaced with <code>[REDACTED]</code>, and emails are reduced to their domain. It is deliberately biased toward over-redaction — a mangled lesson is recoverable, a leaked key is not.</p>
+<p>RMC never sends anything anywhere. Model calls go to whichever CLI you already have configured, with your existing credentials.</p>
+<h2 id="turning-it-off">Turning it off<a class="anchor" href="#turning-it-off" aria-label="Link to this section">#</a></h2>
+<pre>rmc config recall.enabled false       # stop injecting
+rmc config compaction.enabled false   # stop compressing
+rmc config learning.enabled false     # stop minting lessons
+rmc uninstall --target claude         # remove the hooks entirely</pre>
+<p><code>RMC_DISABLE=1</code> in the environment disables everything for a single run, which is also how spawned child agents avoid recursing.</p>
 </div>
 <nav class="pager">
-<a class="prev" href="attribution.html"><span>Previous</span><b>03 Attribution</b></a>
-<a class="next" href="compression.html"><span>Next</span><b>05 Compression</b></a>
+<a class="prev" href="configuration.html"><span>Previous</span><b>Configuration</b></a>
+<a class="next" href="data-model.html"><span>Next</span><b>Data model</b></a>
 </nav>
 </main>
 <aside class="onpage"><div class="grp">On this page</div><nav>
-<a class="l3" href="#scope-decided-first">Scope, decided first</a>
-<a class="l3" href="#then-the-relation">Then the relation</a>
+<a class="l2" href="#claude-code">Claude Code</a>
+<a class="l3" href="#as-a-plugin-recommended">As a plugin (recommended)</a>
+<a class="l3" href="#by-hand">By hand</a>
+<a class="l3" href="#hooks-used">Hooks used</a>
+<a class="l3" href="#seeing-it-happen">Seeing it happen</a>
+<a class="l3" href="#where-reflection-runs">Where reflection runs</a>
+<a class="l3" href="#overlapping-reflectors">Overlapping reflectors</a>
+<a class="l3" href="#failure-behaviour">Failure behaviour</a>
+<a class="l2" href="#codex">Codex</a>
+<a class="l2" href="#what-gets-written">What gets written</a>
+<a class="l3" href="#two-scopes">Two scopes</a>
+<a class="l3" href="#privacy">Privacy</a>
+<a class="l2" href="#turning-it-off">Turning it off</a>
 </nav></aside>
 </div>
 
