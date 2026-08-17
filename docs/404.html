@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>06 Descent — RMC</title>
-<meta name="description" content="Recovering a dropped specific at the moment it turns out to matter.">
-<meta property="og:title" content="06 Descent — RMC docs">
-<meta property="og:description" content="Recovering a dropped specific at the moment it turns out to matter.">
+<title>Page not found — RMC</title>
+<meta name="description" content="That page does not exist.">
+<meta property="og:title" content="Page not found — RMC docs">
+<meta property="og:description" content="That page does not exist.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%230a0a0a'/><rect x='6' y='7' width='20' height='3' fill='white'/><rect x='9' y='14' width='14' height='3' fill='white'/><rect x='12' y='21' width='8' height='3' fill='white'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -49,82 +49,12 @@ try {
     </div>
   </div>
 </nav>
-<div class="shell">
-<aside class="side" id="side"><nav>
-<div class="grp">Get started</div>
-<a href="quickstart.html">Quickstart</a>
-<a href="troubleshooting.html">Troubleshooting</a>
-<a href="tasks.html">Everyday tasks</a>
-<a href="migrate.html">Migrate from Claude skills</a>
-<div class="grp">Reference</div>
-<a href="cli.html">CLI reference</a>
-<a href="configuration.html">Configuration</a>
-<a href="data-model.html">Data model</a>
-<div class="grp">How it works</div>
-<a href="concepts.html">The loop and the rule</a>
-<a href="recall.html">01 Recall</a>
-<a href="reflection.html">02 Reflection</a>
-<a href="attribution.html">03 Attribution</a>
-<a href="consolidation.html">04 Consolidation</a>
-<a href="compression.html">05 Compression</a>
-<a href="descent.html" class="on" aria-current="page">06 Descent</a>
-<a href="dreaming.html">07 Dreaming</a>
-<div class="grp">Measuring</div>
-<a href="evaluation.html">Evaluation</a>
-<a href="tuning.html">Self-tuning</a>
-<a href="limits.html">Known limits</a>
-</nav></aside>
+<div class="shell"><span></span>
 <main class="doc">
-<div class="crumbs"><a href="quickstart.html">Docs</a><span>/</span><span>06 Descent</span></div>
-<h1>06 Descent</h1>
-<p class="lead">Recovering a dropped specific at the moment it turns out to matter.</p>
-<div class="prose">
-
-    <p><i>When the compressed lesson fails, which child do you go to?</i></p>
-    <p>
-      Compression normally destroys the information you would need to invert it,
-      which is why the manifest is mandatory. Descent is then a ranking problem
-      over dropped claims, not a search over the graph:
-    </p>
-<pre>score = w_judge · model_usefulness + w_prior · rescue_rate − w_cost · tokens
-         (0.60)                       (0.28)                  (0.12)</pre>
-    <ul>
-      <li><b><code>model_usefulness</code></b> — one call ranks every candidate
-        0–1: <i>how likely is it that this detail being absent caused this
-        failure</i>. A judgement, so the model makes it. "Parse the body, not the
-        status code" is the fix for "treated HTTP 200 as success" while sharing
-        none of its words.</li>
-      <li><b><code>prior</code></b> — Laplace-smoothed rate at which this node has
-        actually rescued failures. Observed outcome, so it stays in code. Makes
-        descent a contextual bandit over the graph.</li>
-      <li><b><code>cost</code></b> — token count. A measurement.</li>
-    </ul>
-    <p>
-      With no judge available the first term is simply absent and ranking falls
-      back to "try what has worked, cheapest first" — degrading honestly rather
-      than substituting a metric that looks like judgement.
-    </p>
-    <p>
-      Strategies (<code>recall.strategy</code>): <code>delta-patch</code> (apex +
-      matched claims, default), <code>delta-jump</code> (swap in the holder
-      node), <code>stepwise</code> (walk children, ignore the manifest — the
-      ablation baseline).
-    </p>
-    <p>
-      Escalation: exhaust candidates → load the level-0 node, which is never
-      deleted. If that fails too, it is a genuine knowledge gap, not a
-      compression bug.
-    </p>
-
-    <!-- ==================================================== 07 dream -->
-</div>
-<nav class="pager">
-<a class="prev" href="compression.html"><span>Previous</span><b>05 Compression</b></a>
-<a class="next" href="dreaming.html"><span>Next</span><b>07 Dreaming</b></a>
-</nav>
-</main>
-
-</div>
+<h1>Page not found</h1>
+<p class="lead">That URL does not match anything in the documentation. The docs were reorganised into pages by topic, so an older link may have moved.</p>
+<div class="prose"><nav class="notfound"><a href="quickstart.html">Quickstart</a><a href="troubleshooting.html">Troubleshooting</a><a href="tasks.html">Everyday tasks</a><a href="migrate.html">Migrate from Claude skills</a><a href="cli.html">CLI reference</a><a href="configuration.html">Configuration</a><a href="data-model.html">Data model</a><a href="concepts.html">The loop and the rule</a><a href="recall.html">01 Recall</a><a href="reflection.html">02 Reflection</a><a href="attribution.html">03 Attribution</a><a href="consolidation.html">04 Consolidation</a><a href="compression.html">05 Compression</a><a href="descent.html">06 Descent</a><a href="dreaming.html">07 Dreaming</a><a href="evaluation.html">Evaluation</a><a href="tuning.html">Self-tuning</a><a href="limits.html">Known limits</a></nav></div>
+</main><span></span></div>
 
 <div class="searchbox" id="searchbox" hidden>
   <div class="searchbox-in" role="dialog" aria-modal="true" aria-label="Search documentation">

@@ -488,7 +488,36 @@ def main() -> None:
         (HERE / page.href).write_text(render(page), encoding="utf-8")
         print(f"  {page.href:24} {len(load(page).splitlines()):4d} lines")
     (HERE / "docs.html").write_text(REDIRECT, encoding="utf-8")
-    print(f"{len(PAGES)} pages + docs.html redirect")
+    (HERE / "404.html").write_text(not_found(), encoding="utf-8")
+    print(f"{len(PAGES)} pages + docs.html redirect + 404")
+
+
+def not_found() -> str:
+    """A wrong URL should still leave you inside the documentation.
+
+    GitHub Pages serves this for anything unmatched, and the default is a bare
+    Pages error with no way back — which for a docs site means a stale link
+    from anywhere ends the visit.
+    """
+    links = "".join(
+        f'<a href="{p.href}">{html.escape(p.title)}</a>' for g in NAV for p in g.pages
+    )
+    return "\n".join([
+        head(Page("404", "Page not found", "That page does not exist.")),
+        topbar(),
+        '<div class="shell"><span></span>',
+        '<main class="doc">',
+        "<h1>Page not found</h1>",
+        '<p class="lead">That URL does not match anything in the documentation. '
+        "The docs were reorganised into pages by topic, so an older link may "
+        "have moved.</p>",
+        f'<div class="prose"><nav class="notfound">{links}</nav></div>',
+        "</main><span></span></div>",
+        search_dialog(),
+        '<script id="rmc-search" type="application/json">' + search_index() + "</script>",
+        '<script src="docs.js"></script>',
+        "</body>\n</html>",
+    ])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,83 @@
+<h2>Scoring retrieval</h2>
+<p>
+  Compression is checked by replay, a merge has to reproduce its children's
+  episodes, a dropped detail earns its way back by rescuing a failure. Recall —
+  the stage that decides what enters your context on <em>every</em> prompt —
+  was checked against nothing, so every number anyone quoted about it was an
+  assertion.
+</p>
+<pre>rmc eval-recall                      <span class="c"># score retrieval as it stands</span>
+rmc eval-recall --save baseline      <span class="c"># keep this run to compare against</span>
+rmc eval-recall --against baseline   <span class="c"># A/B a change</span></pre>
+
+<h3>How it scores</h3>
+<p>
+  Each recorded episode is replayed against <b>exactly the lessons it was
+  served</b>, and the judge's picks are compared with which lessons a later
+  judgement said had actually borne on the work.
+</p>
+<div class="note">
+  The restriction to the served set is the whole method. A lesson nobody was
+  shown could not have been used, so counting its absence as a wrong answer
+  would manufacture failures out of the retrieval decision and score the stage
+  against a question it was never asked.
+</div>
+<p>
+  Precision and recall are always printed together, and never one alone:
+</p>
+<div class="scroll">
+<table>
+  <tr><th>Number</th><th>Meaning</th><th>How to cheat it</th></tr>
+  <tr>
+    <td><b>Precision</b></td>
+    <td>Of the lessons recall would serve, how many bore on the work.</td>
+    <td>Serve nothing.</td>
+  </tr>
+  <tr>
+    <td><b>Recall</b></td>
+    <td>Of the lessons that would have helped, how many are still delivered.</td>
+    <td>Serve everything.</td>
+  </tr>
+  <tr>
+    <td><b>Noise tokens</b></td>
+    <td>Context spent on lessons that were never used.</td>
+    <td>—</td>
+  </tr>
+</table>
+</div>
+<p>
+  Either number on its own makes any change look like progress, which is not
+  hypothetical: four separate attempts to improve the relevance prompt each
+  reduced noise and each did it by dropping lessons that mattered.
+</p>
+
+<h3>What it is not</h3>
+<p>
+  <code>episode.used</code> is a judgement, made once, about a session that has
+  since ended. It is a real observation of an outcome rather than an assertion,
+  and it is the same signal attribution already runs on — but it is not ground
+  truth, and a store with six episodes supports a direction, not a decimal
+  place.
+</p>
+<p>
+  It also cannot see coverage. The score is computed over candidates the system
+  chose to consider, so it is blind to lessons never considered at all — which
+  is exactly how a truncation bug hid fourteen unreachable lessons behind
+  healthy-looking precision. Check reachability separately with
+  <code>rmc tree</code> and <code>rmc recall</code>.
+</p>
+
+<h2>Scoring compression</h2>
+<p>
+  <code>rmc eval</code> answers the other question: does a lesson still transfer
+  what it knew after being shortened? It holds out episodes, replays them
+  against each level of a lesson, and reports the pass rate per level — so
+  "compressed to 56% and still solves everything it used to" is measured rather
+  than claimed.
+</p>
+<pre>rmc eval --holdout 0.3 --samples 3</pre>
+<p>
+  <code>recall.strategy</code> exists so the descent policy can be compared the
+  same way rather than argued about. See
+  <a href="descent.html">Descent</a> for what the strategies do.
+</p>

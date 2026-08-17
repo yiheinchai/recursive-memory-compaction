@@ -223,6 +223,13 @@ pre:hover .copy, .copy:focus{ opacity: 1; }
   margin: 0 0 20px; font-size: 14.5px; border-radius: 0 8px 8px 0;
 }
 
+.notfound{ display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; }
+.notfound a{
+  padding: 11px 14px; border: 1px solid var(--line); border-radius: 8px;
+  text-decoration: none; color: var(--ink); font-size: 14.5px;
+}
+.notfound a:hover{ border-color: var(--ink-3); }
+
 /* ----------------------------------------------------------------- pager */
 .pager{
   display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
