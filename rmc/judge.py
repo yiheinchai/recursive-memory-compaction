@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
@@ -273,6 +274,11 @@ class Judge:
         self.calls = 0
         self.failures = 0
         self.last_error = ""
+        # Chunks of one level are judged concurrently, so the cache is written
+        # from several threads. Without this two of them read the same file,
+        # each adds its own entry, and the second write erases the first — the
+        # judgements are correct but half of them are paid for again next time.
+        self._lock = threading.Lock()
         # Optional: keeps the candidate list warm across prompts. Absent for
         # one-off judgements, where there is no prefix worth preserving.
         self.router = None
@@ -302,15 +308,18 @@ class Judge:
     def _store_cache(self, key: str, value: Any, *, limit: int = 800) -> None:
         if not self.use_cache:
             return
-        cache = self._load()
-        cache[key] = value
-        if len(cache) > limit:
-            for stale in list(cache)[: len(cache) - limit]:
-                cache.pop(stale, None)
-        try:
-            self._cache_path().write_text(json.dumps(cache), encoding="utf-8")
-        except Exception:
-            pass
+        # Read-modify-write, so it has to be atomic against the other chunks
+        # being judged at the same moment.
+        with self._lock:
+            cache = self._load()
+            cache[key] = value
+            if len(cache) > limit:
+                for stale in list(cache)[: len(cache) - limit]:
+                    cache.pop(stale, None)
+            try:
+                self._cache_path().write_text(json.dumps(cache), encoding="utf-8")
+            except Exception:
+                pass
 
     def key(self, *parts: str) -> str:
         """Cache key for one judgement, including the criteria that produced it.
@@ -397,7 +406,11 @@ class Judge:
         if digest not in self.warm_prefixes:
             return None, 0, ""  # a descent set: asked once, never worth seeding
 
-        session = self.router.session_for(digest)
+        # Seeding decides and writes shared router state, and concurrent chunks
+        # would otherwise each conclude they must reseed and overwrite one
+        # another's session ids — leaving conversations nobody can find again.
+        with self._lock:
+            session = self.router.session_for(digest)
         if not session.resume:
             seed = self.adapter.run(
                 SEED.format(candidates=rendered),
@@ -864,6 +877,34 @@ REMOVED DETAILS>>>
 """
 
 
+def _ask_all(
+    judge: "Judge", question: str, chunks: list[list[Node]], workers: int
+) -> list[tuple[list[Node], list[Pick]]]:
+    """Put every chunk to the model at once, and return the answers in order.
+
+    Order is preserved so that what gets selected does not depend on which
+    subprocess finished first — a recall that returns different lessons run to
+    run is not debuggable, and the eval would measure scheduling noise.
+
+    A chunk that raises is treated as a chunk that answered nothing. One failed
+    subprocess must not take down a recall that the other chunks answered.
+    """
+    if len(chunks) <= 1 or workers <= 1:
+        return [(chunk, judge.relevance(question, chunk)) for chunk in chunks]
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def ask(chunk: list[Node]) -> list[Pick]:
+        try:
+            return judge.relevance(question, chunk)
+        except Exception:
+            return []
+
+    with ThreadPoolExecutor(max_workers=min(workers, len(chunks))) as pool:
+        answers = list(pool.map(ask, chunks))
+    return list(zip(chunks, answers))
+
+
 def _render(node: Node) -> str:
     """One compact line per lesson, for deciding which to open.
 
@@ -907,6 +948,7 @@ def walk(
     budget: Budget | None = None,
     max_depth: int = 3,
     fanout: int = 12,
+    workers: int = 4,
 ) -> WalkResult:
     """Walk abstract → concrete, asking the model where to look.
 
@@ -942,16 +984,29 @@ def walk(
         # The budget still bounds the work; that is the difference. Running out
         # of budget is a decision to stop looking, recorded and recoverable,
         # while truncation was a silent hole in the store.
-        nxt: list[Node] = []
+        chunks: list[list[Node]] = []
         for start in range(0, len(pending), fanout):
-            chunk = pending[start : start + fanout]
             if not budget.take():
                 # Unexamined nodes stay on the frontier, so the tail below keeps
                 # them rather than discarding them unseen.
-                nxt.extend(pending[start:])
+                leftover = pending[start:]
                 break
+            chunks.append(pending[start : start + fanout])
+        else:
+            leftover = []
+
+        # The chunks of one level are independent questions about disjoint sets
+        # of lessons, so they are asked at once rather than in turn. This is not
+        # a micro-optimisation: recall runs in a hook that blocks the user's
+        # prompt, each call costs ~15s of which ~5s is process startup, and the
+        # number of chunks grows with the store. Sequentially, a store large
+        # enough to need six chunks would exceed the recall timeout and serve
+        # nothing — so completeness at the top level would cost the whole
+        # feature. Concurrency is what makes covering every lesson affordable.
+        nxt: list[Node] = list(leftover)
+        for chunk in chunks:
             seen.update(n.id for n in chunk)
-            picks = judge.relevance(question, chunk)
+        for chunk, picks in _ask_all(judge, question, chunks, workers):
             result.calls += 1
             result.depth_reached = depth
             by_id = {n.id: n for n in chunk}

@@ -47,6 +47,7 @@ judgement about meaning.
 from __future__ import annotations
 
 import json
+import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -128,6 +129,9 @@ class Router:
         self.store = store
         self.path = store.root / "router.json"
         self.state = self._load()
+        # Chunks are judged concurrently and each reports its own warmth, so
+        # every mutation of the shared window and tally is serialised.
+        self._lock = threading.Lock()
 
     # -- persistence ------------------------------------------------------ #
     def _load(self) -> RouterState:
@@ -205,6 +209,18 @@ class Router:
         not scored — they are how the baseline is learned.
         """
         now = time.time() if now is None else now
+        with self._lock:
+            return self._record(cached_in, prefix_tokens, prefix_hash, created, seeded, now)
+
+    def _record(
+        self,
+        cached_in: int,
+        prefix_tokens: int,
+        prefix_hash: str,
+        created: int,
+        seeded: bool,
+        now: float,
+    ) -> bool:
         gap = now - self.state.last_call_at
 
         held = self.state.warm.get(prefix_hash)

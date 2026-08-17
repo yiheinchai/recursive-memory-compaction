@@ -407,6 +407,82 @@ def judge_for(store, route):
 # --------------------------------------------------------------------------- #
 
 
+class TestChunksAreJudgedTogether(StoreCase):
+    """A wide level is several independent questions, so it is one round trip.
+
+    Each call costs ~15s of which ~5s is process startup, and the number of
+    chunks grows with the store. Asked in turn, a store big enough to need six
+    chunks exceeds the recall timeout and serves nothing — so completeness at
+    the top level would cost the whole feature.
+    """
+
+    def nodes(self, n):
+        return [self.add_node(id=f"n_{i}", family=f"f{i}", body=f"Lesson {i}.") for i in range(n)]
+
+    def test_every_chunk_is_asked(self) -> None:
+        from rmc.judge import Budget, Judge, walk
+
+        roots = self.nodes(9)
+        asked: list[int] = []
+
+        def route(prompt, schema):
+            asked.append(prompt.count("[n_"))
+            return {"picks": []}
+
+        result = walk(Judge(self.store, MockAdapter(router=route)), "work", roots,
+                      expand=lambda n: [], budget=Budget(max_calls=5), fanout=4, workers=4)
+        self.assertEqual(sorted(asked), [1, 4, 4], "9 lessons across 3 chunks")
+        self.assertEqual(result.calls, 3)
+
+    def test_order_does_not_depend_on_which_finished_first(self) -> None:
+        """A recall that returns different lessons run to run is not
+        debuggable, and an eval over it measures scheduling noise."""
+        from rmc.judge import Budget, Judge, walk
+
+        roots = self.nodes(8)
+
+        def route(prompt, schema):
+            import re
+            return {"picks": [{"id": i, "verdict": "relevant"}
+                              for i in re.findall(r"n_\d+", prompt)]}
+
+        runs = [
+            [n.id for n in walk(Judge(self.store, MockAdapter(router=route)), "work", roots,
+                                expand=lambda n: [], budget=Budget(max_calls=6),
+                                fanout=3, workers=4).selected]
+            for _ in range(3)
+        ]
+        self.assertEqual(runs[0], runs[1])
+        self.assertEqual(runs[1], runs[2])
+
+    def test_one_failing_chunk_does_not_lose_the_others(self) -> None:
+        from rmc.judge import Budget, Judge, walk
+
+        roots = self.nodes(6)
+
+        def route(prompt, schema):
+            if "n_0" in prompt:
+                raise RuntimeError("subprocess died")
+            import re
+            return {"picks": [{"id": i, "verdict": "relevant"}
+                              for i in re.findall(r"n_\d+", prompt)]}
+
+        result = walk(Judge(self.store, MockAdapter(router=route)), "work", roots,
+                      expand=lambda n: [], budget=Budget(max_calls=4), fanout=3, workers=4)
+        self.assertEqual([n.id for n in result.selected], ["n_3", "n_4", "n_5"])
+
+    def test_budget_still_bounds_a_very_wide_level(self) -> None:
+        """Concurrency makes coverage affordable; it does not make it free."""
+        from rmc.judge import Budget, Judge, walk
+
+        roots = self.nodes(20)
+        calls: list[int] = []
+        adapter = MockAdapter(router=lambda p, s: (calls.append(1), {"picks": []})[1])
+        walk(Judge(self.store, adapter), "work", roots,
+             expand=lambda n: [], budget=Budget(max_calls=2), fanout=4, workers=4)
+        self.assertEqual(len(calls), 2)
+
+
 class TestSkillMigration(StoreCase):
     """People who need RMC have usually built a worse version of it by hand.
 

@@ -27,6 +27,13 @@ DEFAULTS: dict[str, Any] = {
         # Lessons shown to the model in one question. Wide levels are split
         # across several; this is about answer quality, not budget.
         "fanout": 12,
+        # Chunks of one level put to the model at the same time. They are
+        # independent questions about disjoint sets, and each costs ~15s of
+        # which ~5s is process startup, so asking them in turn makes the top
+        # level unaffordable exactly as the store grows: six chunks
+        # sequentially exceeds the recall timeout and serves nothing. This is
+        # what makes covering every lesson possible rather than aspirational.
+        "parallel": 4,
         "max_depth": 2,  # how far down the tree the walk may look
         "max_expansions": 3,
         # Apexes below which recall serves everything without asking.

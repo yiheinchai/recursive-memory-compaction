@@ -171,6 +171,7 @@ def select_lessons(
         budget=budget,
         max_depth=int(store.config.get("recall.max_depth", 2)),
         fanout=fanout,
+        workers=int(store.config.get("recall.parallel", 4)),
     )
 
     # An empty pack has two very different causes and they must not look alike
